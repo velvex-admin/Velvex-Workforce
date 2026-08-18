@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Velvex — VX-03 Internal Operations Layer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14171F;
+    --surface:#1C2029;
+    --surface-raised:#20242E;
+    --border:#2A2F3B;
+    --text:#EDEAE2;
+    --text-dim:#9297A6;
+    --text-faint:#5C6170;
+    --gold:#B4915B;
+    --gold-dim:#8A754F;
+    --green:#6FA787;
+    --red:#C1666B;
+    --amber:#C98A3E;
+    --slate:#6B7280;
+    --blue:#7597C4;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    font-size:15px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .layout{display:flex; min-height:100vh;}
+
+  nav{
+    width:230px; flex-shrink:0;
+    background:var(--surface);
+    border-right:1px solid var(--border);
+    padding:28px 18px;
+    position:sticky; top:0; height:100vh; overflow-y:auto;
+  }
+  .navbrand{ font-family:'Fraunces',serif; font-weight:600; font-size:18px; letter-spacing:0.02em; color:var(--text); margin-bottom:2px; }
+  .navsub{ font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.12em; color:var(--gold); margin-bottom:26px; }
+  nav a{ display:block; color:var(--text-dim); text-decoration:none; font-size:13px; padding:7px 0; border-left:2px solid transparent; padding-left:12px; margin-left:-13px; transition:all .15s ease; }
+  nav a:hover, nav a.active{ color:var(--text); border-left-color:var(--gold); }
+  nav .navgroup{ margin-bottom:18px; }
+  nav .navgroup-label{ font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-faint); margin:18px 0 6px; }
+  #navToggle{ display:none; }
+
+  main{ flex:1; max-width:900px; padding:48px 56px 120px; }
+
+  h1{ font-family:'Fraunces',serif; font-weight:600; font-size:34px; letter-spacing:-0.01em; }
+  h2{ font-family:'Fraunces',serif; font-weight:600; font-size:24px; margin-bottom:4px; display:flex; align-items:baseline; gap:12px; }
+  h3{ font-family:'Inter',sans-serif; font-weight:600; font-size:14px; margin-bottom:10px; color:var(--text); }
+  h4{ font-family:'Inter',sans-serif; font-weight:600; font-size:14.5px; color:var(--text); }
+  .phase-num{ font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--gold); border:1px solid var(--gold-dim); border-radius:3px; padding:2px 8px; }
+  section{ margin-bottom:64px; scroll-margin-top:24px; }
+  p{ color:var(--text-dim); margin-bottom:12px; max-width:66ch; }
+  .lede{ color:var(--text-dim); font-size:15.5px; max-width:62ch; margin-bottom:8px; }
+
+  .header{ margin-bottom:40px; }
+  .header-tag{ font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.14em; color:var(--gold); margin-bottom:10px; }
+  .status-strip{ display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; }
+  .status-chip{ background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:9px 14px; font-size:12.5px; display:flex; flex-direction:column; gap:2px; }
+  .status-chip .label{ font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-faint); }
+  .status-chip .val{ color:var(--text); }
+  .status-chip.flag{ border-color:var(--red); }
+  .status-chip.flag .val{ color:var(--red); }
+
+  .badge{ display:inline-flex; align-items:center; gap:6px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; padding:3px 9px 3px 7px; border-radius:20px; border:1px solid; white-space:nowrap; }
+  .badge::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .badge.green{ color:var(--green); border-color:rgba(111,167,135,0.4); background:rgba(111,167,135,0.08); }
+  .badge.red{ color:var(--red); border-color:rgba(193,102,107,0.4); background:rgba(193,102,107,0.08); }
+  .badge.amber{ color:var(--amber); border-color:rgba(201,138,62,0.4); background:rgba(201,138,62,0.08); }
+  .badge.slate{ color:var(--slate); border-color:rgba(107,114,128,0.4); background:rgba(107,114,128,0.08); }
+  .badge.blue{ color:var(--blue); border-color:rgba(117,151,196,0.4); background:rgba(117,151,196,0.08); }
+  .badge.gold{ color:var(--gold); border-color:rgba(180,145,91,0.4); background:rgba(180,145,91,0.08); }
+
+  .batch{ background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--gold); border-radius:8px; padding:20px 22px; margin-bottom:16px; }
+  .batch-head{ display:flex; align-items:center; gap:10px; margin-bottom:4px; flex-wrap:wrap; }
+  .batch-name{ font-family:'Fraunces',serif; font-weight:600; font-size:17px; }
+  .batch-count{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-faint); }
+  .batch-desc{ font-size:13px; color:var(--text-dim); margin-bottom:14px; }
+
+  .agent{ border-top:1px solid var(--border); padding:14px 0; }
+  .agent:first-of-type{ border-top:none; padding-top:4px; }
+  .agent-name{ font-weight:600; font-size:14px; color:var(--text); margin-bottom:4px; }
+  .agent-name .tag{ font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--gold); font-weight:500; margin-right:8px; }
+  .agent-desc{ font-size:13px; color:var(--text-dim); margin-bottom:8px; }
+  .agent-rules{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:640px){ .agent-rules{ grid-template-columns:1fr; } }
+  .rule{ background:var(--surface-raised); border-radius:6px; padding:8px 12px; font-size:12px; }
+  .rule .rk{ font-family:'IBM Plex Mono',monospace; font-size:9.5px; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px; display:block; }
+  .rule.routine .rk{ color:var(--green); }
+  .rule.approval .rk{ color:var(--amber); }
+  .rule .rv{ color:var(--text-dim); }
+
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th{ text-align:left; font-family:'IBM Plex Mono',monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); padding:10px 14px; border-bottom:1px solid var(--border); }
+  td{ padding:12px 14px; border-bottom:1px solid var(--border); color:var(--text-dim); vertical-align:top; }
+  td.strong{ color:var(--text); font-weight:500; }
+  td.mono{ font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--text); }
+  tr:last-child td{ border-bottom:none; }
+  .tablewrap{ background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+
+  .flagbox{ background:rgba(180,145,91,0.06); border:1px solid rgba(180,145,91,0.35); border-radius:8px; padding:20px 22px; margin-bottom:16px; }
+  .flagbox-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .flagbox-head .badge{ margin-left:auto; }
+  .flagbox p{ color:var(--text-dim); font-size:13px; margin-bottom:8px; }
+  .flagbox p:last-child{ margin-bottom:0; }
+
+  .askbox{ background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:8px; padding:16px 20px; margin-bottom:10px; }
+  .askbox .n{ font-family:'IBM Plex Mono',monospace; color:var(--blue); font-size:12px; margin-right:8px; }
+  .askbox p{ display:inline; }
+
+  .stepline{ display:flex; flex-wrap:wrap; align-items:center; gap:0; margin:10px 0; }
+  .step{ background:var(--surface-raised); border:1px solid var(--border); border-radius:6px; padding:8px 12px; font-size:12.5px; color:var(--text); }
+  .arrow{ color:var(--text-faint); padding:0 8px; font-size:13px; }
+
+  footer{ margin-top:60px; padding-top:24px; border-top:1px solid var(--border); font-size:12px; color:var(--text-faint); }
+
+  @media (max-width: 860px){
+    .layout{ flex-direction:column; }
+    nav{ width:100%; height:auto; position:sticky; top:0; z-index:20; padding:14px 20px; border-right:none; border-bottom:1px solid var(--border); }
+    nav .navlist{ display:none; flex-direction:column; }
+    nav.open .navlist{ display:flex; }
+    nav .navtop{ display:flex; align-items:center; justify-content:space-between; cursor:pointer; }
+    #navToggle{ display:block; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--gold); background:none; border:1px solid var(--gold-dim); border-radius:4px; padding:4px 10px; }
+    main{ padding:32px 22px 100px; }
+    h1{ font-size:26px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav id="sideNav">
+  <div class="navtop" onclick="document.getElementById('sideNav').classList.toggle('open')">
+    <div>
+      <div class="navbrand">Velvex</div>
+      <div class="navsub">VX-03 — Architecture v1</div>
+    </div>
+    <button id="navToggle">Menu</button>
+  </div>
+  <div class="navlist">
+    <div class="navgroup">
+      <a href="#overview">Overview</a>
+      <a href="#stack">Foundation Stack</a>
+    </div>
+    <div class="navgroup-label">Roster</div>
+    <div class="navgroup">
+      <a href="#marketing">Marketing</a>
+      <a href="#sales">Sales Management</a>
+      <a href="#executive">Executive</a>
+      <a href="#orchestration">Orchestration</a>
+    </div>
+    <div class="navgroup">
+      <a href="#autonomy">Autonomy Boundary</a>
+      <a href="#voice">Voice Requirement</a>
+      <a href="#credentials">Credentials &amp; Build Scope</a>
+      <a href="#deploy">Build &amp; Deployment</a>
+      <a href="#open">Open Items</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+
+  <section id="overview" class="header">
+    <div class="header-tag">Internal — Not Client-Facing — Built for Handoff to Claude Code</div>
+    <h1>VX-03 — Internal Operations Layer</h1>
+    <p class="lede" style="margin-top:14px;">A private, custom-built application housing the agents that run the business itself — marketing, sales management, and executive functions — separate from the client-facing diagnostic pipeline. Foundation only: built now without live credentials beyond what the operations workflow already uses; every external integration goes in as a ready-to-wire slot until credentials are supplied.</p>
+    <div class="status-strip">
+      <div class="status-chip"><span class="label">Access</span><span class="val">Single-user (you only) — private</span></div>
+      <div class="status-chip"><span class="label">Model</span><span class="val">Claude Opus 5 — all agents</span></div>
+      <div class="status-chip"><span class="label">Interface</span><span class="val">Fully custom hosted app, not Obsidian</span></div>
+      <div class="status-chip"><span class="label">Device access</span><span class="val">Desktop-only, no phone view</span></div>
+      <div class="status-chip flag"><span class="label">Auth</span><span class="val">None yet — unguessable URL only</span></div>
+    </div>
+  </section>
+
+  <section id="stack">
+    <h2>Foundation Stack</h2>
+    <p class="lede">Kept deliberately close to the operations stack you've already built, so this doesn't become a second platform to maintain.</p>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Layer</th><th>Choice</th><th>Why</th></tr>
+        <tr><td class="strong">Hosting</td><td class="mono">Cloudflare Pages / Workers</td><td>Same host as the operations build — one place to manage, not two.</td></tr>
+        <tr><td class="strong">Database</td><td class="mono">Supabase — new project</td><td>Second free project under the same Supabase account (reports, memory, pending_approvals tables) — fully separate from the client-operations project, not just a schema. The free tier allows two active projects, so this costs nothing. Free projects pause after 7 days with no API traffic; once agents are live and running 24/7, move this project to the $25/mo Pro tier so it stays up.</td></tr>
+        <tr><td class="strong">Agents</td><td class="mono">Claude Opus 5</td><td>Strongest model on Pro, close to Fable 5 on everyday reasoning at a fraction of the cost — right fit for department-level agents running continuously.</td></tr>
+        <tr><td class="strong">Build path</td><td class="mono">Claude Code on the web (cloud sessions)</td><td>Runs independent of your laptop — see Build &amp; Deployment below.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="marketing">
+    <h2>Marketing Batch</h2>
+    <p class="lede">Seven agents. Channel agents publish; the content agent supplies what they publish; the engagement agent handles what comes back.</p>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Content Agent</span></div>
+      <p class="batch-desc">Drafts the copy that the LinkedIn, Facebook, and X agents publish, so all three channels keep one consistent voice instead of drifting apart. Built against your voice profile — see Voice Requirement below.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Drafting within established topics, formats, and voice.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">A new content pillar or campaign direction.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">LinkedIn Agent</span><span class="badge blue">External build</span></div>
+      <p class="batch-desc">Already being built by an outside company — integrates into this system as a connector once ready. Publishes content-agent drafts on a schedule it determines.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Timing and publishing of already-approved content.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">New campaign type or any paid promotion.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Facebook Agent</span></div>
+      <p class="batch-desc">Same publishing role as the LinkedIn agent, on Facebook. Built as a stubbed connector — see Credentials &amp; Build Scope.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Timing and publishing of already-approved content.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">New campaign type or any paid promotion.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">X / Twitter Agent</span></div>
+      <p class="batch-desc">Same publishing role, on X. Also a stubbed connector until credentials are supplied.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Timing and publishing of already-approved content.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">New campaign type or any paid promotion.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">SEO / Site Agent</span><span class="badge amber">Write access</span></div>
+      <p class="batch-desc">Can make changes directly rather than only suggesting them — but the routine line is drawn tighter than the publishing agents, since it edits the live site instead of posting something easily deleted.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Meta descriptions, alt text, internal linking, on-page copy, structural SEO fixes.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">Pricing pages, legal/contract-adjacent pages, any full page restructure.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Marketing Analytics Agent</span></div>
+      <p class="batch-desc">Tracks which channel is actually producing signups and feeds that up to the Chief-of-Staff — the source for decisions like "cut the underperforming channel, put more into what's working."</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">All of it — this agent only observes and reports, never acts externally.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">N/A</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Social Engagement Agent</span></div>
+      <p class="batch-desc">Reads and responds to comments and DMs across LinkedIn, Facebook, and X — questions, praise, complaints, and hostile comments alike. Distinct from the VX-04 voice line, which is phone/email only.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Replies to praise and simple factual questions.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">Any reply to criticism, an insult, or a public complaint — until its judgment there is proven out.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sales">
+    <h2>Sales Management Batch</h2>
+    <p class="lede">Two agents. A dedicated follow-up agent was cut — Apollo and Clay already handle timed, personalized follow-up inside the outreach sequence itself.</p>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Lead / Pipeline Agent</span></div>
+      <p class="batch-desc">Tracks every prospect through the outcome states already defined in the operations dashboard (blocked, rejected, pending payment, active analysis, concluded, etc.) and flags anything stalled.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Tracking, flagging stalls, reporting pipeline status.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">Any direct client-facing action it proposes taking.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Objection / FAQ Agent</span></div>
+      <p class="batch-desc">Maintains and uses a set of answers to recurring prospect questions, so replies stay consistent across the whole pipeline.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Answering known questions in already-approved language.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">A new or ambiguous question type it hasn't handled before.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="executive">
+    <h2>Executive Batch</h2>
+    <p class="lede">Three advisory roles. None of these publish, spend, or contact anyone directly — they watch their domain and report up.</p>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Finance-Watch Agent</span><span class="badge slate">CFO-style</span></div>
+      <p class="batch-desc">Tracks margins, PayPal flow, and cost-per-client against revenue-per-client as volume grows — this is the profit guardrail: it flags the moment that ratio turns unsustainable rather than after the fact.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Monitoring and reporting.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">Any recommendation to change pricing or pause spend.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Ops-Health Agent</span><span class="badge slate">COO-style</span></div>
+      <p class="batch-desc">Watches the operations pipeline itself (n8n / Supabase) for error rates and stuck cases — separate from, and reporting alongside, the error-workflow monitoring already built into Phase 0.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Monitoring and reporting.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">Any infrastructure change.</span></div>
+      </div>
+    </div>
+
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Growth-Strategy Agent</span><span class="badge slate">CMO-style</span></div>
+      <p class="batch-desc">Reads the marketing and sales agents' reports and proposes strategy shifts — the one place where marketing and sales performance get looked at together instead of separately.</p>
+      <div class="agent-rules">
+        <div class="rule routine"><span class="rk">Routine</span><span class="rv">Advisory only — proposes, never acts.</span></div>
+        <div class="rule approval"><span class="rk">Needs approval</span><span class="rv">Everything it proposes, by definition.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="orchestration">
+    <h2>Orchestration Layer</h2>
+    <p class="lede">One coordinating role, not a separate agent for every function that touches memory — a "memory agent" on top of this would just watch the same database twice.</p>
+    <div class="batch">
+      <div class="batch-head"><span class="batch-name">Chief-of-Staff Agent</span></div>
+      <p class="batch-desc">Every other agent reports to it: what it did, what it wants to do next. It filters — routine updates get logged to the reports table; anything that looks like a new idea or a problem gets written to the pending-approvals table for you to review. It queries its own memory store when it needs context on something, rather than you checking each agent individually.</p>
+      <div class="stepline">
+        <div class="step">Agent completes an action</div><span class="arrow">→</span>
+        <div class="step">Reports to Chief-of-Staff</div><span class="arrow">→</span>
+        <div class="step">Routine → logged</div><span class="arrow">/</span>
+        <div class="step">New idea or problem → pending-approvals queue</div>
+      </div>
+    </div>
+    <div class="tablewrap" style="margin-top:14px;">
+      <table>
+        <tr><th>Table</th><th>Holds</th></tr>
+        <tr><td class="strong mono">reports</td><td>Routine activity log from every agent — the record of what's been done.</td></tr>
+        <tr><td class="strong mono">memory</td><td>Durable context the Chief-of-Staff keeps and queries — since every agent run starts with no memory of the last one, this is what makes continuity possible at all.</td></tr>
+        <tr><td class="strong mono">pending_approvals</td><td>Anything outside an agent's routine scope, waiting on you.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="autonomy">
+    <h2>Autonomy Boundary — General Rule</h2>
+    <p class="lede">One principle, applied per agent above with its own specifics: <strong style="color:var(--text)">routine</strong> means anything inside an already-approved channel, budget, and scope — it runs with no permission needed. <strong style="color:var(--text)">Needs approval</strong> means anything new — a new channel, spending money, a pricing or messaging change, contacting someone outside the normal flow, or any action that can't be undone. A few agents sit off this default because the cost of a wrong autonomous move is higher for them specifically — the SEO agent's live-page edits and the engagement agent's replies to criticism are both drawn tighter than their batch-mates for that reason.</p>
+  </section>
+
+  <section id="voice">
+    <h2>Voice Requirement</h2>
+    <p class="lede">"As human as possible" is a real build requirement here, not a tone note — the content agent and the social engagement agent are the two that write in your business's voice in public, so both get built against an actual voice profile rather than a generic "sound friendly" instruction, which is what produces the robotic AI tells (em dashes and all) you're trying to avoid.</p>
+    <div class="flagbox">
+      <div class="flagbox-head"><h4>Two ways to build the voice profile</h4><span class="badge gold">Your call</span></div>
+      <p><strong>Option A:</strong> you supply a handful of things you've actually written — emails, posts, even voice-note transcripts — and it gets turned into a style guide the two agents are built against.</p>
+      <p><strong>Option B:</strong> skip that step for now — a natural, deliberately non-AI-sounding default voice gets drafted, and you correct it once you see it in action.</p>
+    </div>
+  </section>
+
+  <section id="credentials">
+    <h2>Credentials &amp; Build Scope</h2>
+    <p class="lede">Nothing beyond the existing operations-workflow keys gets touched. Everything else is scaffolded so the button exists but nothing fires until you supply the real key.</p>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Integration</th><th>Status</th><th>What gets built now</th></tr>
+        <tr><td class="strong">Claude API, n8n, Notion, Gmail, PayPal</td><td><span class="badge green">Live</span></td><td>Already connected via Phase 0 — reused, not duplicated.</td></tr>
+        <tr><td class="strong">Supabase</td><td><span class="badge green">New project, same account</span></td><td>Second free project, separate from the Phase 0 project — see Foundation Stack. Its URL and service key are new credentials, provided at session start.</td></tr>
+        <tr><td class="strong">LinkedIn</td><td><span class="badge blue">External build</span></td><td>Integration point ready to receive the agent once the outside company delivers it.</td></tr>
+        <tr><td class="strong">Facebook, X / Twitter</td><td><span class="badge amber">Stubbed</span></td><td>Full agent logic and publishing code built; connector slot sits empty until you supply API keys.</td></tr>
+        <tr><td class="strong">Apollo, Clay</td><td><span class="badge slate">Out of scope</span></td><td>Handled inside Apollo/Clay directly, per your call — nothing built for them here.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="deploy">
+    <h2>Build &amp; Deployment</h2>
+    <p class="lede">This is a one-off build, not a recurring job — the right tool is a Claude Code cloud session, not a scheduled Routine and not Dispatch.</p>
+    <div class="stepline">
+      <div class="step">Project pushed to GitHub (if not already)</div><span class="arrow">→</span>
+      <div class="step">Cloud session started at claude.ai/code</div><span class="arrow">→</span>
+      <div class="step">Runs on Anthropic's infrastructure, independent of your laptop</div><span class="arrow">→</span>
+      <div class="step">Checked from the Claude mobile app whenever you want</div>
+    </div>
+    <p style="margin-top:10px;">Closing the laptop mid-build is safe with this path. Opening a plain Claude Code terminal session and closing the terminal, or using Dispatch with the machine off, are not — both depend on something on your end staying on.</p>
+  </section>
+
+  <section id="open">
+    <h2>Open Items</h2>
+    <p class="lede">Small enough not to block the build starting — but worth a quick answer before or shortly after.</p>
+    <div class="askbox"><span class="n">01</span><p><strong>Voice profile:</strong> Option A (you supply writing samples) or Option B (draft a default, you correct it)?</p></div>
+    <div class="askbox"><span class="n">02</span><p><strong>Lead/Pipeline and Objection/FAQ agents:</strong> confirm neither needs a tighter approval line than stated above — both are currently "acts within the pipeline, no direct client contact without approval."</p></div>
+  </section>
+
+  <footer>Velvex VX-03 — Internal Operations Layer. Working document, current as of this session. Separate from, and reports up to, the client-facing pipeline in the Operational Architecture dashboard.</footer>
+
+</main>
+</div>
+
+<script>
+  const links = document.querySelectorAll('nav a');
+  const sections = document.querySelectorAll('main section');
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(s => {
+      const rect = s.getBoundingClientRect();
+      if (rect.top <= 120) current = s.id;
+    });
+    links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + current));
+  });
+  links.forEach(l => l.addEventListener('click', () => {
+    document.getElementById('sideNav').classList.remove('open');
+  }));
+</script>
+</body>
+</html>
