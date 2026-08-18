@@ -1,0 +1,56 @@
+# VX-03 — Velvex internal operations layer
+# Cloudflare Worker. Same host as the operations build, per the architecture doc's
+# Foundation Stack: one place to manage, not two.
+#
+# This Worker is deliberately separate from anything in the client-facing
+# operations pipeline (Phase 0). It shares no bindings, no database and no
+# secrets with it.
+
+name = "velvex-vx03"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+account_id = "cb58bfa682b8997a987de0637c7a69bc"
+
+workers_dev = true
+
+[observability]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Non-secret configuration.
+# Secrets are NEVER put here — see .dev.vars.example and DEPLOY.md.
+# ---------------------------------------------------------------------------
+[vars]
+VX_ENV = "production"
+SUPABASE_URL = "https://ttwudgdwusorwscegtnz.supabase.co"
+
+# Agents all run on Claude Opus 5 (architecture doc, Foundation Stack).
+# Per-agent reasoning effort is set in src/agents/*, not here.
+MODEL_ID = "claude-opus-5"
+
+# Facebook / X connectors stay inactive until real credentials are supplied as
+# secrets. Flipping these to "true" without setting the matching secrets is
+# refused at startup by src/connectors/*.
+FACEBOOK_ENABLED = "false"
+X_ENABLED = "false"
+
+# The LinkedIn agent is built by an outside company. This Worker only exposes
+# the integration point it will call. No agent, no scheduling on our side.
+LINKEDIN_INTEGRATION_ENABLED = "false"
+
+# Ops-Health reads the operations pipeline read-only. Left unset on purpose:
+# no Phase 0 credentials are wired into this project.
+OPS_PIPELINE_MONITOR_ENABLED = "false"
+
+# ---------------------------------------------------------------------------
+# Scheduled runs. Free-tier Supabase pauses after 7 days without API traffic;
+# the hourly tick alone is enough to keep the project awake until it moves to
+# Pro, as the architecture doc anticipates.
+# ---------------------------------------------------------------------------
+[triggers]
+crons = [
+  "0 * * * *",   # hourly agent tick — each agent runs if its own cadence is due
+  "0 7 * * *",   # 07:00 UTC — Chief-of-Staff daily roll-up
+  "0 8 * * 1"    # Monday 08:00 UTC — executive weekly review
+]

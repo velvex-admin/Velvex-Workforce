@@ -1,0 +1,26 @@
+{
+  "name": "velvex-vx03",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VX-03 — Velvex internal operations layer. Marketing, sales-management and executive agents, coordinated by a Chief-of-Staff.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:apply": "node scripts/apply-migrations.mjs",
+    "secrets:list": "wrangler secret list"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260818.1",
+    "pg": "^8.13.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5",
+    "wrangler": "^4.124.0"
+  }
+}
