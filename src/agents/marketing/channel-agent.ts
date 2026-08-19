@@ -64,7 +64,7 @@ export interface ChannelStrategistSpec {
   audienceLine: string;
   /**
    * A predicate that decides whether this strategist is active for this run.
-   * Facebook uses `flag(env.FACEBOOK_ENABLED)`; LinkedIn always active because
+   * Facebook uses `flag(env.FACEBOOK_ENABLED`; LinkedIn always active because
    * the owner asked for it; X active because posting is a first-class goal.
    */
   active: (env: Env) => boolean;
@@ -392,7 +392,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         }
       }
 
-      // --- drafting pass --------------------------------------------------
+      // --- drafting pass ---------------------------------------------------
       // Only draft when the shelf for this channel is short. That caps spend
       // even on a busy schedule.
       if (ready.length >= TARGET_READY_PER_CHANNEL) {

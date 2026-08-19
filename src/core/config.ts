@@ -1,6 +1,6 @@
 // The already-approved scope.
 //
-// "Routine" only means something if there is a written-down record of what has
+// "Routine" only means something if there is a written-down record of what
 // already been approved. That record is this file. Widening anything here is
 // itself an approval decision — which is why it is code you change, not
 // something an agent can edit at runtime.

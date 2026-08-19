@@ -10,7 +10,7 @@ Three tiers, and a fourth answer that turns out to matter most: no model at all.
 | Reasoning | `claude-opus-5` | $5 / $25 | Public writing in the Velvex voice, and judgement that is expensive to get wrong |
 | Balanced | `claude-sonnet-5` | $3 / $15 | Competent reading and writing inside tight, well-specified bounds |
 | Fast | `claude-haiku-4-5` | $1 / $5 | Mechanical, high-volume, low-stakes work |
-| None | — | — | Arithmetic, clocks, threshold checks, and an external build |
+| None | â | â | Arithmetic, clocks, threshold checks, and an external build |
 
 Tier ids live in `src/core/models.ts` and can be overridden per deployment with
 `MODEL_REASONING`, `MODEL_BALANCED` and `MODEL_FAST` in `wrangler.toml`, so a
@@ -28,10 +28,10 @@ whole tier can move without touching code.
 | Marketing Analytics | Sonnet 5 | `medium` | The aggregation is deterministic. Only the four-sentence read needs a model, and you are the only reader. |
 | Objection / FAQ | Sonnet 5 | `high` | Matching a question to an approved answer, and drafting a candidate when none fits. Every new answer is reviewed by you before it is used, so the reasoning tier would be paying twice for the same safety. |
 | Finance-Watch | Sonnet 5 | `medium` | The guardrail is arithmetic and runs before any model is called. The model writes three sentences about the ratio. |
-| Facebook, X | none | — | Deciding whether a slot is due and picking the oldest unpublished draft is a clock and a list. The copy already came through the content agent. |
-| Lead / Pipeline | none | — | A stall is a subtraction against a threshold. Paying a model to restate arithmetic would buy nothing and add a failure mode. |
-| Ops-Health | none | — | Error rate against a threshold, stuck cases against a count, hourly. Exactly where a needless call adds up. |
-| LinkedIn | none | — | External build. Somebody else's model cost. |
+| Facebook, X | none | â | Deciding whether a slot is due and picking the oldest unpublished draft is a clock and a list. The copy already came through the content agent. |
+| Lead / Pipeline | none | â | A stall is a subtraction against a threshold. Paying a model to restate arithmetic would buy nothing and add a failure mode. |
+| Ops-Health | none | â | Error rate against a threshold, stuck cases against a count, hourly. Exactly where a needless call adds up. |
+| LinkedIn | none | â | External build. Somebody else's model cost. |
 
 Two shared calls sit below their agents:
 
@@ -69,7 +69,7 @@ daily monitoring, weekly strategy):
 | Marketing Analytics | balanced | 0.25 |
 | Finance-Watch | balanced | 0.20 |
 | Facebook, X, LinkedIn, Lead/Pipeline, Ops-Health | none | 0.00 |
-| **Total** | | **≈ $11** |
+| **Total** | | **â $11** |
 
 Running the same work entirely on Opus 5 lands around $16 to $17. The saving is
 about a third today, and it widens as volume grows: the tiered calls are the ones
