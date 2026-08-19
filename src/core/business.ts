@@ -60,6 +60,19 @@ export const BUSINESS = {
     "six-dimension scoring breakdown, ranked pressure points and three prioritised " +
     "recommendations. It is paired with a five-minute executive audio briefing.",
 
+  /**
+   * Introductory price for the first 10 clients: $149 per engagement. After
+   * those first 10, the price rises to the standing $999. Do not conflate the
+   * two: an agent that quotes $999 to a lead who qualifies for the intro rate
+   * has invented the wrong number, and an agent that keeps quoting $149 after
+   * the seats are filled has misrepresented the offer.
+   *
+   * Agents that need to state a price should say the intro rate is $149 for
+   * the first 10 clients only, then $999 thereafter, and offer to confirm
+   * whether seats remain rather than committing to either.
+   */
+  introPriceUsd: 149,
+  introSeats: 10,
   priceUsd: 999,
   turnaround: "Delivered within 24 hours of an accepted intake.",
   guarantee: "Money-back guarantee, with structured follow-up at 30, 90 and 180 days.",

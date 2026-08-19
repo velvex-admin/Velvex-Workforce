@@ -40,19 +40,22 @@ import {
   type ContentPillar,
 } from "../../core/config.js";
 import { flag, type Env } from "../../env.js";
+import {
+  dueSlot,
+  ensureWeeklyPlan,
+  markSlotConsumed,
+  type WeeklyPlanSpec,
+} from "../../core/schedule.js";
 
-export interface ChannelSchedule {
-  hours: number[];
-  days: number[];
-  minGapHours: number;
-}
+// Windows and weekly plan live in src/core/schedule.ts; a strategist supplies
+// a WeeklyPlanSpec via the "schedule" field below.
 
 export interface ChannelStrategistSpec {
   id: AgentId;
   name: string;
   channel: Channel;
   description: string;
-  schedule: ChannelSchedule;
+  schedule: WeeklyPlanSpec;
   /** Hard platform limit, enforced before anything reaches the connector. */
   maxLength?: number;
   /** Platform-native writing tips passed into the model prompt. */
@@ -122,10 +125,6 @@ interface StrategyResult {
   growth_ideas: Array<{ title: string; why: string; risk: "low" | "medium" | "high" }>;
 }
 
-function slotIsDue(schedule: ChannelSchedule, now: Date): boolean {
-  return schedule.days.includes(now.getUTCDay()) && schedule.hours.includes(now.getUTCHours());
-}
-
 function isApprovedPillar(value: unknown): value is ContentPillar {
   return typeof value === "string" && (CONTENT_PILLARS as readonly string[]).includes(value);
 }
@@ -187,13 +186,22 @@ ${spec.platformGuide}
 
 How engagement shows up on this platform: ${spec.audienceLine}
 
+Learning from past posts DOES NOT MEAN copying or paraphrasing them. It means:
+
+- reading which openings, structures and observations landed vs stalled
+- writing something new that is unmistakably you, in a shape the audience has not seen this month
+- if every recent post opened the same way, deliberately break the pattern
+- if every recent post named the same mechanism, name a different one
+
+Creativity is the point. If a draft could sit inside the "recent posts" list below without anyone noticing it is new, rewrite it.
+
 Draft exactly one post, plus zero to three growth ideas that would need the owner's approval before they run.
 
 Every draft must:
 - pick a pillar from: ${CONTENT_PILLARS.join(", ")}
 - pick a format from: ${APPROVED_FORMATS.join(", ")}
 - read as one specific observation, not a summary
-- avoid repeating the recent posts below
+- open differently from the openings in the recent posts below
 ${spec.maxLength ? `- fit within ${spec.maxLength} characters` : ""}
 
 Growth ideas are things you would try if allowed: engaging a specific external account, a new post format, a campaign concept, a series. Each carries a risk rating. Never suggest paid promotion at low risk; it is always high.
@@ -327,11 +335,6 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         return [];
       }
 
-      // On a cron tick, only work if the slot is due. Manual triggers always run.
-      if (ctx.trigger === "cron" && !slotIsDue(spec.schedule, ctx.now)) {
-        return [];
-      }
-
       const drafts = await state.contentQueue(ctx.db);
       const ready = drafts.filter(
         (draft) =>
@@ -342,9 +345,11 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       const proposals: ProposedAction[] = [];
 
       // --- publishing pass ------------------------------------------------
-      // A slot is due; take the oldest draft targeted at this channel that has
-      // not been published here yet, if any.
-      if (slotIsDue(spec.schedule, ctx.now)) {
+      // The weekly plan holds 3 randomised slots inside English-audience windows.
+      // We publish when a slot has passed and has not been consumed yet.
+      const plan = await ensureWeeklyPlan(ctx.db, spec.schedule, ctx.now);
+      const slot = dueSlot(plan, ctx.now);
+      if (slot) {
         const history = await readChannelHistory(spec.channel, ctx);
         const withinGap =
           history.lastPublishedAt !== null &&
@@ -376,10 +381,11 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
                   withinApprovedScope: next.withinApprovedScope,
                   pillar: next.pillar,
                   format: next.format,
+                  scheduledSlot: slot,
                 },
-                rationale: `Slot is due and draft ${next.id} is ready.`,
+                rationale: `Weekly plan slot at ${slot} is due and draft ${next.id} is ready.`,
                 reversible: true,
-                dedupeKey: `publish:${spec.channel}:${next.id}`,
+                dedupeKey: `publish:${spec.channel}:${slot}`,
               });
             }
           }
@@ -559,6 +565,11 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           format: String(action.payload["format"] ?? ""),
         });
         await stampPublished(queued.id);
+        const usedSlot = action.payload["scheduledSlot"];
+        if (typeof usedSlot === "string") {
+          const currentPlan = await ensureWeeklyPlan(ctx.db, spec.schedule, ctx.now);
+          await markSlotConsumed(ctx.db, spec.schedule, usedSlot, currentPlan);
+        }
         return {
           outcome: "executed",
           externalRef: queued.id,
@@ -582,6 +593,11 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           ctx.env
         );
         await stampPublished(result.externalRef);
+        const usedSlot = action.payload["scheduledSlot"];
+        if (typeof usedSlot === "string") {
+          const currentPlan = await ensureWeeklyPlan(ctx.db, spec.schedule, ctx.now);
+          await markSlotConsumed(ctx.db, spec.schedule, usedSlot, currentPlan);
+        }
         return {
           outcome: "executed",
           externalRef: result.externalRef,

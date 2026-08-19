@@ -201,8 +201,10 @@ export const FAQ_LIBRARY: FaqEntry[] = [
     matches: ["how much", "cost", "price", "pricing", "what does it cost", "fee"],
     question: "What does a Velvex diagnostic cost?",
     approvedAnswer:
-      "A Velvex diagnostic is $999 per engagement, including structured follow-up at 30, 90, and " +
-      "180 days after delivery and a money-back guarantee.",
+      "A Velvex diagnostic is normally $999 per engagement, including structured follow-up at 30, " +
+      "90 and 180 days after delivery and a money-back guarantee. An introductory rate of $149 is " +
+      "in place for the first 10 clients only, after which pricing returns to the standing $999. " +
+      "Reach out and we will confirm whether the intro rate is still available.",
   },
   {
     id: "faq.inputs",

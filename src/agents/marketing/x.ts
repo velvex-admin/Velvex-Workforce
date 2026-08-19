@@ -6,6 +6,7 @@
 // of ready posts is waiting the moment the connector goes live.
 
 import { createChannelStrategist } from "./channel-agent.js";
+import { ENGLISH_AUDIENCE_WINDOWS_WEEKDAY } from "../../core/schedule.js";
 
 export const xAgent = createChannelStrategist({
   id: "x",
@@ -13,10 +14,16 @@ export const xAgent = createChannelStrategist({
   channel: "x",
   description:
     "Reads how the account has posted before, drafts posts written for X, and proposes growth plays for approval. Publishing is inactive until API credentials are supplied.",
+  // Three posts a week, jittered inside weekday windows tuned to English-speaking
+  // audiences (12:00-21:00 UTC covers UK afternoon to US morning-through-midday).
+  // The actual times are picked deterministically per ISO week so the same
+  // schedule stays put across worker restarts, but they vary each week and
+  // never land at fixed hour-on-the-hour marks that read as automated.
   schedule: {
-    hours: [9, 13, 17],
-    days: [1, 2, 3, 4, 5],
-    minGapHours: 4,
+    channel: "x",
+    weeklyPosts: 3,
+    windows: ENGLISH_AUDIENCE_WINDOWS_WEEKDAY,
+    minGapHours: 30,
   },
   maxLength: 280,
   audienceLine:

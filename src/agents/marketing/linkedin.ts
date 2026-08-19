@@ -13,6 +13,7 @@
 // route: "linkedin-partner-queue" option).
 
 import { createChannelStrategist } from "./channel-agent.js";
+import { ENGLISH_AUDIENCE_WINDOWS_MIDWEEK } from "../../core/schedule.js";
 
 export const linkedInAgent = createChannelStrategist({
   id: "linkedin",
@@ -20,12 +21,15 @@ export const linkedInAgent = createChannelStrategist({
   channel: "linkedin",
   description:
     "Owns the LinkedIn company page. Reads how it has posted before, drafts LinkedIn-native posts, and proposes growth plays for approval. Publishing is routed to the partner queue.",
+  // Three posts a week, jittered inside Tue-Thu windows (13:00-21:00 UTC covers
+  // the executive-audience window across the UK and the US). Slot times are
+  // picked per ISO week so it never reads as a cron on the hour, but stays
+  // stable across worker restarts within the week.
   schedule: {
-    // Tuesday and Thursday mornings, the standard executive-audience windows.
-    // Weekly minimum gap so we do not compete with the previous post for reach.
-    hours: [8, 14],
-    days: [2, 4],
-    minGapHours: 36,
+    channel: "linkedin",
+    weeklyPosts: 3,
+    windows: ENGLISH_AUDIENCE_WINDOWS_MIDWEEK,
+    minGapHours: 24,
   },
   audienceLine:
     "Reactions and comments from operators, allocators and executives. A post that reads as a considered observation gets shared with intent; a post that reads as marketing is scrolled past.",

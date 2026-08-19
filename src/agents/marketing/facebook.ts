@@ -9,6 +9,7 @@
 
 import { flag } from "../../env.js";
 import { createChannelStrategist } from "./channel-agent.js";
+import { ENGLISH_AUDIENCE_WINDOWS_WEEKDAY } from "../../core/schedule.js";
 
 export const facebookAgent = createChannelStrategist({
   id: "facebook",
@@ -17,9 +18,10 @@ export const facebookAgent = createChannelStrategist({
   description:
     "Idle. Turns on when FACEBOOK_ENABLED is set. Then reads how the page has posted, drafts Facebook-native posts, and proposes growth plays for approval.",
   schedule: {
-    hours: [10, 15],
-    days: [1, 2, 3, 4, 5],
-    minGapHours: 20,
+    channel: "facebook",
+    weeklyPosts: 3,
+    windows: ENGLISH_AUDIENCE_WINDOWS_WEEKDAY,
+    minGapHours: 30,
   },
   audienceLine:
     "Page reactions, comments and shares. A Facebook post is scrolled past unless it lands a specific claim in its first sentence.",

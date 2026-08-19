@@ -73,6 +73,7 @@ src/
     types.ts            ProposedAction and the shared vocabulary
     models.ts           the three model tiers and what each one can do
     business.ts         what Velvex is, taken from the live site
+    schedule.ts         weekly jittered posting plan (3 posts/week, English audience)
     autonomy.ts         the boundary: the general rule, as code
     agent.ts            propose -> classify -> execute or queue -> report
     config.ts           the already-approved scope: pillars, pages, states, FAQ
