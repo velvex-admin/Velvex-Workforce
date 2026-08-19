@@ -36,6 +36,10 @@ export const leadPipelineAgent: AgentDefinition = {
   batch: "sales_management",
   description:
     "Tracks every prospect through the outcome states defined in the operations dashboard and flags anything stalled.",
+  // No model calls. A stall is a subtraction against the thresholds in config,
+  // and the states come from the operations dashboard vocabulary. Paying a
+  // model to restate arithmetic would buy nothing.
+  model: null,
   effort: "high",
   cadence: "daily",
   approvedChannels: ["internal"],

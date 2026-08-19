@@ -35,7 +35,7 @@ describe("Content Agent", () => {
       action({
         type: "draft_content",
         channel: "internal",
-        payload: { pillar: "operational-diagnostics", format: "short-post", voiceClean: true },
+        payload: { pillar: "structural-architecture", format: "short-post", voiceClean: true },
       })
     );
     expect(decision.classification).toBe("routine");
@@ -60,7 +60,7 @@ describe("Content Agent", () => {
         type: "draft_content",
         channel: "internal",
         payload: {
-          pillar: "client-outcomes",
+          pillar: "channel-dependency",
           format: "short-post",
           voiceClean: false,
           voiceViolations: [{ id: "em-dash" }],

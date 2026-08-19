@@ -5,6 +5,7 @@
 // needs-approval line from being a comment.
 
 import type { Effort } from "../lib/claude.js";
+import type { AgentModel } from "./models.js";
 import { Claude } from "../lib/claude.js";
 import type { Supabase } from "../lib/supabase.js";
 import type { Env } from "../env.js";
@@ -44,7 +45,14 @@ export interface AgentDefinition {
   /** One line, taken from the agent's section in the architecture doc. */
   description: string;
 
-  /** Opus 5 for every agent; effort is the per-agent dial. */
+  /**
+   * The model this agent thinks with, chosen for the work it actually does.
+   * `null` means it makes no model calls at all: timing, threshold checks and
+   * stall arithmetic are deterministic, and an external build is somebody
+   * else's cost. See docs/MODEL-CHOICES.md.
+   */
+  model: AgentModel;
+  /** How hard that model thinks. Ignored by models that take no effort setting. */
   effort: Effort;
   cadence: Cadence;
 
@@ -92,6 +100,9 @@ export interface AgentRunResult {
   executed: number;
   queued: number;
   failed: number;
+  /** What this agent's model calls cost, in USD. Zero for the agents with no model. */
+  costUsd: number;
+  modelCalls: number;
   decisions: Array<{ action: ProposedAction; decision: RuleDecision; outcome?: string }>;
   error?: string;
 }
@@ -113,7 +124,18 @@ export async function runAgent(
     executed: 0,
     queued: 0,
     failed: 0,
+    costUsd: 0,
+    modelCalls: 0,
     decisions: [],
+  };
+
+  // Snapshot spend so this agent's share of the bill is attributable to it.
+  const spendBefore = ctx.claude instanceof Claude ? ctx.claude.spentUsd : 0;
+  const callsBefore = ctx.claude instanceof Claude ? ctx.claude.callCount : 0;
+  const settleSpend = () => {
+    if (!(ctx.claude instanceof Claude)) return;
+    result.costUsd = Math.round((ctx.claude.spentUsd - spendBefore) * 1_000_000) / 1_000_000;
+    result.modelCalls = ctx.claude.callCount - callsBefore;
   };
 
   if (agent.externalBuild) {
@@ -138,6 +160,7 @@ export async function runAgent(
       },
       ctx
     );
+    settleSpend();
     return result;
   }
 
@@ -213,5 +236,6 @@ export async function runAgent(
     }
   }
 
+  settleSpend();
   return result;
 }

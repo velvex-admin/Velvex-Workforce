@@ -3,21 +3,31 @@
 Kept here rather than guessed at. Each one has a note on what was built in the
 meantime, so nothing is blocked waiting on an answer.
 
-## 1. What platform does the website run on?
+## 1. How does the SEO agent write to the site?
 
 The SEO / Site agent is given write access: "can make changes directly rather
-than only suggesting them". But no site platform is named anywhere in the doc,
-and no site credentials appear in the Credentials & Build Scope table. Webflow,
-WordPress and a static repo are three different integrations, and there was no
-way to pick one correctly.
+than only suggesting them". The architecture doc names no platform, though the
+live site is now known: velvex-site.netlify.app, a static build on Netlify.
+
+That narrows it without settling it. Writing to a Netlify site means either
+committing to the repository that builds it, or using the Netlify API with a
+token. The site's repository is not this one, and this session was asked to work
+only in Velvex-Workforce, so neither path was taken.
 
 **Built instead:** the agent runs in full. It inventories pages, finds real
 issues (missing or badly sized meta descriptions, missing alt text, orphan
-pages), drafts the fix through the voice profile, and applies its own routine /
-protected-page rules to each one. Every edit is written out completely — page,
-exact before, exact after — into the site change queue, where it waits.
-Connecting a real platform means implementing the `SiteWriter` interface in
-`src/connectors/site.ts` once. Nothing else changes.
+pages), drafts the fix through the voice profile, and applies its own routine and
+protected-page rules to each one. Every edit is written out completely, page,
+exact before, exact after, into the site change queue, where it waits.
+
+Wiring it up means implementing the `SiteWriter` interface in
+`src/connectors/site.ts` once, against whichever you prefer: a commit to the
+site's repository, or the Netlify API. Tell me which and it is a small job.
+
+One thing worth knowing either way: `/faq` on the live site carries the $999
+price, the money-back guarantee and the confidentiality commitment. It is a
+pricing and contract-adjacent page wearing a different name, so it is on the
+protected list and every edit to it is queued for you.
 
 ## 2. Where does the pipeline, finance and site data come from?
 
@@ -56,19 +66,46 @@ It does not contact anyone. Whatever is already talking to the prospect reads th
 answer from the report. Direct contact stays behind the approval line, which
 matches Open Item 02's stated position in the doc.
 
-## 5. Content pillars and FAQ library are seeded, not given
+## 5. Content pillars and the FAQ library (resolved from the live site)
 
 The doc's routine line for the content agent is "drafting within established
 topics", and for the FAQ agent "answering known questions in already-approved
-language". Neither list exists in the doc.
+language". Neither list exists in the doc, and both were seeded on guesswork in
+the first build.
 
-**Built as:** both are seeded with reasonable starting sets in
-`src/core/config.ts` — five content pillars, five FAQ entries — and both are
-plain code you edit. Widening either is itself an approval decision, which is
-why an agent cannot edit them at runtime. Anything outside them is queued, so a
-short list is safe rather than limiting.
+**Now taken from the site.** The FAQ library is the live site's own eight
+questions and answers, word for word: that is the strongest available reading of
+"already-approved language", since it is text the business has already published
+under its own name. The five content pillars are drawn from what the site
+actually claims and sells (structural architecture, margin and unit economics,
+channel dependency, scale readiness, the diagnostic standard itself). Both still
+live in `src/core/config.ts` and are plain code you edit, because widening either
+is an approval decision in its own right.
 
-## 6. Voice profile: Option A or Option B
+Everything the agents assert about the business now comes from one file,
+`src/core/business.ts`: the offer, the $999 price, the 24-hour turnaround, the
+Executive Ledger, the Veĺa engine, the money-back guarantee. If any of that
+changes on the site, change it there and every agent follows.
+
+## 6. The voice profile bans em dashes; the site uses them
+
+Worth a decision, and it is a one-line change either way.
+
+The architecture doc is explicit that "as human as possible" means avoiding the
+robotic AI tells, "em dashes and all". The live Velvex site uses em dashes
+freely, in headline copy: "Your structure either holds under scale— or it
+doesn't."
+
+The spec was followed: em dashes are banned, and the mechanical check strips them
+before any draft can be published. If the site's usage is the real house style,
+set `allowEmDash: true` in `src/core/voice.ts` and the check stops firing.
+
+Separately, the voice guide itself has been rewritten to match the register the
+site actually uses: declarative, structural vocabulary, no founder anecdotes, no
+selling. The earlier draft was written for a friendly small-business consultancy
+and would have sounded wrong next to the site.
+
+## 7. Voice profile: Option A or Option B
 
 The doc's own Open Item 01. You said to set the open items aside for now, so the
 system uses the doc's Option B: a deliberately non-AI-sounding default voice,

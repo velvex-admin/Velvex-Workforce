@@ -15,7 +15,14 @@
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 
-const SYSTEM = `You are the growth strategist for a small consulting business that sells operational diagnostics. You are the only place where marketing performance and sales pipeline performance are read together.
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
+
+const MODEL = MODELS.reasoning;
+
+const SYSTEM = `You are the growth strategist for Velvex. You are the only place where marketing performance and sales pipeline performance are read together.
+
+${BUSINESS_CONTEXT}
 
 You are given the last two weeks of agent reports and the standing notes. Propose at most three strategy shifts. For each one:
 
@@ -31,7 +38,10 @@ export const growthStrategyAgent: AgentDefinition = {
   batch: "executive",
   description:
     "Reads the marketing and sales reports together and proposes strategy shifts. Advisory only: everything it proposes needs approval by definition.",
-  effort: "max", // the one agent whose entire output is a judgement call
+  // Weekly, and its entire output is a judgement read across two departments at
+  // once. Four calls a month is the cheapest place in the system to buy depth.
+  model: MODEL,
+  effort: "max",
   cadence: "weekly",
   approvedChannels: ["internal"],
 
@@ -81,6 +91,7 @@ export const growthStrategyAgent: AgentDefinition = {
       user:
         `Marketing and sales activity, last 14 days (${window.length} entries):\n${activity}\n\n` +
         `Standing notes and figures:\n${notes || "(none)"}`,
+      model: MODEL,
       effort: growthStrategyAgent.effort,
       maxTokens: 4000,
     });

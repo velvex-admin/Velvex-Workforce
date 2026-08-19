@@ -74,7 +74,7 @@ Text, so the value is encrypted and never shown again.
 | Name | Value |
 |---|---|
 | `APP_PATH_SECRET` | The random string that makes your URL unguessable. Generate at least 32 hex characters, or use the one supplied to you separately. |
-| `ANTHROPIC_API_KEY` | Your Claude API key. Every agent runs on Claude Opus 5. |
+| `ANTHROPIC_API_KEY` | Your Claude API key. Agents run on Opus 5, Sonnet 5 or Haiku 4.5 depending on the work, and five make no model calls at all. |
 | `SUPABASE_SERVICE_ROLE_KEY` | The service role key for the VX-03 Supabase project. |
 
 Click **Deploy** after adding them.
@@ -146,6 +146,20 @@ PUT https://<worker-url>/x/<APP_PATH_SECRET>/api/state/marketing.signups
 Each takes a JSON body; the shapes are in `src/core/state.ts`. n8n can post
 these on a schedule. Until then every affected agent says plainly that it has no
 data rather than inventing any.
+
+For the site inventory there is a script that reads the live site for you:
+
+```bash
+node scripts/seed-site-inventory.mjs                     # see what it found
+VX_URL='https://velvex-vx03.<subdomain>.workers.dev' \
+VX_PATH_SECRET='<APP_PATH_SECRET>' \
+  node scripts/seed-site-inventory.mjs --push            # send it to the app
+```
+
+As of this build it reads three pages and none of them has a meta description,
+so the SEO agent has real work waiting: two routine edits it can make on its own,
+and one on `/faq` that it will queue for you, because that page carries the price
+and the guarantee.
 
 ---
 

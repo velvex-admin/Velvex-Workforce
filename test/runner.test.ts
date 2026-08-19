@@ -27,6 +27,7 @@ function agentThatProposes(actions: ProposedAction[], overrides: Partial<AgentDe
     name: "Test Agent",
     batch: "marketing",
     description: "test",
+    model: "claude-sonnet-5",
     effort: "medium",
     cadence: "manual",
     approvedChannels: ["internal"],

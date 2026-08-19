@@ -25,14 +25,21 @@ import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 import { facebookConnector } from "../../connectors/facebook.js";
 import { xConnector } from "../../connectors/x.js";
 import { enqueueForPartner, takeInbound } from "../../connectors/linkedin.js";
+import { spamTriage } from "../../lib/judge.js";
 import { getConnector } from "../../connectors/registry.js";
 import {
   ConnectorInactiveError,
   type Connector,
   type InboundMessage,
 } from "../../connectors/types.js";
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
 
-const SYSTEM = `You reply to public comments and direct messages on behalf of the owner of a consulting business that runs operational diagnostics for other companies.
+const MODEL = MODELS.reasoning;
+
+const SYSTEM = `You reply to public comments and direct messages on behalf of Velvex.
+
+${BUSINESS_CONTEXT}
 
 ${DEFAULT_VOICE.guide}
 
@@ -88,7 +95,11 @@ export const socialEngagementAgent: AgentDefinition = {
   batch: "marketing",
   description:
     "Reads and responds to comments and DMs across LinkedIn, Facebook and X. Praise and simple questions are answered; anything critical waits for you.",
-  effort: "xhigh", // public replies in the owner's voice, with a judgement call attached
+  // Public replies, written in the business's voice under a judgement call.
+  // The classification runs a tier down through the judge, and obvious spam is
+  // dropped a tier below that before either is paid for.
+  model: MODEL,
+  effort: "xhigh",
   cadence: "hourly",
   approvedChannels: ["linkedin", "facebook", "x"],
 
@@ -162,8 +173,19 @@ export const socialEngagementAgent: AgentDefinition = {
 
     const fresh = messages.filter((message) => !seen.has(message.id)).slice(0, 10);
     const candidates: Candidate[] = [];
+    const dropped: InboundMessage[] = [];
 
     for (const message of fresh) {
+      // Obvious spam is dropped on the fast tier before anything expensive
+      // runs. This filter can only ever say "definitely spam"; anything else,
+      // including an unsure answer or a failure, falls through to the real
+      // judge. That asymmetry is what makes the saving safe.
+      const triage = await spamTriage(ctx.claude, message.text);
+      if (triage.isSpam) {
+        dropped.push(message);
+        continue;
+      }
+
       const verdict = await ctx.judge.categorize<EngagementCategory>({
         text: message.text,
         categories: ENGAGEMENT_CATEGORIES,
@@ -177,7 +199,14 @@ export const socialEngagementAgent: AgentDefinition = {
       });
     }
 
-    const proposals: ProposedAction[] = [];
+    const proposals: ProposedAction[] = dropped.map((message) => ({
+      type: "observation" as const,
+      summary: `Ignored spam on ${message.channel}`,
+      channel: message.channel,
+      target: message.id,
+      payload: { messageId: message.id, category: "spam", filteredOn: "fast-tier triage" },
+      dedupeKey: `engagement:spam:${message.id}`,
+    }));
 
     for (const candidate of candidates) {
       if (candidate.category === "spam") {
@@ -198,6 +227,7 @@ export const socialEngagementAgent: AgentDefinition = {
           `Channel: ${candidate.message.channel}\n` +
           `This message reads as: ${candidate.category} (${candidate.reason})\n\n` +
           `Their message:\n"""\n${candidate.message.text}\n"""\n\nWrite the reply.`,
+        model: MODEL,
         effort: socialEngagementAgent.effort,
         maxTokens: 600,
       });

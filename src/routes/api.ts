@@ -12,6 +12,7 @@ import { AGENTS, executeApproval, runDue, runOne } from "../agents/registry.js";
 import { connectorStatuses } from "../connectors/registry.js";
 import { STATE_KEYS, state } from "../core/state.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
+import { resolveTiers } from "../core/models.js";
 
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
@@ -75,7 +76,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     }
     return json({
       environment: env.VX_ENV,
-      model: env.MODEL_ID,
+      modelTiers: resolveTiers(env),
       readiness: ready,
       database: dbStatus,
       connectors: connectorStatuses(env),
@@ -86,7 +87,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
         batch: agent.batch,
         description: agent.description,
         cadence: agent.cadence,
-        effort: agent.effort,
+        model: agent.model,
+        effort: agent.model ? agent.effort : null,
         observeOnly: agent.observeOnly ?? false,
         externalBuild: agent.externalBuild ?? false,
         routine: agent.routineRules.map((rule) => ({ id: rule.id, describe: rule.describe })),

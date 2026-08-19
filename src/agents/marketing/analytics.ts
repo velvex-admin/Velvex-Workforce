@@ -20,6 +20,11 @@ import { xConnector } from "../../connectors/x.js";
 import { readMetrics as readLinkedInMetrics } from "../../connectors/linkedin.js";
 import { ConnectorInactiveError, type ChannelMetrics } from "../../connectors/types.js";
 
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
+
+const MODEL = MODELS.balanced;
+
 const WINDOW_DAYS = 30;
 
 interface ChannelLine {
@@ -36,7 +41,10 @@ export const marketingAnalyticsAgent: AgentDefinition = {
   batch: "marketing",
   description:
     "Tracks which channel is actually producing signups and feeds that to the Chief-of-Staff. Observes and reports only.",
-  effort: "medium", // aggregation and a short written read of it
+  // The aggregation is deterministic. Only the four-sentence read of the
+  // numbers needs a model, and it is read by you, not by the public.
+  model: MODEL,
+  effort: "medium",
   cadence: "daily",
   observeOnly: true,
   approvedChannels: ["internal"],
@@ -136,10 +144,11 @@ export const marketingAnalyticsAgent: AgentDefinition = {
 
     const read = await ctx.claude.complete({
       system:
-        "You read marketing channel numbers for a small consulting business and say what they mean. " +
+        `You read marketing channel numbers for Velvex and say what they mean.\n\n${BUSINESS_CONTEXT}\n\n` +
         "Be blunt about what is not working. Never invent a number that is not in front of you, and " +
         "say plainly when a channel has too little data to judge. No em dashes. Four sentences at most.",
       user: `Window: last ${WINDOW_DAYS} days.\n\n${table}\n\nWhat does this say about where signups are coming from?`,
+      model: MODEL,
       effort: marketingAnalyticsAgent.effort,
       maxTokens: 800,
     });

@@ -23,11 +23,18 @@ import {
 import { state, type ContentDraft } from "../../core/state.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
+
+const MODEL = MODELS.reasoning;
+
 /** How many ready drafts to keep on the shelf before drafting more. */
 const TARGET_READY_DRAFTS = 4;
 const DRAFTS_PER_RUN = 2;
 
-const SYSTEM = `You write short public posts for a consulting business that runs operational diagnostics for small and mid-sized companies: it finds where work stalls inside a business and writes up what to fix first.
+const SYSTEM = `You write short public posts for Velvex.
+
+${BUSINESS_CONTEXT}
 
 ${DEFAULT_VOICE.guide}
 
@@ -68,7 +75,11 @@ export const contentAgent: AgentDefinition = {
   batch: "marketing",
   description:
     "Drafts the copy the channel agents publish, so all channels keep one voice instead of drifting apart.",
-  effort: "xhigh", // public writing in a specific voice; the depth is the point
+  // Public writing in the business's own voice, at two drafts a day. The most
+  // visible thing the system produces when it is wrong, and low enough volume
+  // that depth here costs pennies.
+  model: MODEL,
+  effort: "xhigh",
   cadence: "daily",
   approvedChannels: ["linkedin", "facebook", "x", "internal"],
 
@@ -152,6 +163,7 @@ export const contentAgent: AgentDefinition = {
           `Pillar: ${work.pillar}\nFormat: ${work.format}\n\n` +
           `Recent posts, so you do not repeat them:\n${recent || "(nothing yet)"}\n\n` +
           `Write the post.`,
+        model: MODEL,
         effort: contentAgent.effort,
         maxTokens: 2000,
       });
@@ -173,6 +185,7 @@ export const contentAgent: AgentDefinition = {
             `This draft broke the voice rules: ${violations
               .map((violation) => `${violation.id} (${violation.detail})`)
               .join("; ")}.\n\nRewrite it so it does not. Same point, same length.\n\n${text}`,
+          model: MODEL,
           effort: contentAgent.effort,
           maxTokens: 2000,
         });

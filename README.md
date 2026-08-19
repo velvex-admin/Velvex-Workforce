@@ -41,21 +41,27 @@ makes "routine vs needs approval" enforceable rather than a comment:
 
 ## The roster
 
-| Batch | Agent | Routine | Needs approval |
-|---|---|---|---|
-| Marketing | Content | Drafting inside established pillars, formats and voice | A new content pillar or campaign direction |
-| Marketing | LinkedIn *(external build)* | Timing and publishing approved content | New campaign type or paid promotion |
-| Marketing | Facebook *(connector inactive)* | Timing and publishing approved content | New campaign type or paid promotion |
-| Marketing | X / Twitter *(connector inactive)* | Timing and publishing approved content | New campaign type or paid promotion |
-| Marketing | SEO / Site *(write access)* | Meta, alt text, internal links, on-page copy, structural SEO | Pricing pages, legal pages, full restructures |
-| Marketing | Marketing Analytics *(observes only)* | All of it | N/A |
-| Marketing | Social Engagement | Replies to praise and simple factual questions | Any reply to criticism, insults or public complaints |
-| Sales | Lead / Pipeline | Tracking, flagging stalls, reporting | Any direct client-facing action |
-| Sales | Objection / FAQ | Known questions in already-approved language | New or ambiguous question types |
-| Executive | Finance-Watch *(observes only)* | Monitoring and reporting | Recommending a pricing change or pausing spend |
-| Executive | Ops-Health *(observes only)* | Monitoring and reporting | Any infrastructure change |
-| Executive | Growth-Strategy | Nothing: advisory only | Everything it proposes, by definition |
-| Orchestration | Chief-of-Staff | Logging activity, keeping memory | Acting on another agent's behalf |
+| Batch | Agent | Model | Routine | Needs approval |
+|---|---|---|---|---|
+| Marketing | Content | Opus 5 | Drafting inside established pillars, formats and voice | A new content pillar or campaign direction |
+| Marketing | LinkedIn *(external build)* | none | Timing and publishing approved content | New campaign type or paid promotion |
+| Marketing | Facebook *(connector inactive)* | none | Timing and publishing approved content | New campaign type or paid promotion |
+| Marketing | X / Twitter *(connector inactive)* | none | Timing and publishing approved content | New campaign type or paid promotion |
+| Marketing | SEO / Site *(write access)* | Sonnet 5 | Meta, alt text, internal links, on-page copy, structural SEO | Pricing pages, legal pages, full restructures |
+| Marketing | Marketing Analytics *(observes only)* | Sonnet 5 | All of it | N/A |
+| Marketing | Social Engagement | Opus 5 | Replies to praise and simple factual questions | Any reply to criticism, insults or public complaints |
+| Sales | Lead / Pipeline | none | Tracking, flagging stalls, reporting | Any direct client-facing action |
+| Sales | Objection / FAQ | Sonnet 5 | Known questions in already-approved language | New or ambiguous question types |
+| Executive | Finance-Watch *(observes only)* | Sonnet 5 | Monitoring and reporting | Recommending a pricing change or pausing spend |
+| Executive | Ops-Health *(observes only)* | none | Monitoring and reporting | Any infrastructure change |
+| Executive | Growth-Strategy | Opus 5 | Nothing: advisory only | Everything it proposes, by definition |
+| Orchestration | Chief-of-Staff | Opus 5 | Logging activity, keeping memory | Acting on another agent's behalf |
+
+Models are chosen per agent, not globally: reasoning tier where copy is public or
+a wrong judgement is expensive, balanced tier for bounded reading and writing,
+fast tier for the spam filter and alt text, and no model at all for the five
+agents whose work is arithmetic, a clock, or somebody else's build. Every call
+records its cost. See [docs/MODEL-CHOICES.md](docs/MODEL-CHOICES.md).
 
 ## Layout
 
@@ -65,6 +71,8 @@ src/
   env.ts                config, secrets, readiness
   core/
     types.ts            ProposedAction and the shared vocabulary
+    models.ts           the three model tiers and what each one can do
+    business.ts         what Velvex is, taken from the live site
     autonomy.ts         the boundary: the general rule, as code
     agent.ts            propose -> classify -> execute or queue -> report
     config.ts           the already-approved scope: pillars, pages, states, FAQ
@@ -72,12 +80,12 @@ src/
     state.ts            typed views over the memory table
   agents/               one module per agent, rules included
   connectors/           facebook, x (both inactive), linkedin integration point, site
-  lib/                  Claude (Opus 5), Supabase, the judge
+  lib/                  Claude (three model tiers), Supabase, the judge
   routes/               dashboard API, LinkedIn partner endpoints
   ui/                   the dashboard
 db/migrations/          reports, memory, pending_approvals
 docs/                   model choices, open items
-test/                   57 tests over the rules, the runner, the voice, the connectors
+test/                   73 tests over the rules, the runner, the voice, connectors, models
 ```
 
 ## Local development

@@ -1,23 +1,37 @@
 // Every agent's reasoning goes through here.
 //
-// One model for the whole system — Claude Opus 5, as the architecture doc
-// specifies. What varies per agent is `effort`, not the model: an agent that
-// only aggregates numbers does not need the same depth as one drafting public
-// copy or weighing a strategy shift. See docs/MODEL-CHOICES.md.
+// The model is chosen per agent, not globally: see src/core/models.ts for the
+// three tiers and docs/MODEL-CHOICES.md for why each agent sits where it does.
+// A call may also override its agent's model for one specific job, which is how
+// the SEO agent writes alt text on Haiku while writing meta descriptions on
+// Sonnet.
+//
+// Model capabilities differ, and getting that wrong is a 400 rather than a
+// degradation: Haiku 4.5 takes neither adaptive thinking nor an effort setting.
+// buildRequest() is the single place that knows this, and it is pure so the
+// behaviour is tested rather than hoped for.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { requireSecret, type Env } from "../env.js";
+import {
+  capabilitiesFor,
+  estimateCostUsd,
+  resolveTiers,
+  type ModelTier,
+  type TokenUsage,
+} from "../core/models.js";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface CompleteArgs {
   system: string;
   user: string;
+  /** Defaults to the calling agent's model, which the runner passes in. */
+  model?: string;
   effort?: Effort;
   maxTokens?: number;
   /** When set, the reply is constrained to this JSON Schema and parsed. */
   schema?: Record<string, unknown>;
-  /** Prior turns, oldest first. Used by the Chief-of-Staff for continuity. */
   history?: Anthropic.MessageParam[];
 }
 
@@ -25,8 +39,10 @@ export interface CompleteResult<T = string> {
   text: string;
   parsed?: T;
   model: string;
-  effort: Effort;
-  usage: Record<string, unknown>;
+  effort: Effort | null;
+  usage: TokenUsage;
+  /** Rough USD for this call. Written onto the report so spend stays visible. */
+  costUsd: number;
 }
 
 export class ModelError extends Error {
@@ -40,58 +56,101 @@ export class ModelError extends Error {
 }
 
 /**
- * Request and response shapes for API features the pinned SDK version does not
- * type yet: adaptive thinking, output_config.effort, and stop_details. The API
- * accepts them and the SDK passes the body through untouched, so these two
- * declarations plus one cast at the call site are the whole workaround. When
- * the SDK catches up, delete both and the casts with them.
+ * Request shapes for API features the pinned SDK version does not type yet:
+ * adaptive thinking, output_config.effort, and stop_details. The API accepts
+ * them and the SDK passes the body through untouched. When the SDK catches up,
+ * delete these and the casts with them.
  */
-interface CurrentMessageParams {
+export interface BuiltRequest {
   model: string;
   max_tokens: number;
-  thinking: { type: "adaptive" };
-  output_config: {
-    effort: Effort;
-    format?: { type: "json_schema"; schema: Record<string, unknown> };
-  };
   system: string;
   messages: Anthropic.MessageParam[];
+  thinking?: { type: "adaptive" };
+  output_config?: {
+    effort?: Effort;
+    format?: { type: "json_schema"; schema: Record<string, unknown> };
+  };
 }
 
 interface CurrentMessage extends Anthropic.Message {
   stop_details?: { type: string; category?: string | null; explanation?: string } | null;
 }
 
+/**
+ * Build the request body for one call, respecting what the chosen model
+ * actually supports. Pure, and exported for the tests.
+ */
+export function buildRequest(args: {
+  model: string;
+  system: string;
+  user: string;
+  effort?: Effort;
+  maxTokens?: number;
+  schema?: Record<string, unknown>;
+  history?: Anthropic.MessageParam[];
+}): BuiltRequest {
+  const capabilities = capabilitiesFor(args.model);
+
+  const request: BuiltRequest = {
+    model: args.model,
+    max_tokens: args.maxTokens ?? 16000,
+    system: args.system,
+    messages: [...(args.history ?? []), { role: "user", content: args.user }],
+  };
+
+  // Adaptive thinking and effort exist only on the current generation. Sending
+  // either to Haiku 4.5 is rejected outright, so they are simply left off.
+  if (capabilities.adaptiveThinking) {
+    request.thinking = { type: "adaptive" };
+  }
+
+  const outputConfig: NonNullable<BuiltRequest["output_config"]> = {};
+  if (capabilities.effort && args.effort) outputConfig.effort = args.effort;
+  if (args.schema) outputConfig.format = { type: "json_schema", schema: args.schema };
+  if (Object.keys(outputConfig).length > 0) request.output_config = outputConfig;
+
+  return request;
+}
+
 export class Claude {
   private readonly client: Anthropic;
-  private readonly model: string;
+  private readonly tiers: Record<ModelTier, string>;
+  private readonly fallbackModel: string;
+
+  /** Running totals for this Worker invocation, so a run can report its cost. */
+  spentUsd = 0;
+  callCount = 0;
 
   constructor(env: Env) {
     this.client = new Anthropic({ apiKey: requireSecret(env, "ANTHROPIC_API_KEY") });
-    this.model = env.MODEL_ID || "claude-opus-5";
+    this.tiers = resolveTiers(env);
+    // Used only when a caller forgets to name one; agents always pass theirs.
+    this.fallbackModel = this.tiers.balanced;
+  }
+
+  modelFor(tier: ModelTier): string {
+    return this.tiers[tier];
   }
 
   async complete<T = string>(args: CompleteArgs): Promise<CompleteResult<T>> {
-    const effort: Effort = args.effort ?? "high";
+    const model = args.model ?? this.fallbackModel;
+    const capabilities = capabilitiesFor(model);
+    const effort = capabilities.effort ? (args.effort ?? "high") : null;
+
+    const request = buildRequest({
+      model,
+      system: args.system,
+      user: args.user,
+      maxTokens: args.maxTokens,
+      schema: args.schema,
+      history: args.history,
+      ...(effort ? { effort } : {}),
+    });
 
     try {
-      const params: CurrentMessageParams = {
-        model: this.model,
-        max_tokens: args.maxTokens ?? 16000,
-        // Adaptive thinking: Claude decides how much reasoning each call needs.
-        thinking: { type: "adaptive" },
-        output_config: {
-          effort,
-          ...(args.schema
-            ? { format: { type: "json_schema" as const, schema: args.schema } }
-            : {}),
-        },
-        system: args.system,
-        messages: [...(args.history ?? []), { role: "user", content: args.user }],
-      };
-
       const response = (await this.client.messages.create(
-        params as unknown as Anthropic.MessageCreateParamsNonStreaming
+        request as unknown as Anthropic.MessageCreateParamsNonStreaming
       )) as CurrentMessage;
 
       if (response.stop_reason === "refusal") {
@@ -114,17 +173,23 @@ export class Claude {
         }
       }
 
+      const usage = response.usage as unknown as TokenUsage;
+      const costUsd = estimateCostUsd(model, usage);
+      this.spentUsd = Math.round((this.spentUsd + costUsd) * 1_000_000) / 1_000_000;
+      this.callCount += 1;
+
       return {
         text,
         parsed,
-        model: this.model,
+        model,
         effort,
-        usage: response.usage as unknown as Record<string, unknown>,
+        usage,
+        costUsd,
       };
     } catch (err) {
       if (err instanceof ModelError) throw err;
       throw new ModelError(
-        `Claude call failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Claude call failed on ${model}: ${err instanceof Error ? err.message : String(err)}`,
         err
       );
     }

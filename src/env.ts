@@ -5,7 +5,14 @@ export interface Env {
   // --- vars (wrangler.toml) ------------------------------------------------
   VX_ENV: string;
   SUPABASE_URL: string;
-  MODEL_ID: string;
+  /**
+   * Model tiers. Each agent names a tier's model in its own definition; these
+   * exist so a whole tier can be moved without touching code. Defaults are in
+   * src/core/models.ts.
+   */
+  MODEL_REASONING?: string;
+  MODEL_BALANCED?: string;
+  MODEL_FAST?: string;
   FACEBOOK_ENABLED: string;
   X_ENABLED: string;
   LINKEDIN_INTEGRATION_ENABLED: string;

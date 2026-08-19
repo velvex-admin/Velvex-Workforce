@@ -21,6 +21,12 @@ import { state, type SitePage } from "../../core/state.js";
 import { getSiteWriter } from "../../connectors/site.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
+
+const MODEL = MODELS.balanced;
+const ALT_TEXT_MODEL = MODELS.fast;
+
 const META_MIN = 70;
 const META_MAX = 155;
 
@@ -77,7 +83,9 @@ function findIssues(pages: SitePage[]): Finding[] {
   return findings;
 }
 
-const SYSTEM = `You write on-page SEO copy for a consulting business that runs operational diagnostics for small and mid-sized companies.
+const SYSTEM = `You write on-page SEO copy for the Velvex site.
+
+${BUSINESS_CONTEXT}
 
 ${DEFAULT_VOICE.guide}
 
@@ -89,6 +97,9 @@ export const seoSiteAgent: AgentDefinition = {
   batch: "marketing",
   description:
     "Edits the live site directly within a tighter routine line: on-page and structural SEO yes, pricing and legal pages no.",
+  // Copy written inside tight, well-specified bounds: a meta description has a
+  // length, a subject and a page to match. That is squarely balanced-tier work.
+  model: MODEL,
   effort: "high",
   cadence: "daily",
   approvedChannels: ["site"],
@@ -182,6 +193,7 @@ export const seoSiteAgent: AgentDefinition = {
             `Page: ${finding.page.path}\nTitle: ${finding.page.title ?? "(none)"}\n` +
             `Current meta description: ${finding.before || "(none)"}\n\n` +
             `Write a meta description between ${META_MIN} and ${META_MAX} characters.`,
+          model: MODEL,
           effort: seoSiteAgent.effort,
           maxTokens: 400,
         });
@@ -192,7 +204,9 @@ export const seoSiteAgent: AgentDefinition = {
           user:
             `Page: ${finding.page.path}\nTitle: ${finding.page.title ?? "(none)"}\n` +
             `Image file: ${finding.before}\n\nWrite alt text for it. One short sentence, describing what is in the image.`,
-          effort: "medium",
+          // Describing an image file is the most mechanical generation in the
+          // system. It runs a tier below the rest of this agent.
+          model: ALT_TEXT_MODEL,
           maxTokens: 200,
         });
         after = softenTells(result.text.trim().replace(/^["']|["']$/g, ""));
@@ -210,6 +224,7 @@ export const seoSiteAgent: AgentDefinition = {
             `${finding.page.path} (${finding.page.title ?? "untitled"}) has no internal links pointing at it.\n` +
             `Other pages: ${candidates}\n\n` +
             `Name the single best page to link from, and write the sentence the link should sit in. Format: PAGE: <path>\nSENTENCE: <text>`,
+          model: MODEL,
           effort: "medium",
           maxTokens: 400,
         });

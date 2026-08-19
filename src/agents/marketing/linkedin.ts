@@ -18,6 +18,8 @@ export const linkedInAgent: AgentDefinition = {
   batch: "marketing",
   description:
     "External build. Publishes content-agent drafts on a schedule it determines; this project exposes the queue it collects from and the endpoints it reports back to.",
+  // Somebody else's build, and somebody else's model cost.
+  model: null,
   effort: "medium",
   cadence: "external",
   externalBuild: true,

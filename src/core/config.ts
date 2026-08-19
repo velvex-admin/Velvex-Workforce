@@ -10,14 +10,21 @@ import type { Channel } from "./types.js";
 /**
  * Content pillars the content agent may draft within without asking. Anything
  * outside these is a new pillar, which the doc puts on the approval side.
- * Seeded from what VX-03 exists to support; adjust as the business decides.
+ * Drawn from what the live site actually claims and sells, so a routine draft
+ * is on-message by construction rather than by luck.
  */
 export const CONTENT_PILLARS = [
-  "operational-diagnostics",
-  "process-bottlenecks",
-  "automation-case-notes",
-  "founder-operations",
-  "client-outcomes",
+  // Load-bearing dependencies, and the difference between what is visible and
+  // what is structural. The core of the offer.
+  "structural-architecture",
+  // Margin compression, unit economics, cost-per-client against revenue-per-client.
+  "margin-and-unit-economics",
+  // Channel collision, acquisition dependency, what happens when one channel carries the business.
+  "channel-dependency",
+  // Whether a model holds under aggressive growth, and what breaks first.
+  "scale-readiness",
+  // What a bounded third-party diagnostic is, and why it is not consulting.
+  "diagnostic-standard",
 ] as const;
 export type ContentPillar = (typeof CONTENT_PILLARS)[number];
 
@@ -50,11 +57,19 @@ export const ROUTINE_SITE_EDITS = [
 ] as const;
 export type SiteEditKind = (typeof ROUTINE_SITE_EDITS)[number];
 
-/** Any page matching these needs approval regardless of how small the edit is. */
+/**
+ * Any page matching these needs approval regardless of how small the edit is.
+ *
+ * /faq is on this list for a specific reason: on the live site it is where the
+ * $999 price, the money-back guarantee and the confidentiality commitment are
+ * stated. It is a pricing and contract-adjacent page wearing a different name,
+ * and the SEO agent must treat it that way.
+ */
 export const PROTECTED_PAGE_PATTERNS = [
   /^\/pricing/i,
   /^\/plans/i,
   /price/i,
+  /^\/faq/i,
   /^\/terms/i,
   /^\/privacy/i,
   /^\/legal/i,
@@ -141,6 +156,10 @@ export const ENGAGEMENT_CONFIDENCE_FLOOR = 0.85;
 // ---------------------------------------------------------------------------
 // Objection / FAQ. Known questions with language that has already been
 // approved. Answering from this set is routine; anything else is not.
+//
+// These eight are the live site's own FAQ, word for word. That is the strongest
+// possible reading of "already-approved language": it is text the business has
+// already published under its own name.
 // ---------------------------------------------------------------------------
 
 export interface FaqEntry {
@@ -153,45 +172,83 @@ export interface FaqEntry {
 
 export const FAQ_LIBRARY: FaqEntry[] = [
   {
-    id: "faq.what-is-the-diagnostic",
-    matches: ["what do you do", "what is the diagnostic", "what does it involve", "how does it work"],
-    question: "What does the diagnostic actually involve?",
+    id: "faq.deliverable",
+    matches: ["what do we receive", "what do i get", "what's the output", "deliverable", "end of the process", "what do you deliver"],
+    question: "What do we actually receive at the end of the process?",
     approvedAnswer:
-      "We look at how work moves through your business end to end, find where it stalls, " +
-      "and hand you back a written breakdown of what is costing you time and what to fix first. " +
-      "No software to install, and nothing changes on your side while we look.",
+      "A single Executive Ledger: a version-controlled, third-party operational health " +
+      "assessment covering your Final Velvex Score, the structural reading across all seven " +
+      "systems, the six-dimension scoring breakdown, ranked pressure points, and three " +
+      "prioritised recommendations for addressing them. It is paired with an executive audio " +
+      "briefing: a five-minute, studio-quality AI-narrated summary of the full analysis. " +
+      "Together they are a diagnostic and a set of concrete next steps, not an open-ended " +
+      "strategy engagement.",
   },
   {
-    id: "faq.how-long",
-    matches: ["how long", "timeline", "turnaround", "when will i get"],
-    question: "How long does it take?",
+    id: "faq.vs-consultant",
+    matches: ["different from a consultant", "why not a consultant", "how is this different", "versus consulting", "consultant"],
+    question: "How is this different from hiring a consultant?",
     approvedAnswer:
-      "Most of the work lands within a week of getting what we need from you. " +
-      "If anything is going to take longer than that, you hear it from us before it does.",
+      "A consultant sells you ongoing execution: ad hoc opinion, strategy hours, a retained " +
+      "advisory relationship. Velvex runs a bounded, structural diagnostic. Every finding is " +
+      "tagged as observed fact, inference, or assumption, and the engagement closes with three " +
+      "prioritised recommendations addressing the specific issues the analysis surfaces. You get " +
+      "a defensible read of where your architecture is strained and concrete direction on what to " +
+      "do about it, not an open-ended relationship.",
   },
   {
-    id: "faq.what-do-you-need",
-    matches: ["what do you need from me", "what do i have to provide", "how much of my time"],
-    question: "What do you need from me?",
+    id: "faq.cost",
+    matches: ["how much", "cost", "price", "pricing", "what does it cost", "fee"],
+    question: "What does a Velvex diagnostic cost?",
     approvedAnswer:
-      "A short call, and access to whatever already describes how your process runs today. " +
-      "If that does not exist in writing, the call covers it. Expect under an hour of your time.",
+      "A Velvex diagnostic is $999 per engagement, including structured follow-up at 30, 90, and " +
+      "180 days after delivery and a money-back guarantee.",
   },
   {
-    id: "faq.data-handling",
-    matches: ["data", "confidential", "nda", "privacy", "secure"],
-    question: "What happens to our data?",
+    id: "faq.inputs",
+    matches: ["what do you need", "what information", "what do we provide", "intake", "what will you ask"],
+    question: "What information do you need from us?",
     approvedAnswer:
-      "It stays between us, it is only used to produce your analysis, and we will sign an NDA " +
-      "before anything is shared if you want one in place first.",
+      "Intake starts with a structured form covering your revenue model, channels, operational " +
+      "setup, and available performance data. The more complete the inputs, the fewer assumptions " +
+      "the diagnostic has to carry, and every assumption made is disclosed in the Ledger, not " +
+      "hidden.",
   },
   {
-    id: "faq.industry-fit",
-    matches: ["does this work for", "our industry", "are we too small", "too big"],
-    question: "Does this work for a business like ours?",
+    id: "faq.timeline",
+    matches: ["how long", "timeline", "turnaround", "when will we get", "how fast", "delivery time"],
+    question: "How long does the process take?",
     approvedAnswer:
-      "The method is about how work moves, not about a particular industry, so it travels well. " +
-      "If we look and decide you are not a fit, we will tell you that rather than sell you something.",
+      "There is no queue or batching cycle. Once your intake is reviewed and accepted, your " +
+      "diagnostic is completed and delivered within 24 hours.",
+  },
+  {
+    id: "faq.score-defensible",
+    matches: ["subjective", "how is the score", "can it be defended", "is the score reliable", "scoring"],
+    question: "Is the score subjective, or can it be defended?",
+    approvedAnswer:
+      "The Final Velvex Score is produced by weighted scoring across six defined dimensions, " +
+      "applied consistently to every case through Veĺa. It is not a probabilistic estimate: every " +
+      "score is a definitive result, calculated the same way for every engagement, so the same " +
+      "underlying structure always produces the same number.",
+  },
+  {
+    id: "faq.confidentiality",
+    matches: ["confidential", "data", "nda", "privacy", "who sees", "is our data safe"],
+    question: "Is our data kept confidential?",
+    approvedAnswer:
+      "Yes. Diagnostic intake data is used solely to produce your Executive Ledger. It is not " +
+      "shared, published, or reused as a reference case for other engagements without explicit " +
+      "consent.",
+  },
+  {
+    id: "faq.fit",
+    matches: ["who is this for", "is this for us", "right fit", "our industry", "too small", "too big", "built for"],
+    question: "Who is Velvex built for?",
+    approvedAnswer:
+      "Businesses approaching a scaling decision, whether new capital, new channels, or aggressive " +
+      "growth targets, that want a third-party read on whether the underlying architecture can " +
+      "hold before resources are committed, rather than after.",
   },
 ];
 

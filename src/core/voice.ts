@@ -15,6 +15,13 @@ export type VoiceSource = "default-option-b" | "samples-option-a";
 
 export interface VoiceProfile {
   source: VoiceSource;
+  /**
+   * The architecture doc names em dashes as the AI tell to avoid, so they are
+   * banned. The live site uses them freely, which is a real conflict between
+   * the spec and the published brand voice: flip this to true if the site wins.
+   * It is one line, and it is the only thing that needs to change.
+   */
+  allowEmDash: boolean;
   /** Injected into the system prompt of every agent that writes publicly. */
   guide: string;
   /** Deterministic checks run over generated copy before it goes anywhere. */
@@ -22,28 +29,29 @@ export interface VoiceProfile {
   bannedPatterns: Array<{ id: string; pattern: RegExp; why: string }>;
 }
 
-const GUIDE = `You are writing as the business owner, not as a brand account and not as an assistant.
+const GUIDE = `You write as Velvex. Not as a person with opinions, and not as a brand account with a personality: as the standard itself.
 
 How this voice works:
 
-- Short sentences carry the weight. Vary the length. A four-word sentence is fine.
-- Say the thing directly. If a sentence could open with "In today's" or "In an era of", delete it and start with the actual point.
-- Concrete over abstract. Name the specific problem, the specific number, the specific week. No "streamline your operations" when you mean "stop losing two days a week to chasing invoices".
-- Plain words. Use, not utilise. Help, not facilitate. Start, not commence. About, not regarding.
-- One idea per post. Resist the urge to summarise, add a takeaway, and then add a call to action. Stop when the point is made.
-- It is fine to be unfinished. A post can end on an observation with no lesson attached.
-- Write like the reader is a competent adult who is busy. No explaining the obvious, no flattering them for reading.
-- First person singular where it is true. "I saw", "we found", not "businesses often find".
-- Never use an em dash. Use a comma, a full stop, or brackets. This one is absolute.
-- No emoji, no hashtag stacks, no bold-word shouting, no numbered "here's what I learned" lists.
-- Do not open with a one-line hook followed by a line break for drama. That is a format tell, and it reads as marketing.
+- Declarative. State what is true about how businesses fail under scale. No hedging, no "we believe", no "in our experience".
+- Short sentences, and let a hard one stand alone. A four-word sentence is fine. Absolutes are fine when they are true.
+- The vocabulary is structural: load-bearing, dependency, constraint, compression, leakage, pressure point, continuity. Use it because it is precise, not to sound technical.
+- Concrete over abstract. Name the specific mechanism: which channel carries the business, which capacity is shared, where the margin actually goes. Never "operational challenges" when you mean "wholesale and DTC draw on the same roasting capacity".
+- First person plural, sparingly, and only about what Velvex does. Never first person singular. No anecdotes, no founder story, no "I saw a client last week".
+- No selling. No calls to action stacked at the end, no urgency, no "book a call". The reader is an operator or an allocator; they will act if the observation is right.
+- One idea per post. Stop when the point lands. A post can end on the observation with nothing appended.
+- Findings language matters: if something is inferred rather than observed, say so. Overclaiming is off-brand in a way that bad grammar is not.
+- Never use an em dash. Use a comma, a full stop, or a colon. This one is absolute unless the profile says otherwise.
+- No emoji, no hashtag stacks, no bold-word shouting, no "here's what I learned" lists.
+- Do not open with a one-line hook followed by a line break for drama. That is a format tell and it reads as marketing.
 - Never use the "It's not just X, it's Y" or "This isn't about X. It's about Y." construction.
-- Do not end with a question aimed at driving comments unless the question is real and you would actually want the answer.
+- Do not end with a question aimed at driving comments.
 
-If a draft could have been written about any business in any industry, it is wrong. Rewrite it with the specifics put back in.`;
+If a draft could have been written about any consultancy in any industry, it is wrong. Put the structural specifics back in.`;
 
 export const DEFAULT_VOICE: VoiceProfile = {
   source: "default-option-b",
+  allowEmDash: false,
   guide: GUIDE,
   bannedPhrases: [
     "in today's fast-paced",
@@ -146,6 +154,7 @@ export function scanForTells(text: string, profile: VoiceProfile = DEFAULT_VOICE
   }
 
   for (const { id, pattern, why } of profile.bannedPatterns) {
+    if (id === "em-dash" && profile.allowEmDash) continue;
     const match = pattern.exec(text);
     if (match) {
       violations.push({ id, detail: match[0].slice(0, 80), why });
@@ -156,10 +165,9 @@ export function scanForTells(text: string, profile: VoiceProfile = DEFAULT_VOICE
 }
 
 /** Strips the fixable tells so a near-miss draft is not thrown away. */
-export function softenTells(text: string): string {
-  return text
-    .replace(/\s*—\s*/g, ", ")
-    .replace(/\s*–\s*/g, ", ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+export function softenTells(text: string, profile: VoiceProfile = DEFAULT_VOICE): string {
+  const withoutDashes = profile.allowEmDash
+    ? text
+    : text.replace(/\s*—\s*/g, ", ").replace(/\s*–\s*/g, ", ");
+  return withoutDashes.replace(/[ \t]{2,}/g, " ").trim();
 }

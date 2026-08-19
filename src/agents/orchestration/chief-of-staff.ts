@@ -22,6 +22,10 @@ import type {
 } from "../../core/types.js";
 import { state } from "../../core/state.js";
 
+import { MODELS } from "../../core/models.js";
+
+const MODEL = MODELS.reasoning;
+
 /** Stable dedupe handle so the same proposal does not queue on every tick. */
 function dedupeKey(agentId: string, action: ProposedAction): string {
   if (action.dedupeKey) return `${agentId}:${action.dedupeKey}`;
@@ -110,7 +114,7 @@ export const chiefOfStaff: Coordinator = {
 // The Chief-of-Staff as an agent: the daily roll-up and the memory it keeps.
 // ---------------------------------------------------------------------------
 
-const SYSTEM = `You are the Chief-of-Staff of a small consulting business. Every other agent in the system reports to you.
+const SYSTEM = `You are the Chief-of-Staff of Velvex, an institutional-grade commercial architecture diagnostic. Every other agent in the system reports to you.
 
 You are given the last day of agent activity and the notes you kept previously. Produce a short internal briefing for the owner:
 
@@ -126,7 +130,10 @@ export const chiefOfStaffAgent: AgentDefinition = {
   batch: "orchestration",
   description:
     "Every other agent reports to it. Filters routine activity into the log and anything new or broken into the approvals queue; keeps the memory that gives the system continuity.",
-  effort: "xhigh",
+  // It decides what reaches you and what stays in the log, so it keeps the
+  // reasoning tier. Once a day, over a day of log lines, that is cents.
+  model: MODEL,
+  effort: "high",
   cadence: "daily",
   approvedChannels: ["internal"],
 
@@ -194,6 +201,7 @@ export const chiefOfStaffAgent: AgentDefinition = {
         `Activity, last 24 hours (${window.length} entries):\n${activity || "(none)"}\n\n` +
         `Waiting on the owner (${pending.length}):\n${waiting || "(none)"}\n\n` +
         `Your standing notes:\n${notes || "(none)"}`,
+      model: MODEL,
       effort: chiefOfStaffAgent.effort,
       maxTokens: 2000,
     });

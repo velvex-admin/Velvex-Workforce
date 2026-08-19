@@ -36,6 +36,9 @@ export const opsHealthAgent: AgentDefinition = {
   batch: "executive",
   description:
     "Watches the operations pipeline for error rates and stuck cases, read-only, and reports alongside the Phase 0 error workflow.",
+  // No model calls. Error rate against a threshold, stuck cases against a
+  // count. Hourly, too, which is exactly where a needless call adds up.
+  model: null,
   effort: "medium",
   cadence: "hourly",
   observeOnly: true,

@@ -17,6 +17,11 @@ import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { FAQ_LIBRARY, findFaqEntry } from "../../core/config.js";
 
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
+
+const MODEL = MODELS.balanced;
+
 const MATCH_CONFIDENCE_FLOOR = 0.8;
 
 export const objectionFaqAgent: AgentDefinition = {
@@ -25,6 +30,10 @@ export const objectionFaqAgent: AgentDefinition = {
   batch: "sales_management",
   description:
     "Maintains and uses approved answers to recurring prospect questions, so replies stay consistent across the pipeline.",
+  // Matching a question to an approved answer, and drafting a candidate when
+  // none fits. Every new answer is reviewed by you before it reaches anyone, so
+  // the reasoning tier would be paying twice for the same safety.
+  model: MODEL,
   effort: "high",
   cadence: "manual",
   approvedChannels: ["internal"],
@@ -138,13 +147,15 @@ export const objectionFaqAgent: AgentDefinition = {
     // library entry, and put both in front of you.
     const draft = await ctx.claude.complete({
       system:
-        "You draft answers to prospect questions for a consulting business that runs operational " +
-        "diagnostics. Answer plainly and specifically, in two or three sentences. Never promise a " +
-        "price, a timeline or an outcome that has not been stated. No em dashes. Output only the answer.",
+        `You draft answers to prospect questions for Velvex.\n\n${BUSINESS_CONTEXT}\n\n` +
+        "Answer plainly and specifically, in two or three sentences, in the same register as the " +
+        "approved answers below. Never state a price, a timeline, a score or a guarantee beyond " +
+        "what is given above. No em dashes. Output only the answer.",
       user:
         `Prospect asked: ${question}\n\n` +
         `Existing approved answers, for consistency of tone:\n` +
         FAQ_LIBRARY.map((entry) => `- ${entry.question} -> ${entry.approvedAnswer}`).join("\n"),
+      model: MODEL,
       effort: objectionFaqAgent.effort,
       maxTokens: 600,
     });

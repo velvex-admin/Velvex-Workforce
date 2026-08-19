@@ -44,8 +44,10 @@ export function createChannelAgent(spec: ChannelAgentSpec): AgentDefinition {
     name: spec.name,
     batch: "marketing",
     description: spec.description,
-    // Timing and posting are judgement-light next to drafting: the copy has
-    // already been through the content agent at xhigh.
+    // No model calls at all. Working out whether a slot is due and picking the
+    // oldest unpublished draft is a clock and a list. The copy already came
+    // through the content agent on the reasoning tier.
+    model: null,
     effort: "medium",
     cadence: "hourly",
     approvedChannels: [spec.channel],

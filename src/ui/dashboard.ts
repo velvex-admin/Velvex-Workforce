@@ -139,7 +139,9 @@ async function load() {
     api('/status'), api('/approvals?status=pending'), api('/reports?limit=40')
   ]);
 
-  document.getElementById('model').textContent = status.model;
+  document.getElementById('model').textContent =
+    Object.entries(status.modelTiers).map(([tier, id]) => tier + ' ' + id).join(' &middot; ')
+      .replace(/&middot;/g, '·');
   document.getElementById('voice').textContent = status.voiceProfile;
 
   const chips = [];
@@ -178,7 +180,8 @@ async function load() {
     '<div class="card risk-low"><h3>' + esc(a.name) +
     (a.externalBuild ? ' <span class="badge blue">external build</span>' : '') +
     (a.observeOnly ? ' <span class="badge slate">observes only</span>' : '') + '</h3>' +
-    '<div class="meta">' + esc(a.batch) + ' &middot; ' + esc(a.cadence) + ' &middot; effort ' + esc(a.effort) + '</div>' +
+    '<div class="meta">' + esc(a.batch) + ' &middot; ' + esc(a.cadence) + ' &middot; ' +
+    (a.model ? esc(a.model) + ' &middot; effort ' + esc(a.effort) : 'no model calls') + '</div>' +
     '<div class="reason">' + esc(a.description) + '</div>' +
     '<div class="rules">' +
       '<div class="rule routine"><span class="rk">Routine</span>' +

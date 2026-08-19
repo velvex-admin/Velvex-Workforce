@@ -17,6 +17,11 @@ import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { FINANCE_GUARDRAIL } from "../../core/config.js";
 import { state, type FinanceSnapshot } from "../../core/state.js";
 
+import { MODELS } from "../../core/models.js";
+import { BUSINESS_CONTEXT } from "../../core/business.js";
+
+const MODEL = MODELS.balanced;
+
 interface Ratios {
   revenuePerClientMinor: number;
   costPerClientMinor: number;
@@ -48,7 +53,10 @@ export const financeWatchAgent: AgentDefinition = {
   batch: "executive",
   description:
     "Tracks margin and cost-per-client against revenue-per-client as volume grows, and flags the moment the ratio turns unsustainable.",
-  effort: "high",
+  // The guardrail is arithmetic and runs before any model is called. The model
+  // only writes three sentences on what the ratio means.
+  model: MODEL,
+  effort: "medium",
   cadence: "daily",
   observeOnly: true,
   approvedChannels: ["internal"],
@@ -125,10 +133,11 @@ export const financeWatchAgent: AgentDefinition = {
 
     const read = await ctx.claude.complete({
       system:
-        "You are the finance watch for a small consulting business. You are given real figures. " +
+        `You are the finance watch for Velvex.\n\n${BUSINESS_CONTEXT}\n\nYou are given real figures. ` +
         "Say what they mean for whether this stays profitable as volume grows. Use only the numbers " +
         "given. Three sentences at most, no em dashes, no hedging padding.",
       user: figures,
+      model: MODEL,
       effort: financeWatchAgent.effort,
       maxTokens: 700,
     });

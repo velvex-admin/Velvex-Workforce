@@ -1,21 +1,24 @@
 // Narrow, structured judgement calls.
 //
-// The autonomy rules are deterministic wherever a deterministic test is
-// honest. Some are not: "is this comment criticism or praise" cannot be decided
-// by a keyword list without being wrong in exactly the cases that matter. Those
-// go through here, and — this is the important part — a low-confidence or
-// failed judgement resolves toward approval, never toward acting.
+// The autonomy rules are deterministic wherever a deterministic test is honest.
+// Some are not: "is this comment criticism or praise" cannot be decided by a
+// keyword list without being wrong in exactly the cases that matter.
+//
+// These calls run on the balanced tier rather than the reasoning tier. They are
+// short, they answer one question, and the safety here comes from the
+// confidence floor rather than from model depth: a low-confidence or failed
+// judgement resolves toward approval, never toward acting.
 
 import type { Judge } from "../core/types.js";
 import { Claude, type Effort } from "./claude.js";
 
 export interface JudgeOptions {
+  model?: string;
   effort?: Effort;
-  /** Below this, the caller should treat the answer as "unsure". */
-  confidenceFloor?: number;
 }
 
 export function createJudge(claude: Claude, options: JudgeOptions = {}): Judge {
+  const model = options.model ?? claude.modelFor("balanced");
   const effort: Effort = options.effort ?? "medium";
 
   return {
@@ -40,6 +43,7 @@ export function createJudge(claude: Claude, options: JudgeOptions = {}): Judge {
         confidence: number;
         reason: string;
       }>({
+        model,
         system:
           "You classify text for an internal business system. Answer only with the " +
           "requested JSON. Be conservative: when a message is ambiguous, or sits " +
@@ -57,6 +61,54 @@ export function createJudge(claude: Claude, options: JudgeOptions = {}): Judge {
       return parsed;
     },
   };
+}
+
+/**
+ * A cheap first pass over inbound social messages, on the fast tier.
+ *
+ * Its only job is dropping obvious spam before the real judge is paid for. It
+ * can only ever say "this is definitely spam" at high confidence; every other
+ * answer, including an unsure one, passes the message through untouched. The
+ * expensive call is what decides anything that matters.
+ */
+export async function spamTriage(
+  claude: Claude,
+  text: string,
+  confidenceFloor = 0.9
+): Promise<{ isSpam: boolean; confidence: number }> {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["spam", "confidence"],
+    properties: {
+      spam: { type: "boolean" },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+    },
+  };
+
+  try {
+    const result = await claude.complete<{ spam: boolean; confidence: number }>({
+      model: claude.modelFor("fast"),
+      system:
+        "You are a spam filter for a business's social media inbox. Spam means bulk " +
+        "promotion, crypto or follower selling, unrelated link drops, or bot output. " +
+        "A complaint, an insult, a blunt question and a badly written message are NOT " +
+        "spam. When unsure, answer spam: false. Reply with JSON only.",
+      user: text.slice(0, 2000),
+      maxTokens: 256,
+      schema,
+    });
+
+    const parsed = result.parsed;
+    if (!parsed) return { isSpam: false, confidence: 0 };
+    return {
+      isSpam: parsed.spam && parsed.confidence >= confidenceFloor,
+      confidence: parsed.confidence,
+    };
+  } catch {
+    // The filter failing must never drop a message: pass it to the real judge.
+    return { isSpam: false, confidence: 0 };
+  }
 }
 
 /**
