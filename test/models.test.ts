@@ -101,8 +101,14 @@ describe("the roster's model assignments", () => {
     expect(modelOf("finance_watch")).toBe(MODELS.balanced);
   });
 
-  it("gives no model to the agents that do arithmetic, timing, or nothing", () => {
-    for (const id of ["facebook", "x", "linkedin", "lead_pipeline", "ops_health"]) {
+  it("puts each channel strategist on the reasoning tier", () => {
+    for (const id of ["facebook", "x", "linkedin"]) {
+      expect(modelOf(id)).toBe(MODELS.reasoning);
+    }
+  });
+
+  it("still gives no model to the agents whose work is pure arithmetic", () => {
+    for (const id of ["lead_pipeline", "ops_health"]) {
       expect(modelOf(id)).toBeNull();
     }
   });

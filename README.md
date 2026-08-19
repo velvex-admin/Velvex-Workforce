@@ -44,9 +44,9 @@ makes "routine vs needs approval" enforceable rather than a comment:
 | Batch | Agent | Model | Routine | Needs approval |
 |---|---|---|---|---|
 | Marketing | Content | Opus 5 | Drafting inside established pillars, formats and voice | A new content pillar or campaign direction |
-| Marketing | LinkedIn *(external build)* | none | Timing and publishing approved content | New campaign type or paid promotion |
-| Marketing | Facebook *(connector inactive)* | none | Timing and publishing approved content | New campaign type or paid promotion |
-| Marketing | X / Twitter *(connector inactive)* | none | Timing and publishing approved content | New campaign type or paid promotion |
+| Marketing | LinkedIn *(routes to partner queue)* | Opus 5 | Drafts LinkedIn-native posts, publishes on schedule | New campaign type, engaging external accounts, paid promotion |
+| Marketing | Facebook *(idle until enabled)* | Opus 5 | Dormant until FACEBOOK_ENABLED is set | New campaign type, engaging external accounts, paid promotion |
+| Marketing | X / Twitter *(connector inactive)* | Opus 5 | Drafts X-native posts, publishes on schedule | New campaign type, engaging external accounts, paid promotion |
 | Marketing | SEO / Site *(write access)* | Sonnet 5 | Meta, alt text, internal links, on-page copy, structural SEO | Pricing pages, legal pages, full restructures |
 | Marketing | Marketing Analytics *(observes only)* | Sonnet 5 | All of it | N/A |
 | Marketing | Social Engagement | Opus 5 | Replies to praise and simple factual questions | Any reply to criticism, insults or public complaints |

@@ -8,6 +8,7 @@ import type { ProposedAction } from "../src/core/types.js";
 import { seoSiteAgent } from "../src/agents/marketing/seo-site.js";
 import { contentAgent } from "../src/agents/marketing/content.js";
 import { facebookAgent } from "../src/agents/marketing/facebook.js";
+import { xAgent } from "../src/agents/marketing/x.js";
 import { socialEngagementAgent } from "../src/agents/marketing/social-engagement.js";
 import { objectionFaqAgent } from "../src/agents/sales/objection-faq.js";
 import { leadPipelineAgent } from "../src/agents/sales/lead-pipeline.js";
@@ -86,7 +87,7 @@ describe("Facebook Agent (channel behaviour)", () => {
       publish({ withinApprovedScope: true, text: "hello" }, "draft-1")
     );
     expect(decision.classification).toBe("routine");
-    expect(decision.ruleId).toBe("facebook.publish_approved_content");
+    expect(decision.ruleId).toBe("facebook.publish_own_draft");
   });
 
   it("refuses to publish copy that never cleared the content agent", async () => {
@@ -300,5 +301,85 @@ describe("Executive agents", () => {
       action({ type: "observation", payload: {} })
     );
     expect(decision.classification).toBe("routine");
+  });
+});
+
+describe("Channel strategist drafts and growth ideas", () => {
+  it("makes drafting for the strategist's own channel routine", async () => {
+    const decision = await classify(
+      xAgent,
+      action({
+        type: "draft_content",
+        channel: "internal",
+        payload: {
+          pillar: "structural-architecture",
+          format: "short-post",
+          channelHint: "x",
+          voiceClean: true,
+        },
+      })
+    );
+    expect(decision.classification).toBe("routine");
+    expect(decision.ruleId).toBe("x.draft_inside_pillars");
+  });
+
+  it("does not treat one strategist's draft as another strategist's routine work", async () => {
+    const decision = await classify(
+      xAgent,
+      action({
+        type: "draft_content",
+        channel: "internal",
+        payload: {
+          pillar: "structural-architecture",
+          format: "short-post",
+          channelHint: "linkedin", // wrong channel
+          voiceClean: true,
+        },
+      })
+    );
+    expect(decision.classification).toBe("needs_approval");
+  });
+
+  it("queues every growth idea, by rule and by classification", async () => {
+    const decision = await classify(
+      xAgent,
+      action({
+        type: "campaign_direction",
+        channel: "x",
+        payload: { title: "Engage the coffee wholesale sub", growthExperiment: true, risk: "medium" },
+      })
+    );
+    expect(decision.classification).toBe("needs_approval");
+    // Either the strategist's growth rule fires, or the general new-by-type
+    // veto does; both correctly queue it. Order does not change the outcome.
+    expect(["x.growth_experiment", "general.new_by_type"]).toContain(decision.ruleId);
+  });
+
+  it("queues engaging a specific external account by name", async () => {
+    const decision = await classify(
+      xAgent,
+      action({
+        type: "reply_public",
+        channel: "x",
+        payload: { engagesExternalAccount: true, account: "@someone" },
+      })
+    );
+    expect(decision.ruleId).toBe("x.engage_external_account");
+  });
+});
+
+describe("Facebook strategist is dormant when the flag is off", () => {
+  it("returns nothing on a cron tick until FACEBOOK_ENABLED is true", async () => {
+    const result = await facebookAgent.propose({
+      env: { FACEBOOK_ENABLED: "false" } as unknown as import("../src/env.js").Env,
+      db: {} as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: {} as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date(),
+      trigger: "cron",
+      log: () => {},
+    });
+    expect(result).toEqual([]);
   });
 });

@@ -69,6 +69,15 @@ export interface ContentDraft {
   createdAt: string;
   /** True when the draft was produced inside the already-approved scope. */
   withinApprovedScope: boolean;
+  /**
+   * The channel this draft was written for. When set, only that channel's
+   * agent will publish it: LinkedIn posts read differently to X posts, so a
+   * strategist that wrote for one is not writing shared copy.
+   * Absent means the draft is channel-neutral and any channel may take it.
+   */
+  channelHint?: "linkedin" | "facebook" | "x";
+  /** Which agent produced this draft. */
+  authorAgent?: string;
   /** Set when the draft itself needed sign-off and got it. */
   approvalRef?: string;
   publishedOn: Array<{ channel: string; ref: string; at: string }>;

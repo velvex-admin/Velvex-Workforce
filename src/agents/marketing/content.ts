@@ -74,7 +74,7 @@ export const contentAgent: AgentDefinition = {
   name: "Content Agent",
   batch: "marketing",
   description:
-    "Drafts the copy the channel agents publish, so all channels keep one voice instead of drifting apart.",
+    "Drafts cross-channel copy (case notes, structural observations) that any channel may publish. Channel-specific tailoring is owned by each channel's own strategist.",
   // Public writing in the business's own voice, at two drafts a day. The most
   // visible thing the system produces when it is wrong, and low enough volume
   // that depth here costs pennies.
@@ -201,6 +201,10 @@ export const contentAgent: AgentDefinition = {
           pillar: work.pillar,
           format: work.format,
           text,
+          // Channel-neutral. A channel strategist that wants platform-specific
+          // copy sets channelHint on its own drafts.
+          channelHint: undefined,
+          authorAgent: "content",
           voiceClean: violations.length === 0,
           voiceViolations: violations,
         },

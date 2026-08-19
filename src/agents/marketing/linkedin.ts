@@ -1,60 +1,43 @@
-// LinkedIn Agent — Marketing. EXTERNAL BUILD.
+// LinkedIn strategist for the Velvex company page.
 //
-// Doc: already being built by an outside company; integrates into this system
-// as a connector once ready. Publishes content-agent drafts on a schedule it
-// determines.
+// The architecture doc treated LinkedIn as an external build: an outside
+// company was going to deliver the whole agent. The owner overrode that: they
+// want a strategist we own, that reads how the page posts, writes for the
+// LinkedIn register, and proposes growth plays for their approval.
 //
-// So there is deliberately no agent logic here. This entry exists so the
-// LinkedIn agent appears in the roster with its rules recorded, and so the rest
-// of the system has something to name when it hands work over. The runner skips
-// any agent marked externalBuild; drafts destined for LinkedIn go into the
-// partner queue in src/connectors/linkedin.ts, which the outside agent collects.
+// Publishing is a separate question. We do not have LinkedIn API credentials of
+// our own, and the doc's partner integration point still exists. So drafts are
+// routed to the partner queue: if the partner is wired up, they publish; if
+// not, the draft waits there and publishes when the integration goes live.
+// Replacing this with direct posting later is a one-line change (drop the
+// route: "linkedin-partner-queue" option).
 
-import type { AgentDefinition } from "../../core/agent.js";
+import { createChannelStrategist } from "./channel-agent.js";
 
-export const linkedInAgent: AgentDefinition = {
+export const linkedInAgent = createChannelStrategist({
   id: "linkedin",
-  name: "LinkedIn Agent",
-  batch: "marketing",
+  name: "LinkedIn Strategist",
+  channel: "linkedin",
   description:
-    "External build. Publishes content-agent drafts on a schedule it determines; this project exposes the queue it collects from and the endpoints it reports back to.",
-  // Somebody else's build, and somebody else's model cost.
-  model: null,
-  effort: "medium",
-  cadence: "external",
-  externalBuild: true,
-  approvedChannels: ["linkedin"],
-
-  // Recorded from the doc so the boundary is documented in the roster even
-  // though the outside agent enforces its own side of it.
-  routineRules: [
-    {
-      id: "linkedin.publish_approved_content",
-      describe: "Timing and publishing of already-approved content.",
-      classification: "routine",
-      test: () => null,
-    },
-  ],
-  approvalRules: [
-    {
-      id: "linkedin.new_campaign_or_paid",
-      describe: "New campaign type or any paid promotion.",
-      classification: "needs_approval",
-      risk: "high",
-      test: () => null,
-    },
-  ],
-
-  async propose() {
-    return [];
+    "Owns the LinkedIn company page. Reads how it has posted before, drafts LinkedIn-native posts, and proposes growth plays for approval. Publishing is routed to the partner queue.",
+  schedule: {
+    // Tuesday and Thursday mornings, the standard executive-audience windows.
+    // Weekly minimum gap so we do not compete with the previous post for reach.
+    hours: [8, 14],
+    days: [2, 4],
+    minGapHours: 36,
   },
+  audienceLine:
+    "Reactions and comments from operators, allocators and executives. A post that reads as a considered observation gets shared with intent; a post that reads as marketing is scrolled past.",
+  platformGuide: `The LinkedIn company page audience is operators and allocators, not consumers. Write the way an institutional standard writes: declarative, structural, and grounded in a specific mechanism, not aphorisms.
 
-  async execute() {
-    return {
-      outcome: "no_op" as const,
-      detail: {
-        note: "LinkedIn is an external build. Work reaches it through the partner queue, not through this runner.",
-      },
-    };
-  },
-};
+Longer than X is allowed; longer than needed is not. 900 characters is a natural upper bound; five short paragraphs is often the shape. If a thought fits in two paragraphs, use two.
+
+No "excited to share", no numbered "here's what I learned" lists, no motivational close. No hashtag stacks. One trailing hashtag naming a category is acceptable if it is genuinely categorising.
+
+Prefer observations that would still be true if Velvex did not exist. That is what gets reshared.
+
+The page grows when the right person finds a specific observation that names their exact structural problem. Optimise for precision, not for reach.`,
+  active: () => true,
+  route: "linkedin-partner-queue",
+});

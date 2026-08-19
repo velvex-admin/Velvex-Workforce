@@ -3,7 +3,20 @@
 Kept here rather than guessed at. Each one has a note on what was built in the
 meantime, so nothing is blocked waiting on an answer.
 
-## 1. How does the SEO agent write to the site?
+## 1. LinkedIn strategist now built (was: external build)
+
+The architecture doc had the LinkedIn agent delivered by an outside company; the
+owner has since asked for a strategist we own. It exists in
+`src/agents/marketing/linkedin.ts`: reads the page's own history, drafts
+LinkedIn-native copy, proposes growth plays for approval.
+
+Publishing is still routed through the partner queue in
+`src/connectors/linkedin.ts`, because we do not have LinkedIn API credentials of
+our own. When the partner integration is switched on, they collect and publish
+our drafts. When we add direct LinkedIn API posting later, dropping the
+`route: "linkedin-partner-queue"` option in `linkedin.ts` is the whole change.
+
+## 2. How does the SEO agent write to the site?
 
 The SEO / Site agent is given write access: "can make changes directly rather
 than only suggesting them". The architecture doc names no platform, though the
@@ -42,7 +55,7 @@ schedule without this project ever holding a Phase 0 credential. Until data
 arrives, each agent reports plainly that it has none rather than inventing
 figures.
 
-## 3. How does the Ops-Health agent watch the operations pipeline?
+## 4. How does the Ops-Health agent watch the operations pipeline?
 
 The doc has it watching n8n and Supabase for error rates and stuck cases,
 "separate from, and reporting alongside" the Phase 0 error workflow. Reading
@@ -55,7 +68,7 @@ It only ever issues GET requests, and the runner's observe-only guard stops it
 acting on anything it finds. Exposing a small status endpoint from the
 operations side is the intended way to switch it on.
 
-## 4. Who delivers an answer to a prospect?
+## 5. Who delivers an answer to a prospect?
 
 The Objection / FAQ agent "maintains and uses" approved answers, but the doc
 also says any direct client-facing action needs approval, and Apollo and Clay
@@ -66,7 +79,7 @@ It does not contact anyone. Whatever is already talking to the prospect reads th
 answer from the report. Direct contact stays behind the approval line, which
 matches Open Item 02's stated position in the doc.
 
-## 5. Content pillars and the FAQ library (resolved from the live site)
+## 6. Content pillars and the FAQ library (resolved from the live site)
 
 The doc's routine line for the content agent is "drafting within established
 topics", and for the FAQ agent "answering known questions in already-approved
@@ -87,7 +100,7 @@ Everything the agents assert about the business now comes from one file,
 Executive Ledger, the Veĺa engine, the money-back guarantee. If any of that
 changes on the site, change it there and every agent follows.
 
-## 6. The voice profile bans em dashes; the site uses them
+## 7. The voice profile bans em dashes; the site uses them
 
 Worth a decision, and it is a one-line change either way.
 
@@ -105,7 +118,7 @@ site actually uses: declarative, structural vocabulary, no founder anecdotes, no
 selling. The earlier draft was written for a friendly small-business consultancy
 and would have sounded wrong next to the site.
 
-## 7. Voice profile: Option A or Option B
+## 8. Voice profile: Option A or Option B
 
 The doc's own Open Item 01. You said to set the open items aside for now, so the
 system uses the doc's Option B: a deliberately non-AI-sounding default voice,
