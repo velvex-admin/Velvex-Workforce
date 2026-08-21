@@ -18,6 +18,7 @@ import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { ROUTINE_SITE_EDITS, isProtectedPage, type SiteEditKind } from "../../core/config.js";
 import { inventoryFromSource } from "../../core/site-inventory.js";
+import { altTextEdit, metaDescriptionEdit } from "../../core/site-edits.js";
 import { STATE_KEYS, state, type SitePage } from "../../core/state.js";
 import { getSiteWriter } from "../../connectors/site.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
@@ -246,6 +247,38 @@ export const seoSiteAgent: AgentDefinition = {
       const violations = scanForTells(after);
       if (violations.length > 0) after = softenTells(after);
 
+      // Translate the finding into a substitution that names real text on the
+      // page. Without this the writer received an insertion with no anchor and
+      // had nothing to position against. An orphan-page finding is a structural
+      // recommendation rather than a substitution, so it carries no anchor and
+      // is queued for a person either way.
+      const html = source?.[finding.page.path];
+      let edit: { before: string; after: string } | null = null;
+
+      if (html && finding.kind === "meta_description") {
+        edit = metaDescriptionEdit(html, after);
+      } else if (html && finding.kind === "alt_text") {
+        edit = altTextEdit(html, finding.before, after);
+      }
+
+      if (html && !edit && finding.kind !== "internal_link") {
+        // No safe anchor: say so and move on rather than attempt it.
+        proposals.push({
+          type: "observation",
+          summary: `Cannot place the ${finding.kind} fix on ${finding.page.path}`,
+          channel: "site",
+          payload: {
+            path: finding.page.path,
+            kind: finding.kind,
+            problem: finding.problem,
+            drafted: after,
+            note: "No unambiguous place to insert this was found, so nothing was changed.",
+          },
+          dedupeKey: `seo:noanchor:${finding.kind}:${finding.page.path}`,
+        });
+        continue;
+      }
+
       proposals.push({
         type: "site_edit",
         summary: `${finding.kind} on ${finding.page.path}: ${finding.problem}`,
@@ -254,8 +287,8 @@ export const seoSiteAgent: AgentDefinition = {
         payload: {
           path: finding.page.path,
           kind: finding.kind,
-          before: finding.before,
-          after,
+          before: edit ? edit.before : finding.before,
+          after: edit ? edit.after : after,
           problem: finding.problem,
           fullRestructure: false,
         },

@@ -124,8 +124,20 @@ function applyEdit(source: SiteSource, edit: SiteEditRequest): SiteSource {
     );
   }
 
-  const occurrences = edit.before ? current.split(edit.before).length - 1 : 0;
-  if (edit.before && occurrences === 0) {
+  // An empty anchor is refused outright. This previously fell through to
+  // replacing the whole file with `after`, which turned a 22kB page into the
+  // 134-byte meta description that was meant to be inserted into it. There is
+  // no edit in this path for which replacing an entire page is correct: an
+  // insertion must name the existing text it goes next to, so the result can
+  // be verified before it is published.
+  if (!edit.before) {
+    throw new Error(
+      `This edit gives no anchor text to position against on ${edit.path}. An insertion must name the existing text it sits next to; replacing the whole page is never what is meant.`
+    );
+  }
+
+  const occurrences = current.split(edit.before).length - 1;
+  if (occurrences === 0) {
     throw new Error(
       `The text this edit replaces is no longer on ${edit.path}. The page changed after the edit was proposed.`
     );
@@ -136,7 +148,15 @@ function applyEdit(source: SiteSource, edit: SiteEditRequest): SiteSource {
     );
   }
 
-  const updated = edit.before ? current.replace(edit.before, edit.after) : edit.after;
+  const updated = current.replace(edit.before, edit.after);
+
+  // A substitution should change a page, not rewrite it. Anything that loses
+  // most of the document is a malformed edit, whatever the anchor matched.
+  if (updated.length < current.length * 0.5) {
+    throw new Error(
+      `This edit would cut ${edit.path} from ${current.length} to ${updated.length} characters. That is a rewrite, not a fix, so nothing was changed.`
+    );
+  }
   if (updated === current) {
     throw new Error(`Applying this edit to ${edit.path} would change nothing.`);
   }

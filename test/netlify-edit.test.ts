@@ -14,16 +14,24 @@ function applyEdit(
   if (current === undefined) {
     throw new Error(`${edit.path} is not in the site source.`);
   }
-  const occurrences = edit.before ? current.split(edit.before).length - 1 : 0;
-  if (edit.before && occurrences === 0) {
+  if (!edit.before) {
+    throw new Error(`This edit gives no anchor text to position against on ${edit.path}.`);
+  }
+  const occurrences = current.split(edit.before).length - 1;
+  if (occurrences === 0) {
     throw new Error(`The text this edit replaces is no longer on ${edit.path}.`);
   }
   if (occurrences > 1) {
     throw new Error(`The text this edit replaces appears ${occurrences} times on ${edit.path}.`);
   }
-  const updated = edit.before ? current.replace(edit.before, edit.after) : edit.after;
+  const updated = current.replace(edit.before, edit.after);
   if (updated === current) {
     throw new Error(`Applying this edit to ${edit.path} would change nothing.`);
+  }
+  if (updated.length < current.length * 0.5) {
+    throw new Error(
+      `This edit would cut ${edit.path} from ${current.length} to ${updated.length} characters.`
+    );
   }
   return { ...source, [edit.path]: updated };
 }
@@ -74,6 +82,31 @@ describe("applying a site edit", () => {
     expect(() =>
       applyEdit(page("<title>A</title>"), { path: "/ghost.html", before: "x", after: "y" })
     ).toThrow(/not in the site source/);
+  });
+
+  // The failure this file exists to prevent. The SEO agent emitted before:""
+  // for a page with no meta description, and the whole page was replaced by the
+  // description. Live, on a 22kB page.
+  it("refuses an edit with no anchor instead of replacing the whole page", () => {
+    const html = "<html><head><title>V</title></head><body>" + "x".repeat(20000) + "</body></html>";
+    expect(() =>
+      applyEdit({ "/p.html": html }, {
+        path: "/p.html",
+        before: "",
+        after: "A meta description that is only a hundred or so characters long.",
+      })
+    ).toThrow(/no anchor text/);
+  });
+
+  it("refuses an edit that would gut the page even with a valid anchor", () => {
+    const html = "<html><body>" + "x".repeat(20000) + "</body></html>";
+    expect(() =>
+      applyEdit({ "/p.html": html }, {
+        path: "/p.html",
+        before: "x".repeat(20000),
+        after: "tiny",
+      })
+    ).toThrow(/cut \/p\.html/);
   });
 
   it("refuses a no-op so it never burns a deploy", () => {

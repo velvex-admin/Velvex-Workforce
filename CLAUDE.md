@@ -318,9 +318,27 @@ Seed it with `scripts/seed-site-source.mjs <folder> <worker-base>`, and re-run
 that whenever the site is edited by hand, or the agent's copy falls behind.
 
 `applyEdit()` refuses more readily than it writes: the page must be in the
-source, `before` must match exactly once (zero means stale, more than one means
-ambiguous), and the result must differ. A refused edit is still recorded — it
-says the page moved under us, which is worth knowing.
+source, `before` must be non-empty and match exactly once (zero means stale,
+more than one means ambiguous), the result must differ, and an edit that would
+cut a page below half its size is rejected as a rewrite rather than a fix. A
+refused edit is still recorded — it says the page moved under us, which is
+worth knowing.
+
+**The empty-anchor failure — do not reintroduce it.** `applyEdit()` originally
+read `edit.before ? current.replace(...) : edit.after`. The SEO agent expresses
+"this page needs a meta description and has none" as `before: ""`, so that
+ternary replaced the entire file with the description. A 22kB page went live as
+134 bytes. Two things caused it: the writer had a whole-file-replacement branch
+that no edit in this path ever legitimately needs, and nothing translated the
+agent's semantic finding into a textual substitution.
+
+`src/core/site-edits.ts` is that translation — `metaDescriptionEdit()` anchors
+on `</title>` when no description exists, `altTextEdit()` anchors on the whole
+`<img>` tag — and both return null rather than guess when no unambiguous anchor
+exists. The tests that passed before the incident used a hand-written non-empty
+anchor, so they exercised the mechanism as imagined rather than the input the
+agent actually produces. When testing an agent's output path, construct the
+input the agent really emits.
 
 ## 11. Getting code onto the owner's machine
 
