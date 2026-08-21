@@ -37,7 +37,7 @@ MODEL_FAST = "claude-haiku-4-5"
 # secrets. Flipping these to "true" without setting the matching secrets is
 # refused at startup by src/connectors/*.
 FACEBOOK_ENABLED = "false"
-X_ENABLED = "false"
+X_ENABLED = "true"
 
 # The LinkedIn agent is built by an outside company. This Worker only exposes
 # the integration point it will call. No agent, no scheduling on our side.
