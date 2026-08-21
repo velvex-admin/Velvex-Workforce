@@ -8,7 +8,14 @@ import { Claude } from "../lib/claude.js";
 import { createJudge, unavailableJudge } from "../lib/judge.js";
 import type { RunContext } from "../core/agent.js";
 import type { AgentId } from "../core/types.js";
-import { AGENTS, executeApproval, runDue, runOne } from "../agents/registry.js";
+import {
+  AGENTS,
+  executeApproval,
+  readSchedules,
+  runDue,
+  runOne,
+} from "../agents/registry.js";
+import type { AgentRuntimeStatusMap, AgentScheduleOverride } from "../core/state.js";
 import { connectorStatuses } from "../connectors/registry.js";
 import { STATE_KEYS, state } from "../core/state.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
@@ -162,6 +169,61 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     const cadence = (url.searchParams.get("cadence") ?? "hourly") as "hourly" | "daily" | "weekly";
     const results = await runDue(cadence, ctx);
     return json({ runId: ctx.runId, cadence, results, logs });
+  }
+
+  // GET /api/runtime
+  //   returns the live status board written by the agent runner.
+  if (segments[0] === "runtime" && request.method === "GET") {
+    const db = new Supabase(env);
+    const value = (await state.read<AgentRuntimeStatusMap>(db, STATE_KEYS.agentRuntime)) ?? {};
+    return json({ runtime: value });
+  }
+
+  // GET /api/schedules
+  //   returns { [agentId]: {cadence, updatedAt, note} } for the dashboard.
+  // PUT /api/schedules/:agentId  { cadence, note? }
+  //   valid cadences: "hourly" | "daily" | "weekly" | "paused" | "default"
+  //   "default" clears the override so the built-in cadence applies again.
+  if (segments[0] === "schedules") {
+    const db = new Supabase(env);
+
+    if (request.method === "GET" && segments.length === 1) {
+      return json({ schedules: await readSchedules(db) });
+    }
+
+    if (request.method === "PUT" && segments.length === 2) {
+      const agentId = segments[1]!;
+      const agent = AGENTS.find((a) => a.id === agentId);
+      if (!agent) return json({ error: `Unknown agent "${agentId}"` }, 404);
+
+      const body = (await request.json().catch(() => ({}))) as {
+        cadence?: string;
+        note?: string;
+      };
+      const cadence = body.cadence;
+      const valid = ["hourly", "daily", "weekly", "paused", "default"];
+      if (!cadence || !valid.includes(cadence)) {
+        return json({ error: `cadence must be one of ${valid.join(", ")}` }, 400);
+      }
+
+      const current = await readSchedules(db);
+      if (cadence === "default") {
+        delete current[agentId];
+      } else {
+        const override: AgentScheduleOverride = {
+          cadence: cadence as AgentScheduleOverride["cadence"],
+          updatedAt: new Date().toISOString(),
+          ...(body.note ? { note: body.note } : {}),
+        };
+        current[agentId] = override;
+      }
+      await state.write(db, STATE_KEYS.agentSchedules, current, `agent schedules updated`, {
+        scope: "global",
+        salience: 6,
+        tags: ["schedule"],
+      });
+      return json({ schedules: current });
+    }
   }
 
   // GET /api/memory
