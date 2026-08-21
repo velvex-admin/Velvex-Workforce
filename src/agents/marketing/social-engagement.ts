@@ -14,7 +14,7 @@
 // when the label itself came back "praise". Being unsure is not permission.
 
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
-import type { ExecutionResult, ProposedAction } from "../../core/types.js";
+import type { Channel, ExecutionResult, ProposedAction } from "../../core/types.js";
 import {
   ENGAGEMENT_CATEGORIES,
   ENGAGEMENT_CONFIDENCE_FLOOR,
@@ -29,6 +29,7 @@ import { spamTriage } from "../../lib/judge.js";
 import { getConnector } from "../../connectors/registry.js";
 import {
   ConnectorInactiveError,
+  ConnectorRequestError,
   type Connector,
   type InboundMessage,
 } from "../../connectors/types.js";
@@ -63,8 +64,31 @@ interface Candidate {
   reason: string;
 }
 
-async function gather(ctx: RunContext): Promise<InboundMessage[]> {
+/** A channel we hold credentials for but cannot currently read. */
+interface UnreadableChannel {
+  channel: Channel;
+  status: number;
+  reason: string;
+}
+
+/**
+ * Statuses that mean "the credentials are fine, this plan may not read here".
+ * X returns 402 credits-depleted on the free tier, because posting is included
+ * and reading mentions is not. That is a billing state, not a fault, and it
+ * must not take down the channels that are working.
+ */
+function accessReason(status: number): string | null {
+  if (status === 401) return "credentials were rejected";
+  if (status === 402) return "read access is not included in the current API plan";
+  if (status === 403) return "this app is not permitted to read here";
+  return null;
+}
+
+async function gather(
+  ctx: RunContext
+): Promise<{ messages: InboundMessage[]; unreadable: UnreadableChannel[] }> {
   const messages: InboundMessage[] = [];
+  const unreadable: UnreadableChannel[] = [];
   const since = new Date(ctx.now.getTime() - 3 * 86400_000).toISOString();
 
   for (const connector of [facebookConnector, xConnector] as Connector[]) {
@@ -74,6 +98,16 @@ async function gather(ctx: RunContext): Promise<InboundMessage[]> {
       if (err instanceof ConnectorInactiveError) {
         ctx.log(`social_engagement: ${connector.channel} inactive, waiting on ${err.missing.join(", ")}`);
         continue;
+      }
+      if (err instanceof ConnectorRequestError) {
+        const reason = accessReason(err.status);
+        if (reason) {
+          // Skip this channel and carry on. Failing the whole run here would
+          // hide inbound messages on the channels that are working.
+          ctx.log(`social_engagement: cannot read ${connector.channel} — ${reason} (HTTP ${err.status})`);
+          unreadable.push({ channel: connector.channel, status: err.status, reason });
+          continue;
+        }
       }
       throw err;
     }
@@ -86,7 +120,7 @@ async function gather(ctx: RunContext): Promise<InboundMessage[]> {
   const injected = ctx.input?.["message"];
   if (injected && typeof injected === "object") messages.push(injected as InboundMessage);
 
-  return messages;
+  return { messages, unreadable };
 }
 
 export const socialEngagementAgent: AgentDefinition = {
@@ -160,8 +194,23 @@ export const socialEngagementAgent: AgentDefinition = {
   ],
 
   async propose(ctx: RunContext): Promise<ProposedAction[]> {
-    const messages = await gather(ctx);
+    const { messages, unreadable } = await gather(ctx);
+
     if (messages.length === 0) {
+      if (unreadable.length > 0) {
+        // Record it. A channel that has silently stopped being readable looks
+        // exactly like a quiet channel, and the two need different responses.
+        return unreadable.map((entry) => ({
+          type: "observation" as const,
+          summary: `Cannot read ${entry.channel}: ${entry.reason}`,
+          channel: entry.channel,
+          payload: { status: entry.status, reason: entry.reason },
+          rationale:
+            `Inbound messages on ${entry.channel} are not being seen. Credentials are present, ` +
+            `so this is an access or plan question rather than a fault.`,
+          dedupeKey: `unreadable:${entry.channel}:${entry.status}`,
+        }));
+      }
       ctx.log("social_engagement: nothing inbound");
       return [];
     }

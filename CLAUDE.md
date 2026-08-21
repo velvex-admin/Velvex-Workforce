@@ -283,6 +283,13 @@ outright.
   them. Implemented as `allowEmDash` in `src/core/voice.ts`, currently `false`
   per the doc. Flip the toggle, do not scatter exceptions.
 - **`/faq` is a pricing page.** Protected from unattended SEO edits.
+- **X free tier posts but does not read.** `POST /2/tweets` is included; the
+  read endpoints Social Engagement needs (`/2/users/me`, `/2/users/:id/mentions`)
+  return `402 credits-depleted` until a paid tier is active. That is a billing
+  state, not a fault. `gather()` in `social-engagement.ts` treats 401/402/403
+  as "skip this channel and carry on" and records an observation so the state
+  is visible; every other status still fails loudly. Read access is roughly
+  $200/month, so it is a volume decision, not a setup step.
 
 ---
 
