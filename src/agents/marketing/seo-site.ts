@@ -261,7 +261,7 @@ export const seoSiteAgent: AgentDefinition = {
       return { outcome: "observed", detail: action.payload };
     }
 
-    const writer = getSiteWriter();
+    const writer = getSiteWriter(ctx.env);
     const result = await writer.write(
       {
         path: String(action.payload["path"]),

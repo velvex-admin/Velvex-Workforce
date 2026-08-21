@@ -293,6 +293,35 @@ outright.
 
 ---
 
+## 10a. The site, and why we hold its source
+
+The site is a Netlify **file deploy** — no repo, no build command — so the SEO
+agent publishes through Netlify's digest deploy: a manifest of every path with
+its SHA1, then upload whatever Netlify does not already hold. A file missing
+from the manifest is deleted, so the manifest always carries every file.
+
+**The source of truth is ours, not Netlify's.** The obvious design — read the
+page from Netlify, edit, put it back — does not work:
+
+- Netlify's file endpoints return metadata, not content, under every Accept
+  header tried (`application/vnd.bitballoon.v1.raw`, `text/plain`, none), on
+  both the site and deploy routes.
+- The served page differs from the stored digest by ~10 bytes, cause not
+  visible from outside. Editing a page we cannot read byte-exactly is how a
+  live site quietly rots over repeated deploys.
+
+So `site.source` in the memory table holds path → content, seeded from the
+folder that gets dragged into Netlify. The agent edits that, deploys the whole
+set, writes it back. Nothing is read back from Netlify, so nothing can drift.
+
+Seed it with `scripts/seed-site-source.mjs <folder> <worker-base>`, and re-run
+that whenever the site is edited by hand, or the agent's copy falls behind.
+
+`applyEdit()` refuses more readily than it writes: the page must be in the
+source, `before` must match exactly once (zero means stale, more than one means
+ambiguous), and the result must differ. A refused edit is still recorded — it
+says the page moved under us, which is worth knowing.
+
 ## 11. Getting code onto the owner's machine
 
 The Claude GitHub App has **read-only** access to this repo, so pushes from a

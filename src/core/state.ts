@@ -23,6 +23,8 @@ export const STATE_KEYS = {
   opsStatus: "ops.pipeline_status",
   agentSchedules: "control.agent_schedules",
   agentRuntime: "runtime.agent_status",
+  /** The deployed site, path to content. Our copy is the source of truth. */
+  siteSource: "site.source",
 } as const;
 
 /**
