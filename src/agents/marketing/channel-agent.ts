@@ -99,8 +99,10 @@ const DRAFT_SCHEMA = {
       },
     },
     growth_ideas: {
+      // No maxItems here: the API rejects array length constraints in a
+      // structured-output schema. The cap is stated in the prompt and enforced
+      // in code below, where we slice before proposing.
       type: "array",
-      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
@@ -451,7 +453,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         dedupeKey: `draft:${spec.id}:${result.draft.pillar}:${result.draft.format}:${ctx.now.toISOString().slice(0, 10)}`,
       });
 
-      for (const idea of result.growth_ideas) {
+      for (const idea of (result.growth_ideas ?? []).slice(0, 3)) {
         proposals.push({
           type: "campaign_direction",
           summary: `${spec.channel} growth idea: ${idea.title}`,
