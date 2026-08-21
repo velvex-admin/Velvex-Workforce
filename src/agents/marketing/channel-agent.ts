@@ -82,7 +82,7 @@ const REASONING_MODEL = MODELS.reasoning;
 // Rough spend ceiling per platform per day, in ready drafts.
 const TARGET_READY_PER_CHANNEL = 3;
 
-const DRAFT_SCHEMA = {
+export const DRAFT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["draft", "growth_ideas"],

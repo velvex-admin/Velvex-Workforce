@@ -1,38 +1,46 @@
-// Structured-output schemas go to the Messages API, which rejects a subset of
-// JSON Schema keywords. Getting one wrong is invisible until an agent runs in
-// production and fails with a 400 — exactly how the X strategist broke on
-// `maxItems`. This test reads the actual source and fails the build instead.
+// Structured-output schemas are sent to the Messages API, which accepts only a
+// subset of JSON Schema. A rejected keyword is invisible until an agent runs in
+// production: the request 400s before the model is invoked, so it costs nothing
+// and produces nothing, and surfaces only as a logged error. That is exactly how
+// `maxItems` silently broke drafting on all three channel strategists.
+//
+// This asserts against the real schema objects, so it cannot drift from what is
+// actually sent. When a new schema is added anywhere, add it to SCHEMAS below.
 
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { DRAFT_SCHEMA } from "../src/agents/marketing/channel-agent.js";
+
+/** Every structured-output schema in the codebase. */
+const SCHEMAS: Array<[string, unknown]> = [["DRAFT_SCHEMA", DRAFT_SCHEMA]];
 
 /** Keywords the API rejects inside an output_config schema. */
 const REJECTED = ["maxItems", "minItems", "uniqueItems", "patternProperties"];
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.endsWith(".ts")) out.push(full);
+/** Every key path present anywhere in a nested object. */
+function keyPaths(value: unknown, trail: string[] = []): string[] {
+  if (value === null || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, i) => keyPaths(item, [...trail, String(i)]));
   }
-  return out;
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [
+    [...trail, key].join("."),
+    ...keyPaths(child, [...trail, key]),
+  ]);
 }
 
 describe("structured-output schemas", () => {
-  const files = sourceFiles("src");
+  for (const [name, schema] of SCHEMAS) {
+    const paths = keyPaths(schema);
 
-  for (const keyword of REJECTED) {
-    it(`never uses "${keyword}", which the API rejects`, () => {
-      const offenders = files.filter((file) => {
-        const text = readFileSync(file, "utf8");
-        // Only count real usage, not a comment explaining why we avoid it.
-        return text
-          .split("\n")
-          .some((line) => line.includes(`${keyword}:`) && !line.trimStart().startsWith("//"));
+    for (const keyword of REJECTED) {
+      it(`${name} does not use "${keyword}", which the API rejects`, () => {
+        const offenders = paths.filter((path) => path.split(".").includes(keyword));
+        expect(offenders).toEqual([]);
       });
-      expect(offenders).toEqual([]);
+    }
+
+    it(`${name} is a non-empty object schema`, () => {
+      expect(paths.length).toBeGreaterThan(0);
     });
   }
 });
