@@ -43,7 +43,13 @@ for (const file of files) {
 
 const paths = Object.keys(source).sort();
 console.log(`${paths.length} files:`);
-for (const path of paths) console.log(`  ${path.padEnd(32)} ${source[path].length} bytes`);
+for (const path of paths) {
+  // Byte length, not string length. These pages use em dashes and other
+  // multi-byte characters, so .length reads low and does not line up with the
+  // sizes Netlify reports — which invites a false mismatch when comparing.
+  const bytes = Buffer.byteLength(source[path], "utf8");
+  console.log(`  ${path.padEnd(32)} ${String(bytes).padStart(7)} bytes`);
+}
 
 const res = await fetch(`${base.replace(/\/$/, "")}/api/state/site.source`, {
   method: "PUT",

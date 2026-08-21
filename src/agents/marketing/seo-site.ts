@@ -17,7 +17,8 @@
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { ROUTINE_SITE_EDITS, isProtectedPage, type SiteEditKind } from "../../core/config.js";
-import { state, type SitePage } from "../../core/state.js";
+import { inventoryFromSource } from "../../core/site-inventory.js";
+import { STATE_KEYS, state, type SitePage } from "../../core/state.js";
 import { getSiteWriter } from "../../connectors/site.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 
@@ -160,7 +161,16 @@ export const seoSiteAgent: AgentDefinition = {
   ],
 
   async propose(ctx: RunContext): Promise<ProposedAction[]> {
-    const pages = await state.sitePages(ctx.db);
+    // Prefer the source we hold. Deriving the inventory from it keeps the paths
+    // identical to the ones the writer edits — an inventory fetched separately
+    // used "/faq" where the source key is "/faq.html", so every edit pointed at
+    // a path that could not be found and was refused. It also cannot go stale.
+    const source = await state.read<Record<string, string>>(ctx.db, STATE_KEYS.siteSource);
+    const pages =
+      source && Object.keys(source).length > 0
+        ? inventoryFromSource(source, ctx.now)
+        : await state.sitePages(ctx.db);
+
     if (!pages || pages.length === 0) {
       return [
         {
@@ -168,7 +178,9 @@ export const seoSiteAgent: AgentDefinition = {
           summary: "No site inventory to work from",
           channel: "site",
           payload: {
-            note: "Push pages to /state/site.pages and the agent will start finding issues.",
+            note:
+              "Seed the site source with scripts/seed-site-source.mjs, or push pages to " +
+              "/state/site.pages, and the agent will start finding issues.",
           },
           dedupeKey: "seo:no-inventory",
         },
