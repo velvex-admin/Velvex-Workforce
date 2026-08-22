@@ -417,6 +417,42 @@ the service role key, which bypasses it; anon keys get nothing.
 
 ---
 
+## 12a. RIGHT NOW — the open thread (delete this section once done)
+
+Everything else in this file is durable. This section is not: it is the state of
+one unfinished piece of work, and should be removed when it is finished.
+
+**The SEO agent is PAUSED.** It is set to `paused` in `control.agent_schedules`,
+so no cron tick wakes it. That was deliberate: it published a whole-page
+replacement over `/proof-of-concept.html` on its first real run — see the
+empty-anchor failure in section 10a — and the pause stopped the daily tick from
+repeating it. **Do not resume it on a schedule until the run below has been
+done once, manually, and checked.**
+
+The site was restored from backup and verified byte-identical. It is healthy.
+A copy of the good source is in the memory table under `site.source.backup`,
+separate from the live `site.source`.
+
+**The owner's decision:** run the SEO agent once, by hand, with Claude watching
+and ready to restore. Not back on cron. That is the right instinct and it should
+be respected — the failure above is exactly why.
+
+What that run should look like:
+
+1. Confirm the fix is deployed. `src/core/site-edits.ts` must exist and
+   `applyEdit()` in `src/connectors/netlify.ts` must refuse an empty `before`.
+2. Snapshot the current source first, the way it was done last time: read
+   `/api/state/site.source`, keep it, and write it to `site.source.backup`.
+3. Trigger one run: `POST /api/run/seo_site`.
+4. Immediately fetch every page and check byte sizes against the snapshot. A
+   page that shrank is the failure recurring — restore at once.
+5. Only if all pages are intact, consider whether it goes back on a cadence.
+
+Two proposals are already queued for `/faq.html` — a meta description and an
+internal link. That page is the pricing page and is protected, so they will
+never auto-apply. One of them quotes "$999" without the $149 intro rate, which
+is the phrasing problem described in section 1. Read them before approving.
+
 ## 13. Deliberately not built
 
 The owner reviewed a list of candidate agents and declined most. Do not
