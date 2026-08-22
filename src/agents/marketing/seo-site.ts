@@ -29,6 +29,11 @@ import { BUSINESS_CONTEXT } from "../../core/business.js";
 const MODEL = MODELS.balanced;
 const ALT_TEXT_MODEL = MODELS.fast;
 
+/** Reached without a link from anywhere, so never an orphan. */
+function isHomePage(path: string): boolean {
+  return /^\/(index\.html?)?$/i.test(path);
+}
+
 const META_MIN = 70;
 const META_MAX = 155;
 
@@ -72,7 +77,10 @@ function findIssues(pages: SitePage[]): Finding[] {
       }
     }
 
-    if ((page.inboundInternalLinks ?? 0) === 0 && page.path !== "/") {
+    // A home page is reached without a link, so it is never an orphan. The
+    // check exempted "/" only, while the source keys it "/index.html", so the
+    // home page was reported as an orphan on every run.
+    if ((page.inboundInternalLinks ?? 0) === 0 && !isHomePage(page.path)) {
       findings.push({
         page,
         kind: "internal_link",
@@ -261,7 +269,14 @@ export const seoSiteAgent: AgentDefinition = {
         edit = altTextEdit(html, finding.before, after);
       }
 
-      if (html && !edit && finding.kind !== "internal_link") {
+      // An internal link has no anchor translator in site-edits.ts, and there
+      // is no honest one: where a link belongs is a judgement about the page,
+      // not a substitution. Left to fall through, the proposal carried the
+      // page's own path as `before` and the model's "PAGE: / SENTENCE:" reply
+      // as `after` — an edit that fails every run, and would have injected that
+      // reply into the page had the path ever appeared on it exactly once.
+      // It is a recommendation, so it is reported as one.
+      if (html && !edit) {
         // No safe anchor: say so and move on rather than attempt it.
         proposals.push({
           type: "observation",

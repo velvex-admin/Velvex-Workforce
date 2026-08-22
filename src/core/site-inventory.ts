@@ -41,15 +41,25 @@ function images(html: string): Array<{ src: string; alt?: string }> {
   });
 }
 
-/** Links pointing at another page in this same site. */
+/**
+ * Links pointing at another page in this same site, as site paths.
+ *
+ * The href on the page and the key in the source are not written the same way:
+ * the site links relatively ("faq.html") while the source is keyed absolutely
+ * ("/faq.html"). This normalises before returning, not only before testing
+ * membership. Returning the raw href meant the inbound tally was keyed
+ * "faq.html" while every lookup asked for "/faq.html", so every page counted
+ * zero inbound links and the SEO agent called all three of them orphans.
+ */
 function internalLinks(html: string, paths: Set<string>): string[] {
   return [...html.matchAll(/<a\b[^>]*href=["']([^"']+)["']/gi)]
     .map((match) => match[1] ?? "")
-    .filter((href) => {
-      if (!href || href.startsWith("#") || /^[a-z]+:/i.test(href)) return false;
+    .map((href) => {
+      if (!href || href.startsWith("#") || /^[a-z]+:/i.test(href)) return "";
       const normalised = href.startsWith("/") ? href : `/${href}`;
-      return paths.has(normalised.split(/[?#]/)[0] ?? "");
-    });
+      return normalised.split(/[?#]/)[0] ?? "";
+    })
+    .filter((path) => path !== "" && paths.has(path));
 }
 
 /**

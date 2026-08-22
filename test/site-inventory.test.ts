@@ -67,3 +67,48 @@ describe("building the inventory from source", () => {
     expect(inventoryFromSource({})).toEqual([]);
   });
 });
+
+// The site links relatively ("faq.html") while the source is keyed absolutely
+// ("/faq.html"). internalLinks tested membership against the normalised path
+// but returned the raw href, so the inbound tally was keyed one way and read
+// the other. Every page counted zero inbound links, and the SEO agent called
+// all three of them orphans on every run.
+describe("inbound internal links", () => {
+  const page = (links: string[]) =>
+    `<html><head><title>t</title></head><body>${links
+      .map((href) => `<a href="${href}">x</a>`)
+      .join("")}</body></html>`;
+
+  it("counts relative hrefs, which is how the real site writes them", () => {
+    const pages = inventoryFromSource({
+      "/index.html": page(["faq.html"]),
+      "/faq.html": page(["index.html"]),
+    });
+    expect(pages.find((p) => p.path === "/faq.html")?.inboundInternalLinks).toBe(1);
+    expect(pages.find((p) => p.path === "/index.html")?.inboundInternalLinks).toBe(1);
+  });
+
+  it("counts absolute hrefs the same way", () => {
+    const pages = inventoryFromSource({
+      "/index.html": page(["/faq.html"]),
+      "/faq.html": page([]),
+    });
+    expect(pages.find((p) => p.path === "/faq.html")?.inboundInternalLinks).toBe(1);
+  });
+
+  it("ignores anchors, external links and unknown paths", () => {
+    const pages = inventoryFromSource({
+      "/index.html": page(["#top", "https://example.com/faq.html", "mailto:a@b.c", "/nope.html"]),
+      "/faq.html": page([]),
+    });
+    expect(pages.find((p) => p.path === "/faq.html")?.inboundInternalLinks).toBe(0);
+  });
+
+  it("strips a query string or fragment before matching", () => {
+    const pages = inventoryFromSource({
+      "/index.html": page(["faq.html?utm=x", "faq.html#pricing"]),
+      "/faq.html": page([]),
+    });
+    expect(pages.find((p) => p.path === "/faq.html")?.inboundInternalLinks).toBe(2);
+  });
+});
