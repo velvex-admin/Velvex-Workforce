@@ -141,13 +141,21 @@ function isApprovedFormat(value: unknown): value is ContentFormat {
  * if the reports table is empty; the model is told plainly when there is no
  * history yet, rather than filling the gap with invented pattern.
  */
-async function readChannelHistory(
+export async function readChannelHistory(
   channel: Channel,
   ctx: RunContext
 ): Promise<{ recentPosts: string[]; lastPublishedAt: number | null }> {
   const reports = await ctx.db.listReports({ limit: 200 });
+  // Attempts that failed are not posts. Counting them made a failure set the
+  // minimum-gap clock, so one refusal from the platform silently suppressed
+  // publishing for the next 30 hours, and the next attempt after that reset it
+  // again. It also fed copy nobody ever saw back to the model as "what you
+  // recently posted", which is exactly the history it is told not to repeat.
   const own = reports.filter(
-    (row) => row.channel === channel && row.action_type === "publish_post"
+    (row) =>
+      row.channel === channel &&
+      row.action_type === "publish_post" &&
+      row.outcome === "executed"
   );
 
   const recentPosts = own.slice(0, 12).map((row) => {

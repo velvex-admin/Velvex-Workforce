@@ -21,6 +21,7 @@ import { objectionFaqAgent } from "./sales/objection-faq.js";
 
 import { financeWatchAgent } from "./executive/finance-watch.js";
 import { opsHealthAgent } from "./executive/ops-health.js";
+import { siteIntegrityAgent } from "./executive/site-integrity.js";
 import { growthStrategyAgent } from "./executive/growth-strategy.js";
 
 export const AGENTS: AgentDefinition[] = [
@@ -38,6 +39,7 @@ export const AGENTS: AgentDefinition[] = [
   // Executive — three.
   financeWatchAgent,
   opsHealthAgent,
+  siteIntegrityAgent,
   growthStrategyAgent,
   // Orchestration — one.
   chiefOfStaffAgent,

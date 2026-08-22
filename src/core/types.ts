@@ -22,6 +22,7 @@ export type AgentId =
   // Executive
   | "finance_watch"
   | "ops_health"
+  | "site_integrity"
   | "growth_strategy"
   // Orchestration
   | "chief_of_staff";

@@ -280,6 +280,14 @@ a{color:var(--blue);text-decoration:none}
 .approval.risk-high{border-left-color:var(--red)}
 .approval.risk-medium{border-left-color:var(--amber)}
 .approval.risk-low{border-left-color:var(--slate)}
+/* A failure escalated by Chief-of-Staff is not a request for permission, it is
+   news that something broke. Styled identically to a routine proposal it reads
+   as one more item to wave through, which is how a two-day X publishing outage
+   sat unnoticed between six growth ideas. */
+.approval.problem{border-left-color:var(--red);border-left-width:5px;background:rgba(193,102,107,.06);border-color:rgba(193,102,107,.35)}
+.approval.problem h4{color:var(--red)}
+.approval .flag{display:inline-block;background:var(--red);color:#fff;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;margin-bottom:7px}
+.panel .meta .probcount{color:var(--red);font-weight:600}
 .approval h4{font-size:14px;font-weight:600;margin-bottom:4px}
 .approval .amt{font-family:ui-monospace,monospace;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
 .approval .reason{font-size:12.5px;color:var(--text-dim);margin-bottom:8px}
@@ -425,10 +433,15 @@ viewport.addEventListener('touchend', () => { touchState = null; }, { passive: t
 
 // ── Layout ──────────────────────────────────────────────────────
 // Coordinates are in the canvas's own space, no zoom applied.
+// The section key names the layout box; the batch field is the value agents
+// actually declare. They are not the same word for Sales: the agents say
+// "sales_management" while the box is keyed "sales", so matching on the key
+// alone silently rendered "no agents in this batch" over Lead/Pipeline and
+// Objection/FAQ. Both are named here so they cannot drift apart again.
 const SECTION_LAYOUT = {
-  marketing: { x: 460, y: 40,  w: 640, h: 300, label: 'Marketing' },
-  sales:     { x: 460, y: 380, w: 640, h: 180, label: 'Sales' },
-  executive: { x: 460, y: 600, w: 640, h: 260, label: 'Executive' },
+  marketing: { x: 460, y: 40,  w: 640, h: 300, label: 'Marketing', batch: 'marketing' },
+  sales:     { x: 460, y: 380, w: 640, h: 180, label: 'Sales', batch: 'sales_management' },
+  executive: { x: 460, y: 600, w: 640, h: 260, label: 'Executive', batch: 'executive' },
 };
 const COS_POS = { x: 200, y: 420 };
 const SUB_COMPLETED = { x: 120, y: 570 };
@@ -472,7 +485,7 @@ function renderNodes() {
   for (const [key, sec] of Object.entries(SECTION_LAYOUT)) {
     parts.push(\`<div class="section \${key}" style="left:\${sec.x}px;top:\${sec.y}px;width:\${sec.w}px;min-height:\${sec.h}px">
       <h2><span class="swatch"></span>\${esc(sec.label)}</h2>
-      <div class="sub">\${countBatch(key)} agents · \${activeInBatch(key)} live</div>
+      <div class="sub">\${countBatch(sec.batch)} agents · \${activeInBatch(sec.batch)} live</div>
       <div class="agents" id="agents-\${key}"></div>
     </div>\`);
   }
@@ -490,7 +503,7 @@ function renderNodes() {
   // Now inject agent dots into their section containers
   for (const [key, sec] of Object.entries(SECTION_LAYOUT)) {
     const container = document.getElementById('agents-' + key);
-    const agents = AGENTS.filter(a => a.batch === key);
+    const agents = AGENTS.filter(a => a.batch === sec.batch);
     // Fill in placeholder positions if the batch is empty
     if (!agents.length) {
       container.innerHTML = '<div style="color:var(--text-faint);font-size:11.5px;font-style:italic">no agents in this batch</div>';
@@ -736,26 +749,43 @@ function openCompleted() {
 }
 
 function openPending() {
+  // Problems first, then newest. A broken agent outranks a growth idea however
+  // long the idea has been waiting.
+  const ordered = APPROVALS.slice().sort((x, y) => (isProblem(y) ? 1 : 0) - (isProblem(x) ? 1 : 0));
+  const problems = APPROVALS.filter(isProblem).length;
   openPanel(\`
     <h2>Waiting on you</h2>
-    <div class="meta">\${APPROVALS.length} queued</div>
-    <p class="lede">Everything an agent proposed that its rules said "queue this, don't just do it". Approve to let the agent run the action as-is; reject with an optional note the agent will read next tick.</p>
-    \${APPROVALS.length ? APPROVALS.map(renderApproval).join('') : '<div class="empty">Nothing waiting. Routine work runs without asking.</div>'}
+    <div class="meta">\${APPROVALS.length} queued\${problems ? \` &middot; <span class="probcount">\${problems} problem\${problems > 1 ? 's' : ''}</span>\` : ''}</div>
+    <p class="lede">Everything an agent proposed that its rules said "queue this, don't just do it". Approve to let the agent run the action as-is; reject with an optional note the agent will read next tick. Items flagged as a problem are failures an agent already hit: nothing runs when you acknowledge one, it just stops being shown as outstanding.</p>
+    \${ordered.length ? ordered.map(renderApproval).join('') : '<div class="empty">Nothing waiting. Routine work runs without asking.</div>'}
   \`);
+}
+
+/**
+ * Chief-of-Staff queues every failed action under this one rule. Those entries
+ * are not permission requests: approving one executes nothing, it only marks
+ * the problem as seen. The buttons say so, rather than offering "Approve" for
+ * something there is nothing to approve.
+ */
+function isProblem(a) {
+  return a.trigger_rule === 'chief_of_staff.problem_escalation'
+    || !!(a.action && a.action.payload && a.action.payload.problem);
 }
 
 function renderApproval(a) {
   const action = a.action || {};
   const body = action.payload && (action.payload.text || action.payload.reply || action.payload.analysis || action.payload.after || action.payload.answer || action.payload.briefing);
-  return \`<div class="approval risk-\${esc(a.risk)}">
+  const problem = isProblem(a);
+  return \`<div class="approval risk-\${esc(a.risk)}\${problem ? ' problem' : ''}">
+    \${problem ? '<div class="flag">Problem &middot; needs attention</div>' : ''}
     <h4>\${esc(a.title)}</h4>
     <div class="amt">\${esc(a.agent_id)} · \${esc(action.type || '')} · rule \${esc(a.trigger_rule)} · \${esc(ago(a.created_at))}</div>
     <div class="reason">\${esc(a.trigger_reason || a.rationale)}</div>
     \${body ? \`<div class="body">\${esc(body)}</div>\` : ''}
     <div class="actions">
       <input type="text" id="note-\${esc(a.id)}" placeholder="optional note">
-      <button class="approve" onclick="decide('\${esc(a.id)}','approve')">Approve</button>
-      <button class="reject" onclick="decide('\${esc(a.id)}','reject')">Reject</button>
+      <button class="approve" onclick="decide('\${esc(a.id)}','approve')">\${problem ? 'Acknowledge' : 'Approve'}</button>
+      <button class="reject" onclick="decide('\${esc(a.id)}','reject')">\${problem ? 'Dismiss' : 'Reject'}</button>
     </div>
   </div>\`;
 }
