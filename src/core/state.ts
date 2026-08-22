@@ -21,7 +21,52 @@ export const STATE_KEYS = {
   siteChangeQueue: "site.change_queue",
   channelPerformance: "marketing.channel_performance",
   opsStatus: "ops.pipeline_status",
+  agentSchedules: "control.agent_schedules",
+  agentRuntime: "runtime.agent_status",
+  /** The deployed site, path to content. Our copy is the source of truth. */
+  siteSource: "site.source",
 } as const;
+
+/**
+ * Per-agent schedule overrides set from the dashboard. When absent, the
+ * agent's built-in cadence in code applies. When present, this cadence wins
+ * (including "paused", which stops the agent from firing on any tick).
+ */
+export interface AgentScheduleOverride {
+  cadence: "hourly" | "daily" | "weekly" | "paused";
+  updatedAt: string;
+  note?: string;
+}
+
+export type AgentScheduleMap = Record<string, AgentScheduleOverride>;
+
+/**
+ * A live status board the runner updates so the dashboard can show what each
+ * agent is currently working on, rather than only what it has finished.
+ *
+ * Phases are stable strings the dashboard reads: "thinking" while the agent is
+ * proposing, "acting" while it is executing, "reporting" while writing back,
+ * "idle" once done, and "failed" if it errored.
+ */
+export interface AgentRuntimeStatus {
+  status: "running" | "idle" | "failed";
+  phase: "thinking" | "acting" | "reporting" | "idle" | "failed";
+  startedAt?: string;
+  endedAt?: string;
+  runId?: string;
+  /** The most recent log line, so the panel can show it verbatim. */
+  latestThought?: string;
+  /** Up to the last 12 log lines from this run (or the previous one, when idle). */
+  thoughts?: Array<{ at: string; text: string }>;
+  /** Human-readable counts once the run has settled. */
+  proposed?: number;
+  executed?: number;
+  queued?: number;
+  failed?: number;
+  error?: string;
+}
+
+export type AgentRuntimeStatusMap = Record<string, AgentRuntimeStatus>;
 
 export interface Prospect {
   id: string;

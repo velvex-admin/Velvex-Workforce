@@ -64,7 +64,7 @@ export interface ChannelStrategistSpec {
   audienceLine: string;
   /**
    * A predicate that decides whether this strategist is active for this run.
-   * Facebook uses `flag(env.FACEBOOK_ENABLED`; LinkedIn always active because
+   * Facebook uses `flag(env.FACEBOOK_ENABLED)`; LinkedIn always active because
    * the owner asked for it; X active because posting is a first-class goal.
    */
   active: (env: Env) => boolean;
@@ -82,7 +82,7 @@ const REASONING_MODEL = MODELS.reasoning;
 // Rough spend ceiling per platform per day, in ready drafts.
 const TARGET_READY_PER_CHANNEL = 3;
 
-const DRAFT_SCHEMA = {
+export const DRAFT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["draft", "growth_ideas"],
@@ -99,8 +99,10 @@ const DRAFT_SCHEMA = {
       },
     },
     growth_ideas: {
+      // No maxItems here: the API rejects array length constraints in a
+      // structured-output schema. The cap is stated in the prompt and enforced
+      // in code below, where we slice before proposing.
       type: "array",
-      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
@@ -139,13 +141,21 @@ function isApprovedFormat(value: unknown): value is ContentFormat {
  * if the reports table is empty; the model is told plainly when there is no
  * history yet, rather than filling the gap with invented pattern.
  */
-async function readChannelHistory(
+export async function readChannelHistory(
   channel: Channel,
   ctx: RunContext
 ): Promise<{ recentPosts: string[]; lastPublishedAt: number | null }> {
   const reports = await ctx.db.listReports({ limit: 200 });
+  // Attempts that failed are not posts. Counting them made a failure set the
+  // minimum-gap clock, so one refusal from the platform silently suppressed
+  // publishing for the next 30 hours, and the next attempt after that reset it
+  // again. It also fed copy nobody ever saw back to the model as "what you
+  // recently posted", which is exactly the history it is told not to repeat.
   const own = reports.filter(
-    (row) => row.channel === channel && row.action_type === "publish_post"
+    (row) =>
+      row.channel === channel &&
+      row.action_type === "publish_post" &&
+      row.outcome === "executed"
   );
 
   const recentPosts = own.slice(0, 12).map((row) => {
@@ -392,7 +402,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         }
       }
 
-      // --- drafting pass ---------------------------------------------------
+      // --- drafting pass --------------------------------------------------
       // Only draft when the shelf for this channel is short. That caps spend
       // even on a busy schedule.
       if (ready.length >= TARGET_READY_PER_CHANNEL) {
@@ -451,7 +461,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         dedupeKey: `draft:${spec.id}:${result.draft.pillar}:${result.draft.format}:${ctx.now.toISOString().slice(0, 10)}`,
       });
 
-      for (const idea of result.growth_ideas) {
+      for (const idea of (result.growth_ideas ?? []).slice(0, 3)) {
         proposals.push({
           type: "campaign_direction",
           summary: `${spec.channel} growth idea: ${idea.title}`,

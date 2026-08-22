@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Velvex — Proof of Concept</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="styles.css"/>
+google-site-verification: googlee5c454c35e86845d.html</head>
+<body>
+
+<div id="cdot"></div>
+<div id="cring"></div>
+
+<div id="bpfield"><div id="bpgrid"></div><div id="bpsweep"></div></div>
+
+<div class="page poc-page">
+
+<!-- NAV -->
+<nav>
+  <div class="nav-in">
+    <a class='nav-brand' href='/'>
+      <span class="nav-wm">VELVEX</span>
+      <span class="nav-sub">System Evaluation</span>
+    </a>
+    <div class="nav-links">
+      <a class='nav-link' href='/'>Home</a>
+      <a class='nav-link active' href='/proof-of-concept'>Proof of Concept</a>
+      <a class='nav-link' href='/faq'>FAQ</a>
+    </div>
+    <a href="https://tally.so/r/Zjz6Oy" target="_blank" class="nav-btn">Request Diagnostic</a>
+    <button class="nav-toggle" id="navToggle" type="button" aria-label="Menu" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="nav-drawer" id="navDrawer">
+    <a class='nav-link' href='/'>Home</a>
+    <a class='nav-link active' href='/proof-of-concept'>Proof of Concept</a>
+    <a class='nav-link' href='/faq'>FAQ</a>
+    <a href="https://tally.so/r/Zjz6Oy" target="_blank" class="nav-btn">Request Diagnostic</a>
+  </div>
+</nav>
+
+<!-- HERO / TITLE BLOCK -->
+<section class="hero2">
+  <div class="ctr">
+    <div class="hero2-grid">
+      <div>
+        <div class="eyebrow">Proof of Concept</div>
+        <h1>The diagnostic,<br/>demonstrated <em>in full.</em></h1>
+        <p class="hero2-body">A complete case run through Veĺa end-to-end using an illustrative, fictional business — no real company, no real client data. The structure, scoring logic, and depth are identical to what every engagement receives. Scroll to move through it system by system, exactly as Veĺa reads it.</p>
+      </div>
+      <div class="titleblock">
+        <div class="tb-row"><span class="tb-k mono">DWG NO.</span><span class="tb-v mono">VX-2026-0010</span></div>
+        <div class="tb-row"><span class="tb-k mono">SUBJECT</span><span class="tb-v mono">Specialty Coffee — Roasting / Wholesale / DTC</span></div>
+        <div class="tb-row"><span class="tb-k mono">SCALE</span><span class="tb-v mono">Full Diagnostic Depth</span></div>
+        <div class="tb-row"><span class="tb-k mono">REV.</span><span class="tb-v mono">Client-Facing</span></div>
+        <div class="tb-row"><span class="tb-k mono">DATE</span><span class="tb-v mono">Aug 2026</span></div>
+        <div class="tb-row"><span class="tb-k mono">ENGINE</span><span class="tb-v mono">Veĺa v0.1</span></div>
+      </div>
+    </div>
+    <div class="elig-strip">
+      <div class="elig-in"><span class="elig-dot"></span>Eligibility Review — 3 of 3 layers passed &nbsp;·&nbsp; Full diagnostic proceeded</div>
+    </div>
+  </div>
+</section>
+
+<!-- SCORE DIAL -->
+<section class="dial-sec">
+  <div class="ctr">
+    <div class="dial-wrap">
+      <svg class="dial-svg" viewBox="0 0 240 240" id="dialSvg">
+        <circle class="dial-track" cx="120" cy="120" r="110"/>
+        <circle class="dial-fill" id="dialFill" cx="120" cy="120" r="110"/>
+        <text x="120" y="112" text-anchor="middle" class="dial-num" fill="#fff" id="dialNum" style="font-family:'Space Grotesk',sans-serif">0.00</text>
+        <text x="120" y="140" text-anchor="middle" class="dial-max" fill="rgba(255,255,255,.4)" style="font-family:'Space Mono',monospace">/ 100</text>
+      </svg>
+      <div class="dial-info">
+        <div class="badge-row">
+          <span class="state-badge">Strained</span>
+          <span class="state-range mono">45–74 Band · Single-Snapshot Assessment</span>
+        </div>
+        <h2>I. Executive Brief</h2>
+        <p class="brief-p">A mid-market specialty coffee roaster operating three coordinated revenue lines — direct-to-consumer subscription, wholesale supply to cafés and independent retailers, and one-off e-commerce — from a single roasting and fulfillment operation spanning three regions.<span class="tagpill ass">Assumed</span> The central structural mechanism: DTC and wholesale fulfillment draw on the same finite roasting capacity, and wholesale is prioritized for relationship and cash-flow reasons — DTC delivery consistency is the first thing to slip.<span class="tagpill inf">Inferred</span> Offer Structure and Trust Engine are genuinely strong; Operations absorbs the unresolved trade-off.<span class="tagpill inf">Inferred</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SCHEMATIC CHAIN -->
+<section id="schem">
+  <div class="ctr">
+    <div class="schem-head rv">
+      <h2>II. Structural Reading</h2>
+      <p>Seven systems, read as one connected chain. Scroll to trace how value moves through the business — and where it binds.</p>
+    </div>
+    <div class="chain" id="chain">
+      <div class="chain-line"></div>
+
+      <div class="node l rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">01</span><span class="n-code mono">VE</span></div>
+          <div class="n-name">Value Engine</div>
+          <p class="n-sub">How effort becomes money.</p>
+          <p class="n-body">Revenue is built on three lines: DTC subscription, wholesale supply under standing accounts, and one-off e-commerce.<span class="tagpill ass">Assumed</span> Subscription and wholesale carry the large majority of revenue.<span class="tagpill inf">Inferred</span> Wholesale runs on thinner negotiated margins with lower per-unit cost; DTC carries higher margin, higher per-unit fulfillment cost.<span class="tagpill inf">Inferred</span> Premium positioning rests on traceable sourcing, not price.<span class="tagpill ass">Assumed</span></p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+
+      <div class="node r rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">02</span><span class="n-code mono">DE</span></div>
+          <div class="n-name">Demand Engine</div>
+          <p class="n-sub">How attention becomes customers.</p>
+          <p class="n-body">Wholesale demand grows through café referrals and direct outreach; DTC demand grows through sourcing content, word-of-mouth, and a smaller paid layer.<span class="tagpill ass">Assumed</span> Wholesale demand compounds through multi-year account retention.<span class="tagpill inf">Inferred</span> DTC demand depends more on continuous content and paid spend to replace churn.<span class="tagpill inf">Inferred</span> The two channels share no acquisition infrastructure — growth in one doesn't lower cost in the other.<span class="tagpill inf">Inferred</span></p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+
+
+
+      <div class="node constraint l rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">03</span><span class="n-code mono">DLE</span><span class="n-flag">CONSTRAINT</span></div>
+          <div class="n-name">Delivery Engine</div>
+          <p class="n-sub">How value reaches the customer — the binding constraint.</p>
+          <p class="n-body">All three channels run through one shared roasting and fulfillment operation.<span class="tagpill ass">Assumed</span> Wholesale is batch-roasted to standing schedules; DTC ships on a rolling per-subscriber cycle.<span class="tagpill ass">Assumed</span> When wholesale volume rises, production scheduling prioritizes it — DTC roast-and-ship windows slip first.<span class="tagpill inf">Inferred</span> This is the report's core delivery friction point.</p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+
+      <div class="node r rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">04</span><span class="n-code mono">TE</span></div>
+          <div class="n-name">Trust Engine</div>
+          <p class="n-sub">Why customers believe the business is safe to transact with.</p>
+          <p class="n-body">Trust is carried by traceable, named-origin sourcing and consistent quality feedback.<span class="tagpill ass">Assumed</span> Visible café partnerships function as a credibility signal for DTC customers.<span class="tagpill inf">Inferred</span> No material trust deficit today; the risk is that Delivery Engine delays erode subscriber trust if they become frequent.<span class="tagpill inf">Inferred</span></p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+
+      <div class="node l rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">05</span><span class="n-code mono">CS</span></div>
+          <div class="n-name">Cashflow Structure</div>
+          <p class="n-sub">How money moves through the system.</p>
+          <p class="n-body">Wholesale plausibly runs on net payment terms; DTC subscription is collected upfront.<span class="tagpill ass">Assumed</span> Inventory — green coffee stock and packaging — requires meaningful upfront capital tied to sourcing cycles and import lead times.<span class="tagpill inf">Inferred</span> Margin is compressed on the channel — wholesale — that is operationally prioritized: a structural mismatch between where capacity is allocated and where margin is strongest.<span class="tagpill inf">Inferred</span></p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+
+      <div class="node r rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">06</span><span class="n-code mono">AC</span></div>
+          <div class="n-name">Adaptation Capacity</div>
+          <p class="n-sub">How fast the business can respond to change.</p>
+          <p class="n-body">Adding roasting capacity requires capital and lead time — output can't flex quickly against demand spikes.<span class="tagpill inf">Inferred</span> Channel prioritization is currently manual and relationship-driven, not a systemized rule.<span class="tagpill inf">Inferred</span></p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+
+      <div class="node l rv" data-node>
+        <div class="ncard">
+          <div class="n-head"><span class="n-num mono">07</span><span class="n-code mono">ES</span></div>
+          <div class="n-name">Exposure Surface</div>
+          <p class="n-sub">Where the business is vulnerable.</p>
+          <p class="n-body">A single shared production constraint is one point of failure across both channels.<span class="tagpill inf">Inferred</span> Dependence on a limited number of origin suppliers creates sourcing concentration risk.<span class="tagpill ass">Assumed</span> Wholesale revenue concentrated in a few large standing accounts creates customer concentration risk.<span class="tagpill ass">Assumed</span></p>
+        </div>
+        <div class="node-dot"></div><div></div>
+      </div>
+    </div>
+
+    <div class="tension-note rv">
+      <span class="tn-k">Organ-to-Organ Tension · DLE → VE</span>
+      <p>The Delivery Engine's shared, capacity-constrained production system is asked to serve two Value Engine lines with different margin and consistency requirements — forcing an implicit trade-off between <strong>DTC reliability</strong> and <strong>wholesale relationship priority</strong>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- GAUGE PANEL -->
+<section id="gauges">
+  <div class="ctr">
+    <div class="schem-head rv">
+      <h2>III. Six-Dimension Scoring</h2>
+      <p>Each dimension weighted by structural importance to this business, not evenly split.</p>
+    </div>
+    <div class="gauge-panel" id="gaugePanel">
+      <div class="gauge rv" data-gauge data-w="78">
+        <div><div class="g-name">Offer Structure</div><span class="g-w mono">33.96% weight</span></div>
+        <div class="g-track"><div class="g-fill"></div></div>
+        <div class="g-score mono">78</div>
+        <div class="g-tier">Strong with minor inefficiencies — clear, coherent tiered offer</div>
+      </div>
+      <div class="gauge rv" data-gauge data-w="52">
+        <div><div class="g-name">Operations</div><span class="g-w mono">32.83% weight</span></div>
+        <div class="g-track"><div class="g-fill"></div></div>
+        <div class="g-score mono">52</div>
+        <div class="g-tier">Structurally inefficient — binding constraint, see Delivery Engine</div>
+      </div>
+      <div class="gauge rv" data-gauge data-w="68">
+        <div><div class="g-name">Market Position</div><span class="g-w mono">15.51% weight</span></div>
+        <div class="g-track"><div class="g-fill"></div></div>
+        <div class="g-score mono">68</div>
+        <div class="g-tier">Functional but leaking performance — differentiated, not strongly defensible</div>
+      </div>
+      <div class="gauge rv" data-gauge data-w="64">
+        <div><div class="g-name">Customer Acquisition</div><span class="g-w mono">8.69% weight</span></div>
+        <div class="g-track"><div class="g-fill"></div></div>
+        <div class="g-score mono">64</div>
+        <div class="g-tier">Functional but leaking performance — channel-dependent cost pressure</div>
+      </div>
+      <div class="gauge rv" data-gauge data-w="72">
+        <div><div class="g-name">Conversion Systems</div><span class="g-w mono">5.79% weight</span></div>
+        <div class="g-track"><div class="g-fill"></div></div>
+        <div class="g-score mono">72</div>
+        <div class="g-tier">Functional but leaking performance — minor funnel friction</div>
+      </div>
+      <div class="gauge rv" data-gauge data-w="42">
+        <div><div class="g-name">Growth Leverage</div><span class="g-w mono">3.22% weight</span></div>
+        <div class="g-track"><div class="g-fill"></div></div>
+        <div class="g-score mono">42</div>
+        <div class="g-tier">Structurally weak — scaling requires capital, not absorbable</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- READOUT PANEL -->
+<section id="readout">
+  <div class="ctr">
+    <div class="schem-head rv">
+      <h2>Diagnostic Readout</h2>
+      <p>Health state, pressure points, and recommended focus — condensed.</p>
+    </div>
+    <div class="readout rv">
+      <div class="ro-head"><span>VX-2026-0010</span><span>Veĺa v0.1</span></div>
+
+      <div class="ro-block">
+        <div class="ro-h">V. Health State</div>
+        <p>Functions and generates recurring revenue across two active, compounding-capable channels, but absorbs real structural inefficiency. Operations and Growth Leverage — the two dimensions most exposed to the shared-capacity constraint — are the weakest scores; Offer Structure and Trust Engine remain genuinely strong. Single-snapshot analysis — no prior score exists, so no trajectory claim applies.</p>
+      </div>
+
+      <div class="ro-block">
+        <div class="ro-h">VI. Strategic Pressure Points</div>
+        <div class="ro-line"><span class="ro-arrow mono">→</span><p>Shared production capacity forces an unmanaged trade-off between wholesale priority and DTC fulfillment consistency — the binding operational constraint.</p></div>
+        <div class="ro-line"><span class="ro-arrow mono">→</span><p>Growth in either channel intensifies, rather than resolves, the capacity conflict — scaling requires capital, not something absorbable today.</p></div>
+        <div class="ro-line"><span class="ro-arrow mono">→</span><p>Channel prioritisation is a manual, relational decision, not a systemised rule — making the trade-off unpredictable for the DTC subscriber.</p></div>
+      </div>
+
+      <div class="ro-block">
+        <div class="ro-h">VII. Recommended Next Focus</div>
+        <div class="reco-item"><span class="reco-tag mono">Fix First</span><p>Establish an explicit, systemized production-allocation rule between wholesale and DTC — e.g. a reserved capacity floor for DTC subscription cycles — so the trade-off is managed, not silently absorbed.</p></div>
+        <div class="reco-item"><span class="reco-tag mono">Fix Second</span><p>Build visibility into channel-level margin and capacity cost, so future wholesale account decisions weigh their impact on DTC reliability.</p></div>
+        <div class="reco-item"><span class="reco-tag alt mono">Do Not Prioritise Yet</span><p>Expansion into new regions or sales channels — this adds demand to a production system that hasn't resolved its current capacity conflict.</p></div>
+      </div>
+
+      <div class="ro-block">
+        <div class="ro-h">VIII. Data Gaps Affecting Evaluation</div>
+        <ul class="gaps-list">
+          <li>Exact revenue split between wholesale, DTC subscription, and one-off e-commerce</li>
+          <li>Gross margin by channel</li>
+          <li>Subscriber churn/retention rate and average subscription lifetime</li>
+          <li>Current roasting capacity utilization rate</li>
+          <li>Wholesale account concentration (revenue share of top accounts)</li>
+        </ul>
+      </div>
+
+      <div class="ro-foot">
+        Every engagement also includes a five-minute executive audio briefing narrating the full analysis; the audio itself is not reproduced on this page.<br/>
+        Illustrative demonstration case. This business is fictional and does not represent any real company; no real business's information was used in its construction.
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- CTA -->
+<section id="cta">
+  <div class="ctr">
+    <div class="cta-grid">
+      <div class="cta-l">
+        <div class="slabel rv">Begin Evaluation</div>
+        <h2 class="rv">Request a<br/><em>Velvex Diagnostic.</em></h2>
+        <p class="rv">Complete the intake form to begin. Every accepted engagement is analysed and delivered within 24 hours.</p>
+        <a href="https://tally.so/r/Zjz6Oy" target="_blank" class="btn-p rv">Open Intake Form</a>
+      </div>
+      <div class="cta-r rv">
+        <div class="cc"><span class="cc-lbl">Diagnostic Intake</span><span class="cc-val">Complete the structured intake form to initiate your evaluation</span></div>
+        <div class="cc"><span class="cc-lbl">Direct Enquiries</span><span class="cc-val"><a href="mailto:velvex.support@gmail.com">velvex.support@gmail.com</a></span></div>
+        <div class="cc"><span class="cc-lbl">Distribution</span><span class="cc-val">Institutional &nbsp;·&nbsp; B2B Enterprises &nbsp;·&nbsp; Capital Allocators</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="ft-in">
+    <span class="ft-wm">VELVEX</span>
+    <span class="ft-meta">© 2026 Velvex System Evaluation &nbsp;·&nbsp; Institutional Distribution Only &nbsp;·&nbsp; v0.1</span>
+  </div>
+</footer>
+
+</div><!-- .page -->
+
+<script src="site.js"></script>
+<script>
+/* ═══════════════════════════════════════════
+   BLUEPRINT GRID PARALLAX + SCROLL-LINKED SWEEP
+═══════════════════════════════════════════ */
+(function(){
+  const grid=document.getElementById('bpgrid'), sweep=document.getElementById('bpsweep');
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduced)return;
+  window.addEventListener('scroll',()=>{
+    const y=window.scrollY;
+    grid.style.transform=`translateY(${y*0.04}px)`;
+    sweep.style.transform=`translateY(${y*0.5}px)`;
+  },{passive:true});
+})();
+
+/* ═══════════════════════════════════════════
+   SCHEMATIC NODE REVEAL
+═══════════════════════════════════════════ */
+(function(){
+  const obs=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');}});
+  },{threshold:.3});
+  document.querySelectorAll('[data-node]').forEach(el=>obs.observe(el));
+})();
+
+/* ═══════════════════════════════════════════
+   SCORE DIAL
+═══════════════════════════════════════════ */
+(function(){
+  const CIRC=2*Math.PI*110;
+  const target=65.19, max=100;
+  const fill=document.getElementById('dialFill');
+  const num=document.getElementById('dialNum');
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  fill.style.strokeDasharray=CIRC;
+  fill.style.strokeDashoffset=CIRC;
+  let done=false;
+  new IntersectionObserver((entries,obs)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting&&!done){
+        done=true;
+        const offset=CIRC-(target/max)*CIRC;
+        if(reduced){
+          fill.style.transition='none';
+          fill.style.strokeDashoffset=offset;
+          num.textContent=target.toFixed(2);
+          obs.unobserve(document.getElementById('dialSvg'));
+          return;
+        }
+        fill.style.strokeDashoffset=offset;
+        const dur=1300,t0=performance.now();
+        function tick(ts){
+          const p=Math.min(1,(ts-t0)/dur);
+          const eased=1-Math.pow(1-p,3);
+          num.textContent=(target*eased).toFixed(2);
+          if(p<1)requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+        obs.unobserve(document.getElementById('dialSvg'));
+      }
+    });
+  },{threshold:.4}).observe(document.getElementById('dialSvg'));
+})();
+
+/* ═══════════════════════════════════════════
+   GAUGES
+═══════════════════════════════════════════ */
+(function(){
+  const obs=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        const fill=e.target.querySelector('.g-fill');
+        fill.style.width=e.target.dataset.w+'%';
+        obs.unobserve(e.target);
+      }
+    });
+  },{threshold:.3});
+  document.querySelectorAll('[data-gauge]').forEach(el=>obs.observe(el));
+})();
+</script>
+</body>
+</html>

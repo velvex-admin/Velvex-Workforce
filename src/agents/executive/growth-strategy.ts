@@ -114,7 +114,7 @@ export const growthStrategyAgent: AgentDefinition = {
   /**
    * Only ever reached after you approve the recommendation, and even then all
    * it does is record it: acting on a strategy shift is work for the agents
-   * that own those channels.
+   * that own those channels, under their own rules.
    */
   async execute(action: ProposedAction, ctx: RunContext): Promise<ExecutionResult> {
     await ctx.db.writeMemory({

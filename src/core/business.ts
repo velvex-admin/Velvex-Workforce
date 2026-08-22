@@ -97,7 +97,7 @@ Who it is for: ${BUSINESS.audience}
 
 What a client receives: ${BUSINESS.deliverable}
 
-Price: $${BUSINESS.priceUsd} per engagement. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
+Price: an introductory rate of $${BUSINESS.introPriceUsd} per engagement, for the first ${BUSINESS.introSeats} clients only, after which pricing returns to the standing $${BUSINESS.priceUsd}. Never state one of those two figures without the other, and offer to confirm whether intro seats remain rather than committing either way. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
 
 The diagnostic engine is called ${BUSINESS.engine.name}. ${BUSINESS.evidenceStandard}
 

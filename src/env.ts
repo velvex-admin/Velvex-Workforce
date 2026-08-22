@@ -32,6 +32,9 @@ export interface Env {
   X_ACCESS_TOKEN?: string;
   X_ACCESS_TOKEN_SECRET?: string;
   LINKEDIN_PARTNER_TOKEN?: string;
+  /** Netlify write access for the SEO / Site agent. Both are required. */
+  NETLIFY_AUTH_TOKEN?: string;
+  NETLIFY_SITE_ID?: string;
   OPS_PIPELINE_STATUS_URL?: string;
   OPS_PIPELINE_STATUS_TOKEN?: string;
 }

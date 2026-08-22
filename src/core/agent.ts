@@ -21,6 +21,7 @@ import type {
   RuleDecision,
 } from "./types.js";
 import { evaluate } from "./autonomy.js";
+import { STATE_KEYS, state, type AgentRuntimeStatus, type AgentRuntimeStatusMap } from "./state.js";
 
 export type Cadence = "hourly" | "daily" | "weekly" | "manual" | "external";
 
@@ -108,6 +109,36 @@ export interface AgentRunResult {
 }
 
 const OBSERVE_ONLY_TYPES = new Set(["observation", "recommendation", "memory_write", "pipeline_flag"]);
+const MAX_THOUGHTS = 12;
+
+/**
+ * Writes the running agent's status board so the dashboard can show what it is
+ * doing right now. Errors are swallowed: a status write failing must never
+ * take an agent's real work down with it.
+ */
+async function writeStatus(
+  agentId: string,
+  patch: Partial<AgentRuntimeStatus>,
+  ctx: RunContext
+): Promise<void> {
+  try {
+    const current = (await state.read<AgentRuntimeStatusMap>(ctx.db, STATE_KEYS.agentRuntime)) ?? {};
+    const previous = current[agentId] ?? { status: "idle", phase: "idle" };
+    const next: AgentRuntimeStatus = { ...previous, ...patch };
+    // Only keep the tail of thoughts.
+    if (next.thoughts && next.thoughts.length > MAX_THOUGHTS) {
+      next.thoughts = next.thoughts.slice(-MAX_THOUGHTS);
+    }
+    current[agentId] = next;
+    await state.write(ctx.db, STATE_KEYS.agentRuntime, current, `runtime status: ${agentId}`, {
+      scope: "runtime",
+      salience: 1,
+      tags: ["runtime"],
+    });
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * Propose -> classify -> execute or queue -> report. The whole autonomy model
@@ -143,9 +174,44 @@ export async function runAgent(
     return result;
   }
 
+  // Live thought capture. Wrap ctx.log so every line the agent emits during
+  // this run lands both in the caller's log AND in the status board the
+  // dashboard reads. The wrapped ctx is what we hand into propose/execute.
+  const thoughts: Array<{ at: string; text: string }> = [];
+  const originalLog = ctx.log;
+  const runCtx: RunContext = {
+    ...ctx,
+    log: (message, detail) => {
+      const line = detail ? `${message} ${JSON.stringify(detail)}` : message;
+      thoughts.push({ at: new Date().toISOString(), text: line });
+      // Keep the memory footprint bounded; the last few are all we need.
+      if (thoughts.length > MAX_THOUGHTS) thoughts.shift();
+      originalLog(message, detail);
+    },
+  };
+
+  await writeStatus(
+    agent.id,
+    {
+      status: "running",
+      phase: "thinking",
+      startedAt: ctx.now.toISOString(),
+      endedAt: undefined,
+      runId: ctx.runId,
+      latestThought: `${agent.name} started`,
+      thoughts: [{ at: ctx.now.toISOString(), text: `${agent.name} started` }],
+      proposed: undefined,
+      executed: undefined,
+      queued: undefined,
+      failed: undefined,
+      error: undefined,
+    },
+    ctx
+  );
+
   let actions: ProposedAction[];
   try {
-    actions = await agent.propose(ctx);
+    actions = await agent.propose(runCtx);
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
     result.failed += 1;
@@ -158,13 +224,38 @@ export async function runAgent(
         outcome: "failed",
         error: result.error,
       },
-      ctx
+      runCtx
     );
     settleSpend();
+    await writeStatus(
+      agent.id,
+      {
+        status: "failed",
+        phase: "failed",
+        endedAt: new Date().toISOString(),
+        latestThought: `failed: ${result.error}`,
+        thoughts,
+        error: result.error,
+        proposed: 0,
+        executed: 0,
+        queued: 0,
+        failed: 1,
+      },
+      ctx
+    );
     return result;
   }
 
   result.proposed = actions.length;
+  await writeStatus(
+    agent.id,
+    {
+      phase: "acting",
+      latestThought: `proposed ${actions.length} action${actions.length === 1 ? "" : "s"}, deciding what to do with each`,
+      thoughts,
+    },
+    ctx
+  );
 
   for (const action of actions) {
     // An observe-only agent that tries to act externally is a bug, and it is
@@ -176,7 +267,7 @@ export async function runAgent(
         reason: `${agent.name} only observes and reports; it proposed "${action.type}", which acts.`,
         risk: "high",
       };
-      const queued = await coordinator.escalate({ agent, action, decision }, ctx);
+      const queued = await coordinator.escalate({ agent, action, decision }, runCtx);
       result.decisions.push({ action, decision, outcome: queued.queued ? "queued" : "duplicate" });
       result.queued += queued.queued ? 1 : 0;
       continue;
@@ -187,18 +278,19 @@ export async function runAgent(
       approvalRules: agent.approvalRules,
       routineRules: agent.routineRules,
       approvedChannels: agent.approvedChannels,
-      ctx: { agentId: agent.id, judge: ctx.judge, now: ctx.now },
+      ctx: { agentId: agent.id, judge: runCtx.judge, now: runCtx.now },
     });
 
     if (decision.classification === "needs_approval") {
-      const queued = await coordinator.escalate({ agent, action, decision }, ctx);
+      const queued = await coordinator.escalate({ agent, action, decision }, runCtx);
       result.decisions.push({ action, decision, outcome: queued.queued ? "queued" : "duplicate" });
       if (queued.queued) result.queued += 1;
       continue;
     }
 
     try {
-      const execution = await agent.execute(action, ctx);
+      runCtx.log(`executing: ${action.summary}`);
+      const execution = await agent.execute(action, runCtx);
       result.decisions.push({ action, decision, outcome: execution.outcome });
       if (execution.outcome === "failed") result.failed += 1;
       else result.executed += 1;
@@ -215,7 +307,7 @@ export async function runAgent(
           externalRef: execution.externalRef,
           error: execution.error,
         },
-        ctx
+        runCtx
       );
     } catch (err) {
       result.failed += 1;
@@ -231,11 +323,31 @@ export async function runAgent(
           channel: action.channel,
           error: message,
         },
-        ctx
+        runCtx
       );
     }
   }
 
   settleSpend();
+
+  await writeStatus(
+    agent.id,
+    {
+      status: result.failed > 0 && result.executed === 0 && result.queued === 0 ? "failed" : "idle",
+      phase: result.failed > 0 && result.executed === 0 && result.queued === 0 ? "failed" : "idle",
+      endedAt: new Date().toISOString(),
+      latestThought:
+        result.proposed === 0
+          ? "nothing to do this tick"
+          : `${result.executed} executed, ${result.queued} queued, ${result.failed} failed`,
+      thoughts,
+      proposed: result.proposed,
+      executed: result.executed,
+      queued: result.queued,
+      failed: result.failed,
+    },
+    ctx
+  );
+
   return result;
 }

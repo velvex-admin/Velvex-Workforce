@@ -4,6 +4,8 @@
 import type { AgentDefinition, RunContext } from "../core/agent.js";
 import { runAgent, type AgentRunResult } from "../core/agent.js";
 import type { AgentId } from "../core/types.js";
+import { STATE_KEYS, state, type AgentScheduleMap } from "../core/state.js";
+import type { Supabase } from "../lib/supabase.js";
 import { chiefOfStaff, chiefOfStaffAgent } from "./orchestration/chief-of-staff.js";
 
 import { contentAgent } from "./marketing/content.js";
@@ -19,6 +21,7 @@ import { objectionFaqAgent } from "./sales/objection-faq.js";
 
 import { financeWatchAgent } from "./executive/finance-watch.js";
 import { opsHealthAgent } from "./executive/ops-health.js";
+import { siteIntegrityAgent } from "./executive/site-integrity.js";
 import { growthStrategyAgent } from "./executive/growth-strategy.js";
 
 export const AGENTS: AgentDefinition[] = [
@@ -36,6 +39,7 @@ export const AGENTS: AgentDefinition[] = [
   // Executive — three.
   financeWatchAgent,
   opsHealthAgent,
+  siteIntegrityAgent,
   growthStrategyAgent,
   // Orchestration — one.
   chiefOfStaffAgent,
@@ -45,23 +49,47 @@ export function getAgent(id: string): AgentDefinition | undefined {
   return AGENTS.find((agent) => agent.id === id);
 }
 
-/** Which agents are due on this tick. */
-export function agentsDue(cadence: "hourly" | "daily" | "weekly", now: Date): AgentDefinition[] {
+/** Read the dashboard's schedule overrides. Absent when not yet set. */
+export async function readSchedules(db: Supabase): Promise<AgentScheduleMap> {
+  const value = await state.read<AgentScheduleMap>(db, STATE_KEYS.agentSchedules);
+  return value ?? {};
+}
+
+/**
+ * Which agents are due on this tick, honouring dashboard overrides. An override
+ * of "paused" excludes the agent from every cadence; any other override wins
+ * over the agent's built-in cadence.
+ */
+export function agentsDueWith(
+  cadence: "hourly" | "daily" | "weekly",
+  overrides: AgentScheduleMap
+): AgentDefinition[] {
   return AGENTS.filter((agent) => {
     if (agent.externalBuild) return false;
     if (agent.cadence === "manual" || agent.cadence === "external") return false;
-    if (cadence === "hourly") return agent.cadence === "hourly";
-    if (cadence === "daily") return agent.cadence === "daily";
-    return agent.cadence === "weekly";
-  }).filter(() => now instanceof Date);
+
+    const override = overrides[agent.id];
+    if (override) {
+      if (override.cadence === "paused") return false;
+      return override.cadence === cadence;
+    }
+
+    return agent.cadence === cadence;
+  });
+}
+
+/** Legacy signature. Kept for tests that do not need overrides. */
+export function agentsDue(cadence: "hourly" | "daily" | "weekly", _now: Date): AgentDefinition[] {
+  return agentsDueWith(cadence, {});
 }
 
 export async function runDue(
   cadence: "hourly" | "daily" | "weekly",
   ctx: RunContext
 ): Promise<AgentRunResult[]> {
+  const overrides = await readSchedules(ctx.db).catch(() => ({}));
   const results: AgentRunResult[] = [];
-  for (const agent of agentsDue(cadence, ctx.now)) {
+  for (const agent of agentsDueWith(cadence, overrides)) {
     ctx.log(`running ${agent.id}`);
     results.push(await runAgent(agent, chiefOfStaff, ctx));
   }
