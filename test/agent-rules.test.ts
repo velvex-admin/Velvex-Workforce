@@ -15,6 +15,7 @@ import { leadPipelineAgent } from "../src/agents/sales/lead-pipeline.js";
 import { financeWatchAgent } from "../src/agents/executive/finance-watch.js";
 import { opsHealthAgent } from "../src/agents/executive/ops-health.js";
 import { growthStrategyAgent } from "../src/agents/executive/growth-strategy.js";
+import { competitiveIntelAgent } from "../src/agents/intelligence/competitive-intel.js";
 import { marketingAnalyticsAgent } from "../src/agents/marketing/analytics.js";
 import { FAQ_LIBRARY } from "../src/core/config.js";
 import { action, ruleContext } from "./helpers.js";
@@ -301,6 +302,121 @@ describe("Executive agents", () => {
       action({ type: "observation", payload: {} })
     );
     expect(decision.classification).toBe("routine");
+  });
+});
+
+describe("Competitive Intelligence Agent", () => {
+  it("files a brief into its own library without asking", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({ type: "intel_brief", channel: "internal", payload: { brief: {} } })
+    );
+    expect(decision.classification).toBe("routine");
+    expect(decision.ruleId).toBe("competitive_intel.file_brief");
+  });
+
+  it("logs what moved on the watchlist without asking", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({ type: "observation", channel: "internal", payload: { changed: [] } })
+    );
+    expect(decision.classification).toBe("routine");
+    expect(decision.ruleId).toBe("competitive_intel.report_movement");
+  });
+
+  it("queues a positioning move rather than adopting it", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({
+        type: "recommendation",
+        channel: "internal",
+        payload: { kind: "positioning_gap", changesPositioning: true },
+      })
+    );
+    expect(decision.classification).toBe("needs_approval");
+    // Either the agent's own rule fires or the general messaging veto does.
+    // Both are the right answer: what Velvex claims about itself is the
+    // owner's call, and this is caught twice on purpose.
+    expect([
+      "competitive_intel.acts_on_nothing",
+      "general.pricing_or_messaging_change",
+    ]).toContain(decision.ruleId);
+  });
+
+  it("queues anything that would add to what it watches", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({ type: "memory_write", channel: "internal", payload: { watchlistAddition: true } })
+    );
+    expect(decision.classification).toBe("needs_approval");
+  });
+
+  it("cannot act externally even if it tried", async () => {
+    expect(competitiveIntelAgent.observeOnly).toBe(true);
+    expect(competitiveIntelAgent.approvedChannels).toEqual(["internal"]);
+    for (const channel of ["x", "linkedin", "site"] as const) {
+      const decision = await classify(
+        competitiveIntelAgent,
+        action({ type: "publish_post", channel, payload: {} })
+      );
+      expect(decision.classification).toBe("needs_approval");
+    }
+  });
+
+  it("does nothing at all until it has somewhere to file a brief", async () => {
+    // The library is a fourth table added by migration 0002. Without it the
+    // agent must stop BEFORE the two Opus passes, not after: a run that
+    // researches and then cannot file has spent real money for nothing.
+    const logs: string[] = [];
+    const result = await competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "true" } as unknown as import("../src/env.js").Env,
+      db: {
+        intelReady: async () => ({ ok: false, error: "relation does not exist" }),
+      } as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: new Proxy(
+        {},
+        {
+          get() {
+            throw new Error("the agent must not reach the model before the table exists");
+          },
+        }
+      ) as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: (message) => logs.push(message),
+    });
+
+    expect(result).toEqual([]);
+    expect(logs.join(" ")).toContain("0002_intelligence_layer.sql");
+  });
+
+  it("says it has nothing to look at rather than researching an empty desk", async () => {
+    const result = await competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "false" } as unknown as import("../src/env.js").Env,
+      db: {
+        intelReady: async () => ({ ok: true }),
+        readMemory: async () => [],
+      } as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: new Proxy(
+        {},
+        {
+          get() {
+            throw new Error("no watchlist and no web access means no model call");
+          },
+        }
+      ) as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: () => {},
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("observation");
+    expect(result[0]!.payload["active"]).toBe(false);
   });
 });
 

@@ -2,7 +2,13 @@
 // than a degradation when you get it wrong.
 
 import { describe, expect, it } from "vitest";
-import { buildRequest, type Claude } from "../src/lib/claude.js";
+import {
+  buildRequest,
+  countSearches,
+  extractWebSources,
+  webTools,
+  type Claude,
+} from "../src/lib/claude.js";
 import { spamTriage } from "../src/lib/judge.js";
 import {
   MODELS,
@@ -45,6 +51,112 @@ describe("request building per model", () => {
   it("defaults max_tokens but honours an override", () => {
     expect(buildRequest({ ...base, model: MODELS.balanced }).max_tokens).toBe(16000);
     expect(buildRequest({ ...base, model: MODELS.balanced, maxTokens: 600 }).max_tokens).toBe(600);
+  });
+});
+
+// Server-side web access. Only the intelligence agent asks for it, and the
+// tool `type` string is versioned per model generation: sending the current
+// pair to a model that only takes the earlier one is a 400 before the model
+// runs, the same failure mode as sending `effort` to Haiku.
+describe("web tools per model", () => {
+  const web = { maxSearches: 8, maxFetches: 5 };
+
+  it("gives the current generation the dynamic-filtering pair", () => {
+    for (const model of [MODELS.reasoning, MODELS.balanced]) {
+      const tools = webTools(model, web);
+      expect(tools.map((tool) => tool["type"])).toEqual([
+        "web_search_20260209",
+        "web_fetch_20260209",
+      ]);
+      expect(tools[0]!["max_uses"]).toBe(8);
+      expect(tools[1]!["max_uses"]).toBe(5);
+    }
+  });
+
+  it("gives Haiku 4.5 the earlier pair, which is what it accepts", () => {
+    expect(webTools(MODELS.fast, web).map((tool) => tool["type"])).toEqual([
+      "web_search_20250305",
+      "web_fetch_20250910",
+    ]);
+  });
+
+  it("never sends both domain lists, which the API rejects", () => {
+    const tools = webTools(MODELS.reasoning, {
+      ...web,
+      allowedDomains: ["example.com"],
+      blockedDomains: ["spam.test"],
+    });
+    for (const tool of tools) {
+      expect(tool["allowed_domains"]).toEqual(["example.com"]);
+      expect(tool).not.toHaveProperty("blocked_domains");
+    }
+  });
+
+  it("declares nothing when a cap is zero", () => {
+    expect(webTools(MODELS.reasoning, { maxSearches: 0, maxFetches: 0 })).toEqual([]);
+  });
+
+  it("only puts tools on a request that asked for them", () => {
+    expect(buildRequest({ ...base, model: MODELS.reasoning }).tools).toBeUndefined();
+    expect(buildRequest({ ...base, model: MODELS.reasoning, web }).tools).toHaveLength(2);
+  });
+
+  it("still sends thinking and effort alongside the tools", () => {
+    const request = buildRequest({ ...base, model: MODELS.reasoning, web });
+    expect(request.thinking).toEqual({ type: "adaptive" });
+    expect(request.output_config?.effort).toBe("high");
+  });
+});
+
+describe("reading what a web-enabled turn actually looked at", () => {
+  it("pulls the pages out of the result blocks, without duplicates", () => {
+    const sources = extractWebSources([
+      { type: "text", text: "hi" },
+      {
+        type: "web_search_tool_result",
+        content: [
+          { url: "https://a.test/", title: "A" },
+          { url: "https://b.test/", title: "B" },
+          { url: "https://a.test/", title: "A again" },
+        ],
+      },
+      {
+        type: "web_fetch_tool_result",
+        content: { url: "https://c.test/", document: { title: "C" } },
+      },
+    ]);
+    expect(sources.map((source) => source.url)).toEqual([
+      "https://a.test/",
+      "https://b.test/",
+      "https://c.test/",
+    ]);
+    expect(sources[2]!.via).toBe("fetch");
+  });
+
+  it("survives a failed search, which returns an object where success returns a list", () => {
+    // A web search error is HTTP 200 with an error object in `content`.
+    // Indexing it as a list would throw or silently yield nothing.
+    expect(() =>
+      extractWebSources([
+        { type: "web_search_tool_result", content: { error_code: "max_uses_exceeded" } },
+      ])
+    ).not.toThrow();
+    expect(
+      extractWebSources([
+        { type: "web_search_tool_result", content: { error_code: "max_uses_exceeded" } },
+      ])
+    ).toEqual([]);
+  });
+
+  it("counts the searches, which are billed per call on top of tokens", () => {
+    expect(
+      countSearches([
+        { type: "server_tool_use", name: "web_search" },
+        { type: "server_tool_use", name: "web_fetch" },
+        { type: "server_tool_use", name: "web_search" },
+        { type: "text", text: "x" },
+      ])
+    ).toBe(2);
   });
 });
 

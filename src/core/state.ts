@@ -25,6 +25,17 @@ export const STATE_KEYS = {
   agentRuntime: "runtime.agent_status",
   /** The deployed site, path to content. Our copy is the source of truth. */
   siteSource: "site.source",
+  /** What the Competitive Intelligence agent watches. Owner-supplied. */
+  intelWatchlist: "intel.watchlist",
+  /** What each watched source last said, so "it changed" is a comparison. */
+  intelSnapshots: "intel.source_snapshots",
+  /**
+   * A one-line pointer to the newest brief. The brief itself lives in
+   * intel_briefs; only the pointer goes in memory, because memory is read into
+   * other agents' prompts and a full brief there would be paid for on every
+   * tick by agents that never asked for it.
+   */
+  intelLatest: "intel.latest_brief",
 } as const;
 
 /**

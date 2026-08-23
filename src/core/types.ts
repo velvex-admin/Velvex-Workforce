@@ -5,7 +5,12 @@
 // only then does anything happen. That is what makes "routine vs needs
 // approval" enforceable rather than aspirational.
 
-export type AgentBatch = "marketing" | "sales_management" | "executive" | "orchestration";
+export type AgentBatch =
+  | "marketing"
+  | "sales_management"
+  | "executive"
+  | "intelligence"
+  | "orchestration";
 
 export type AgentId =
   // Marketing
@@ -24,6 +29,8 @@ export type AgentId =
   | "ops_health"
   | "site_integrity"
   | "growth_strategy"
+  // Intelligence
+  | "competitive_intel"
   // Orchestration
   | "chief_of_staff";
 
@@ -47,6 +54,12 @@ export type ActionType =
   | "pipeline_flag"
   | "observation"
   | "recommendation"
+  /**
+   * A researched document written into the agent's own library. It reaches
+   * nobody outside this system, which is why it sits on the observe-only side
+   * of the runner alongside "observation".
+   */
+  | "intel_brief"
   | "memory_write";
 
 /**

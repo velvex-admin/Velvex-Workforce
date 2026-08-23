@@ -20,6 +20,15 @@ import { connectorStatuses } from "../connectors/registry.js";
 import { STATE_KEYS, state } from "../core/state.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
 import { resolveTiers } from "../core/models.js";
+import {
+  briefFilename,
+  renderBriefHtml,
+  renderBriefMarkdown,
+  type IntelBrief,
+  type IntelSource,
+  type IntelWatchlist,
+} from "../core/intel.js";
+import { flag } from "../env.js";
 
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
@@ -78,14 +87,42 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   if (segments[0] === "status") {
     const ready = readiness(env);
     let dbStatus: { ok: boolean; error?: string } = { ok: false, error: "not checked" };
+    // The intelligence library is a fourth table added in migration 0002. If it
+    // is missing the agent stops before spending anything, and the dashboard
+    // has to be able to say why rather than showing an agent that does nothing.
+    const intelligence = {
+      migrationApplied: false,
+      migrationHint: "Apply db/migrations/0002_intelligence_layer.sql.",
+      webResearch: flag(env.INTEL_WEB_RESEARCH_ENABLED),
+      watchedSources: 0,
+      briefs: 0,
+      error: "not checked" as string | undefined,
+    };
+
     if (env.SUPABASE_SERVICE_ROLE_KEY) {
-      dbStatus = await new Supabase(env).ping();
+      const db = new Supabase(env);
+      dbStatus = await db.ping();
+
+      const intelReady = await db.intelReady();
+      intelligence.migrationApplied = intelReady.ok;
+      intelligence.error = intelReady.error;
+
+      const watchlist = await state
+        .read<IntelWatchlist>(db, STATE_KEYS.intelWatchlist)
+        .catch(() => null);
+      intelligence.watchedSources = watchlist?.sources?.length ?? 0;
+
+      if (intelReady.ok) {
+        intelligence.briefs = (await db.listIntelBriefs(200).catch(() => [])).length;
+      }
     }
+
     return json({
       environment: env.VX_ENV,
       modelTiers: resolveTiers(env),
       readiness: ready,
       database: dbStatus,
+      intelligence,
       connectors: connectorStatuses(env),
       voiceProfile: DEFAULT_VOICE.source,
       agents: AGENTS.map((agent) => ({
@@ -224,6 +261,155 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       });
       return json({ schedules: current });
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // The intelligence library. The briefs are documents, so this surface is
+  // built to hand one back as something readable rather than only as JSON:
+  //   GET  /api/intel/briefs                    the index
+  //   GET  /api/intel/briefs/:handle            one brief, whole (JSON)
+  //   GET  /api/intel/briefs/:handle/markdown   the same brief as a .md file
+  //   GET  /api/intel/briefs/:handle/page       the same brief as a page
+  //   GET  /api/intel/watchlist                 what is being watched
+  //   PUT  /api/intel/watchlist                 replace it, validated
+  // `handle` is either the brief's uuid or the date it covers (YYYY-MM-DD).
+  // ---------------------------------------------------------------------
+  if (segments[0] === "intel") {
+    const db = new Supabase(env);
+
+    if (segments[1] === "briefs" && request.method === "GET") {
+      if (segments.length === 2) {
+        const ready = await db.intelReady();
+        if (!ready.ok) {
+          return json(
+            {
+              briefs: [],
+              migrationApplied: false,
+              error:
+                "The intel_briefs table does not exist yet. Apply " +
+                "db/migrations/0002_intelligence_layer.sql, then run the agent.",
+              detail: ready.error,
+            },
+            200
+          );
+        }
+        const limit = Number(url.searchParams.get("limit") ?? 50);
+        return json({ migrationApplied: true, briefs: await db.listIntelBriefs(limit) });
+      }
+
+      const handle = segments[2]!;
+      const row = await db.getIntelBrief(handle);
+      if (!row) return json({ error: `No brief for "${handle}"` }, 404);
+
+      const brief = row.document as unknown as IntelBrief | undefined;
+      const format = segments[3];
+
+      // Without a document there is nothing to render. Saying so beats
+      // rendering an empty page that looks like a brief with nothing in it.
+      if ((format === "markdown" || format === "page") && !brief?.meta) {
+        return json({ error: `Brief "${handle}" has no stored document to render.` }, 409);
+      }
+
+      if (format === "markdown") {
+        return new Response(renderBriefMarkdown(brief!), {
+          headers: {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Disposition": `attachment; filename="${briefFilename(brief!, "md")}"`,
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+          },
+        });
+      }
+
+      if (format === "page") {
+        return new Response(renderBriefHtml(brief!), {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+            "Referrer-Policy": "no-referrer",
+          },
+        });
+      }
+
+      return json({ brief: row });
+    }
+
+    if (segments[1] === "watchlist") {
+      if (request.method === "GET") {
+        const watchlist = await state.read<IntelWatchlist>(db, STATE_KEYS.intelWatchlist);
+        return json({
+          watchlist: watchlist ?? { updatedAt: null, sources: [] },
+          note:
+            "PUT { sources: [{ id, label, url, kind }] } here to replace it. " +
+            "kind is one of: competitor, category, adjacent_tooling, buyer_language.",
+        });
+      }
+
+      if (request.method === "PUT" || request.method === "POST") {
+        const body = (await request.json().catch(() => null)) as
+          | { sources?: unknown }
+          | null;
+        if (!body || !Array.isArray(body.sources)) {
+          return json({ error: "Body must be JSON: { sources: [...] }" }, 400);
+        }
+
+        // Validated rather than stored as-is. A malformed watchlist would not
+        // fail here, it would fail weekly inside an agent run, and the reason
+        // would be several layers away from the person who typed it.
+        const kinds = ["competitor", "category", "adjacent_tooling", "buyer_language"];
+        const problems: string[] = [];
+        const seen = new Set<string>();
+        const sources: IntelSource[] = [];
+
+        body.sources.forEach((raw, index) => {
+          const item = raw as Record<string, unknown>;
+          const where = `sources[${index}]`;
+          const id = String(item?.["id"] ?? "").trim();
+          const label = String(item?.["label"] ?? "").trim();
+          const link = String(item?.["url"] ?? "").trim();
+          const kind = String(item?.["kind"] ?? "").trim();
+
+          if (!id) problems.push(`${where}: "id" is required and is the snapshot key.`);
+          else if (seen.has(id)) problems.push(`${where}: duplicate id "${id}".`);
+          if (!label) problems.push(`${where}: "label" is required.`);
+          if (!kind || !kinds.includes(kind)) {
+            problems.push(`${where}: "kind" must be one of ${kinds.join(", ")}.`);
+          }
+          if (!/^https?:\/\//i.test(link)) {
+            problems.push(`${where}: "url" must be an http(s) URL.`);
+          }
+
+          if (id) seen.add(id);
+          if (id && label && link && kinds.includes(kind)) {
+            sources.push({
+              id,
+              label,
+              url: link,
+              kind: kind as IntelSource["kind"],
+              ...(item["note"] ? { note: String(item["note"]) } : {}),
+            });
+          }
+        });
+
+        if (problems.length > 0) return json({ error: "Watchlist rejected", problems }, 400);
+
+        const watchlist: IntelWatchlist = {
+          updatedAt: new Date().toISOString(),
+          sources,
+        };
+        await state.write(
+          db,
+          STATE_KEYS.intelWatchlist,
+          watchlist,
+          `${sources.length} sources on the competitive intelligence watchlist`,
+          { scope: "competitive_intel", salience: 7, tags: ["intel"] }
+        );
+        return json({ watchlist });
+      }
+    }
+
+    return json({ error: "Not found" }, 404);
   }
 
   // GET /api/memory

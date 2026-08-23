@@ -18,6 +18,7 @@ const bareEnv = {
   X_ENABLED: "false",
   LINKEDIN_INTEGRATION_ENABLED: "false",
   OPS_PIPELINE_MONITOR_ENABLED: "false",
+  INTEL_WEB_RESEARCH_ENABLED: "false",
 } as Env;
 
 describe("Facebook connector", () => {

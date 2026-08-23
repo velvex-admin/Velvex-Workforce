@@ -47,6 +47,14 @@ LINKEDIN_INTEGRATION_ENABLED = "false"
 # no Phase 0 credentials are wired into this project.
 OPS_PIPELINE_MONITOR_ENABLED = "false"
 
+# Competitive Intelligence reads the open web. This is a spend switch, not a
+# credential: web search runs server side on the model call, so there is nothing
+# to set up. Searches bill at $10 per 1,000 on top of the tokens their results
+# consume; the agent caps itself at 8 searches and 5 page fetches per run on a
+# weekly cadence, which is well under a dollar a month. Set to "false" and the
+# agent works from the intel.watchlist sources alone and says so in the brief.
+INTEL_WEB_RESEARCH_ENABLED = "true"
+
 # ---------------------------------------------------------------------------
 # Scheduled runs. Free-tier Supabase pauses after 7 days without API traffic;
 # the hourly tick alone is enough to keep the project awake until it moves to

@@ -24,6 +24,8 @@ import { opsHealthAgent } from "./executive/ops-health.js";
 import { siteIntegrityAgent } from "./executive/site-integrity.js";
 import { growthStrategyAgent } from "./executive/growth-strategy.js";
 
+import { competitiveIntelAgent } from "./intelligence/competitive-intel.js";
+
 export const AGENTS: AgentDefinition[] = [
   // Marketing — seven, in the order the doc lists them.
   contentAgent,
@@ -36,10 +38,14 @@ export const AGENTS: AgentDefinition[] = [
   // Sales management — two.
   leadPipelineAgent,
   objectionFaqAgent,
-  // Executive — three.
+  // Executive — four.
   financeWatchAgent,
   opsHealthAgent,
   siteIntegrityAgent,
+  // Intelligence — one. Ordered before Growth-Strategy on purpose: both wake on
+  // the Monday tick, and Growth-Strategy reads the newest brief when it runs.
+  // Registry order is what makes that brief this week's rather than last week's.
+  competitiveIntelAgent,
   growthStrategyAgent,
   // Orchestration — one.
   chiefOfStaffAgent,

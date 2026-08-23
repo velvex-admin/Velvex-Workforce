@@ -23,6 +23,7 @@ whole tier can move without touching code.
 | Content | Opus 5 | `xhigh` | Writes public copy in a specific institutional voice. Two drafts a day, and the most visible thing the system produces when it is wrong. Cheap to do properly. |
 | Social Engagement | Opus 5 | `xhigh` | Public replies carrying a judgement about what they are replying to. The register has to be right in front of an audience that includes prospects. |
 | Growth-Strategy | Opus 5 | `max` | Weekly, and its entire output is a judgement read across marketing and sales together. Four calls a month is the cheapest place in the system to buy depth. |
+| Competitive Intelligence | Opus 5 | `high` researching, `max` composing | Weekly, and the only agent whose subject is outside this system. Two passes on purpose: the research pass carries the web tools and no schema, the composing pass carries the schema and no tools. Effort is split because gathering benefits less from depth than deciding what the gathering means. A wrong read here is expensive in a way that does not show up for months, and a fabricated competitor would put a decision in front of the owner based on nothing. |
 | Chief-of-Staff | Opus 5 | `high` | Decides what reaches you and what stays in the log. Filtering badly is worse than not filtering. |
 | SEO / Site | Sonnet 5 | `high` | A meta description has a length, a subject and a page to match. Bounded work with a clear target, and every protected-page edit is queued for you anyway. |
 | Marketing Analytics | Sonnet 5 | `medium` | The aggregation is deterministic. Only the four-sentence read needs a model, and you are the only reader. |
@@ -64,22 +65,39 @@ daily monitoring, weekly strategy):
 | Content | reasoning | 1.80 |
 | Chief-of-Staff | reasoning | 1.80 |
 | SEO / Site | balanced | 0.90 |
+| Competitive Intelligence | reasoning + web | 3.00 |
 | Growth-Strategy | reasoning | 0.50 |
 | Objection / FAQ | balanced | 0.30 |
 | Marketing Analytics | balanced | 0.25 |
 | Finance-Watch | balanced | 0.20 |
-| Facebook, X, LinkedIn, Lead/Pipeline, Ops-Health | none | 0.00 |
-| **Total** | | **≈ $11** |
+| Lead/Pipeline, Ops-Health, Site-Integrity | none | 0.00 |
+| **Total** | | **≈ $14** |
+
+The three channel strategists are not in that table. They were written after it,
+when the owner widened the channel agents from "publish what is already
+approved" to owning their platform end to end, and what they cost depends on how
+often the draft shelf actually needs refilling rather than on how often they
+wake. Every run records its own spend, so that number should be read off the
+reports table rather than guessed at here. Facebook is dormant and costs
+nothing until `FACEBOOK_ENABLED` is true.
+
+Competitive Intelligence is the largest single line after Social Engagement, and
+it is the one line that is not purely tokens. Its research pass may run up to
+eight web searches, billed at $10 per 1,000 on top of the tokens the results
+consume, which is about eight cents a month. The rest is two Opus passes a week
+over a lot of retrieved text. `INTEL_WEB_RESEARCH_ENABLED="false"` in
+`wrangler.toml` drops it to roughly a third of that, and the agent then works
+from the watchlist alone and says so in the brief.
 
 Running the same work entirely on Opus 5 lands around $16 to $17. The saving is
 about a third today, and it widens as volume grows: the tiered calls are the ones
 that scale with inbound messages and site pages, while the reasoning-tier calls
 are fixed at two drafts a day and one roll-up.
 
-The larger saving is the fourth tier. Five of thirteen agents make no model calls
-at all, and the hourly ones are in that group. An implementation that reflexively
-put a model behind every agent would spend more on Ops-Health checking a
-threshold every hour than on writing all the public copy.
+The larger saving is the fourth tier. Three of fifteen agents make no model calls
+at all, and two of the three hourly monitors are among them. An implementation
+that reflexively put a model behind every agent would spend more on Ops-Health
+checking a threshold every hour than on writing all the public copy.
 
 ## Two principles behind the table
 

@@ -108,7 +108,16 @@ export interface AgentRunResult {
   error?: string;
 }
 
-const OBSERVE_ONLY_TYPES = new Set(["observation", "recommendation", "memory_write", "pipeline_flag"]);
+// What an observe-only agent is still allowed to propose. "intel_brief" is on
+// this list because a brief is written into the agent's own library and reaches
+// nobody outside the system: it records, it does not act.
+const OBSERVE_ONLY_TYPES = new Set([
+  "observation",
+  "recommendation",
+  "memory_write",
+  "pipeline_flag",
+  "intel_brief",
+]);
 const MAX_THOUGHTS = 12;
 
 /**

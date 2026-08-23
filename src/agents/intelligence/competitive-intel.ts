@@ -1,0 +1,694 @@
+// Competitive Intelligence and Category Positioning Agent — Intelligence.
+//
+//   Routine        filing a brief into its own library; reporting what moved
+//   Needs approval anything it wants the business to actually do
+//
+// The only agent whose subject is outside this system. Every other agent
+// reasons over data we already hold: our reports, our pipeline, our site, our
+// posts. This one reads the category — adjacent diagnostics, business
+// assessment and founder tooling, and the language investors use for
+// commercial due diligence — and asks one question of it: which position is
+// nobody holding, and could Velvex hold it credibly.
+//
+// It is observe-only and it stays that way. It cannot publish, cannot edit the
+// site, cannot contact anyone. It writes documents and it makes a case; acting
+// on the case is the owner's decision and then somebody else's job.
+//
+// ---------------------------------------------------------------------------
+// Why the run is shaped the way it is
+//
+// Two passes, deliberately, rather than one clever call.
+//
+//   Pass 1 (research) has the web tools and no output schema. It goes and
+//   looks, and it comes back with prose and a list of pages it actually read.
+//
+//   Pass 2 (compose) has the schema and no tools. It turns that evidence into
+//   the document, and it never touches the network while doing it.
+//
+// Keeping them apart buys three things. Structured output and server-side
+// tools are not made to interact, and this system has already lost a whole
+// agent's output to a schema the API rejected before the model ran. A composing
+// call that cannot search cannot quietly fill a gap in the evidence with a
+// search it then forgets to cite. And the expensive half can be re-run without
+// paying for the research again.
+//
+// Before either pass, the watchlist is fetched and diffed with no model at all.
+// That part is arithmetic: we hold what each page said last week, so "their
+// language moved" is a comparison against a stored snapshot rather than the
+// model's impression of what a page used to say. It is the only evidence in the
+// brief that is genuinely first-hand, which is why it is gathered first and put
+// in front of the model rather than left for it to reconstruct.
+
+import type { AgentDefinition, RunContext } from "../../core/agent.js";
+import type { ExecutionResult, ProposedAction } from "../../core/types.js";
+
+import { MODELS } from "../../core/models.js";
+import { BUSINESS, BUSINESS_CONTEXT } from "../../core/business.js";
+import { STATE_KEYS, state } from "../../core/state.js";
+import { flag } from "../../env.js";
+import {
+  BRIEF_LIMITS,
+  BRIEF_SCHEMA,
+  briefIsSubstantive,
+  clampBrief,
+  diffSource,
+  extractText,
+  fingerprint,
+  STANDING_QUESTIONS,
+  type ComposedBrief,
+  type IntelBrief,
+  type IntelWatchlist,
+  type SourceChange,
+  type SourceSnapshot,
+  type SourceSnapshotMap,
+} from "../../core/intel.js";
+
+const MODEL = MODELS.reasoning;
+
+/**
+ * Per-run ceilings on web access. Searches are billed at $10 per 1,000 on top
+ * of the tokens their results consume, so this is a budget as much as a limit:
+ * at a weekly cadence these caps put the search line of the bill under $0.50 a
+ * month. Raising them is a spend decision.
+ */
+const MAX_SEARCHES = 8;
+const MAX_FETCHES = 5;
+
+/** How many watchlist sources one run will pull. Bounds the run, not the list. */
+const MAX_SOURCES_PER_RUN = 12;
+
+/** Per-source fetch timeout. A slow competitor site must not stall the tick. */
+const FETCH_TIMEOUT_MS = 10_000;
+
+// ---------------------------------------------------------------------------
+// Watchlist gathering. No model.
+// ---------------------------------------------------------------------------
+
+async function fetchSnapshot(url: string, now: Date): Promise<SourceSnapshot> {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        // Identify honestly. This reads public pages on a weekly schedule; it
+        // is not pretending to be a browser.
+        "User-Agent": `Velvex-VX03-Intelligence/1.0 (+${BUSINESS.site})`,
+        Accept: "text/html,application/xhtml+xml",
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+
+    const body = res.ok ? await res.text() : "";
+    const text = extractText(body);
+
+    return {
+      fetchedAt: now.toISOString(),
+      fingerprint: fingerprint(text),
+      text,
+      status: res.status,
+      ok: res.ok && text.length > 0,
+    };
+  } catch {
+    // A network failure is not evidence the page changed. It is recorded as
+    // unreachable so the next run compares against the last good snapshot
+    // rather than against nothing.
+    return { fetchedAt: now.toISOString(), fingerprint: "", text: "", status: 0, ok: false };
+  }
+}
+
+/**
+ * Fetch every watched source and compare it to what we last stored. Returns the
+ * changes and the snapshots to persist, without persisting them: nothing is
+ * written until the run has actually produced something, so a run that dies
+ * halfway does not consume the "this changed" signal for next time.
+ */
+async function gatherWatchlist(
+  watchlist: IntelWatchlist,
+  previous: SourceSnapshotMap,
+  ctx: RunContext
+): Promise<{ changes: SourceChange[]; snapshots: SourceSnapshotMap }> {
+  const sources = watchlist.sources.slice(0, MAX_SOURCES_PER_RUN);
+  const snapshots: SourceSnapshotMap = { ...previous };
+  const changes: SourceChange[] = [];
+
+  for (const source of sources) {
+    const fetched = await fetchSnapshot(source.url, ctx.now);
+    changes.push(diffSource(source, fetched, previous[source.id]));
+    // Only overwrite a stored snapshot with one we actually read. Replacing a
+    // good snapshot with an empty one would make next week's diff claim the
+    // page was rewritten from scratch.
+    if (fetched.ok) snapshots[source.id] = fetched;
+  }
+
+  const moved = changes.filter((change) => change.state === "changed").length;
+  const down = changes.filter((change) => change.state === "unreachable").length;
+  ctx.log(
+    `competitive_intel: ${sources.length} watched, ${moved} changed, ${down} unreachable`
+  );
+
+  return { changes, snapshots };
+}
+
+/** The watchlist diffs, written for a model to read as evidence. */
+function describeChanges(changes: SourceChange[]): string {
+  if (changes.length === 0) return "(no watchlist configured)";
+
+  return changes
+    .map((change) => {
+      const head = `- ${change.label} (${change.kind}, ${change.url}) — ${change.state}`;
+      if (change.state !== "changed") return head;
+      const added = change.added.length
+        ? `\n    NEW LANGUAGE:\n${change.added.map((line) => `      "${line}"`).join("\n")}`
+        : "";
+      const removed = change.removed.length
+        ? `\n    REMOVED:\n${change.removed.map((line) => `      "${line}"`).join("\n")}`
+        : "";
+      return `${head} (${change.bytesBefore} to ${change.bytesAfter} chars)${added}${removed}`;
+    })
+    .join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Pass 1: research.
+// ---------------------------------------------------------------------------
+
+const RESEARCH_SYSTEM = `You are the competitive intelligence researcher for Velvex.
+
+${BUSINESS_CONTEXT}
+
+Your job this pass is to find out what is actually true right now, not to write anything up. Someone else composes the brief from what you bring back.
+
+Cover four things:
+
+1. Adjacent providers. Who else sells a diagnostic, assessment, scorecard, readiness review or operational audit to businesses at a scaling decision. What they claim, how they bound the engagement, what they charge if it is published, and specifically how they describe the difference between themselves and consulting.
+2. Category language. How "business health", "scale readiness" and investor or acquirer due diligence are being phrased right now by the people selling to this buyer. Which terms are hardening into standards, which are being diluted by everyone claiming them, and which have been quietly dropped.
+3. Founder tooling. What language the tools founders already use put in front of them about their own business, because that is the vocabulary a buyer arrives with.
+4. Movement. Anything that changed recently rather than anything that is merely true.
+
+How to work:
+
+- Search deliberately. You have a small number of searches, so make each one a real question rather than a keyword.
+- Read the page before you believe the search snippet. A snippet is a claim about a page, not the page.
+- Quote. When a provider words something in a particular way, bring back their words, not your paraphrase.
+- Never name a company, a price, a claim or a trend you did not actually see on a page you retrieved. If you could not establish something, say that you could not establish it. An honest gap is worth more here than a confident guess, and a fabricated competitor would put a decision in front of the owner based on nothing.
+- Say plainly where the evidence is thin.
+
+Write it back as notes: dense, specific, quoted where it matters, with the URL beside each claim. No structure requirements, no conclusions, no recommendations. Notes. No em dashes.`;
+
+function researchPrompt(args: {
+  changes: SourceChange[];
+  carriedQuestions: string[];
+  previousHeadline: string | null;
+  liveStrategyQuestions: string[];
+}): string {
+  const parts: string[] = [];
+
+  parts.push(
+    `Standing questions, asked every cycle:\n${STANDING_QUESTIONS.map((q) => `- ${q}`).join("\n")}`
+  );
+
+  if (args.carriedQuestions.length > 0) {
+    parts.push(
+      `Carried forward from the last brief, answer these first:\n${args.carriedQuestions
+        .map((q) => `- ${q}`)
+        .join("\n")}`
+    );
+  }
+
+  if (args.liveStrategyQuestions.length > 0) {
+    parts.push(
+      `What the Growth-Strategy agent has been weighing lately, in case the category has a bearing on it:\n${args.liveStrategyQuestions
+        .map((q) => `- ${q}`)
+        .join("\n")}`
+    );
+  }
+
+  parts.push(
+    `Sources on the owner's watchlist, fetched directly this cycle. This is first-hand evidence: it is what these pages say now against what they said last cycle. Treat a change here as observed fact, and go and read the page if something moved.\n${describeChanges(
+      args.changes
+    )}`
+  );
+
+  if (args.previousHeadline) {
+    parts.push(
+      `The last brief opened with this. Do not spend this cycle re-establishing it; look for what has moved since.\n"${args.previousHeadline}"`
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Pass 2: compose.
+// ---------------------------------------------------------------------------
+
+const COMPOSE_SYSTEM = `You are the competitive intelligence analyst for Velvex. You are given research notes and watchlist evidence, and you produce the brief.
+
+${BUSINESS_CONTEXT}
+
+The brief exists to answer one question: which position in this category is nobody holding, and could Velvex hold it credibly. Everything else in the document is there to support that answer or to say honestly that it could not be reached this cycle.
+
+Rules that are not negotiable:
+
+- Every finding carries an evidence standard: "observed" if it is on a page in the notes, "inferred" if you reasoned to it from something observed, "assumption" if you are filling a gap. This is the same standard Velvex applies to a client Ledger, and an intelligence brief that overclaims is off-standard in exactly the way the business says it never is. Tag honestly. An "assumption" is not a failure; a mislabelled inference is.
+- Never name a company, a price or a claim that is not in the notes. If the notes did not establish something, it does not go in the brief.
+- A positioning gap is a position, not a tactic. "Be the standard that gets used before a raise, not after a problem" is a position. "Post more on LinkedIn" is not. If you cannot say who vacated it and why nobody else can credibly claim it, it is not a gap yet.
+- "What it would take" must be concrete enough to act on: a specific surface, a specific claim, a specific thing that would have to become true. Never "consider repositioning".
+- Differentiation to reinforce means a thing Velvex already is, that somebody else is starting to claim or that the category is starting to treat as generic. Name the erosion, then name where to answer it.
+- If a cycle genuinely found little, say so in the headline and leave the arrays short. A thin brief that says it is thin is useful. A padded one destroys the value of every brief after it.
+
+Caps, which the schema does not enforce: at most ${BRIEF_LIMITS.categoryLanguage} category language entries, ${BRIEF_LIMITS.competitorMoves} competitor moves, ${BRIEF_LIMITS.positioningGaps} positioning gaps, ${BRIEF_LIMITS.differentiationToReinforce} differentiation signals, ${BRIEF_LIMITS.watchNext} things to watch next. Fewer, better ones beat filling the quota.
+
+Register: Velvex's own. Declarative, structural, specific. Short sentences. No filler, no hedging, no consultancy vocabulary, no "in today's market". Never use an em dash.
+
+The title should name what this cycle found, not the date. "The audit word is being taken" is a title. "Weekly competitive intelligence brief" is not. The headline is one paragraph and it is the only thing some readers will read.`;
+
+function composePrompt(args: {
+  research: string;
+  changes: SourceChange[];
+  webResearch: boolean;
+  truncated: boolean;
+  consulted: string[];
+}): string {
+  const parts: string[] = [];
+
+  parts.push(`Research notes from this cycle:\n${args.research || "(the research pass returned nothing)"}`);
+
+  parts.push(
+    `Watchlist evidence, fetched directly. Anything here is observed fact.\n${describeChanges(
+      args.changes
+    )}`
+  );
+
+  parts.push(
+    args.consulted.length
+      ? `Pages actually retrieved this cycle. Cite from these; do not cite anything else.\n${args.consulted
+          .map((url) => `- ${url}`)
+          .join("\n")}`
+      : "No pages were retrieved this cycle. Every claim must come from the watchlist evidence above, or be tagged as an assumption and named in limitations."
+  );
+
+  if (!args.webResearch) {
+    parts.push(
+      "Web research was switched off for this cycle. Work only from the watchlist evidence, and say plainly in limitations that the category was not searched."
+    );
+  }
+  if (args.truncated) {
+    parts.push(
+      "The research pass hit its continuation limit and stopped early, so the notes above are partial. Say so in limitations."
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Picking the one thing that goes in front of the owner.
+// ---------------------------------------------------------------------------
+
+/**
+ * A brief can carry four gaps and four reinforcement signals. All eight going
+ * to the approvals queue every week would bury the queue, and a queue nobody
+ * finishes reading is how a real failure sat unnoticed between six growth
+ * ideas once already. So exactly one proposal leaves the brief: the single
+ * highest-value move. The rest stay in the document, where they are read
+ * deliberately rather than waved through.
+ *
+ * A gap outranks a reinforcement because occupying open ground is worth more
+ * than defending held ground, and an observed finding outranks an inferred one.
+ */
+export function topMove(brief: ComposedBrief): {
+  kind: "positioning_gap" | "differentiation";
+  title: string;
+  detail: Record<string, unknown>;
+} | null {
+  const rank = { observed: 0, inferred: 1, assumption: 2 } as const;
+
+  const gap = [...brief.positioningGaps].sort(
+    (a, b) => rank[a.standard] - rank[b.standard]
+  )[0];
+  if (gap) {
+    return {
+      kind: "positioning_gap",
+      title: `Positioning gap: ${gap.gap}`,
+      detail: { ...gap },
+    };
+  }
+
+  const signal = [...brief.differentiationToReinforce].sort(
+    (a, b) => rank[a.standard] - rank[b.standard]
+  )[0];
+  if (signal) {
+    return {
+      kind: "differentiation",
+      title: `Reinforce differentiation: ${signal.claim}`,
+      detail: { ...signal },
+    };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// The agent.
+// ---------------------------------------------------------------------------
+
+export const competitiveIntelAgent: AgentDefinition = {
+  id: "competitive_intel",
+  name: "Competitive Intelligence",
+  batch: "intelligence",
+  description:
+    "Watches adjacent diagnostics, business assessment and founder tooling, tracks how the language around business health, scale readiness and due diligence is moving, and writes a brief on which position Velvex could occupy. Advisory only: it files documents and makes a case, it never acts.",
+  // The whole output is a judgement about where the business should stand in
+  // its category, written once a week. Four calls a month is the cheapest place
+  // in this system to buy real depth, and a wrong read here is expensive in a
+  // way that is not obvious for months. See docs/MODEL-CHOICES.md.
+  model: MODEL,
+  effort: "max",
+  cadence: "weekly",
+  observeOnly: true,
+  approvedChannels: ["internal"],
+
+  routineRules: [
+    {
+      id: "competitive_intel.file_brief",
+      describe: "Researching the category and filing a brief into its own library.",
+      classification: "routine",
+      test: (action) =>
+        action.type === "intel_brief"
+          ? "Writing a brief into its own library reaches nobody outside this system. It is the job."
+          : null,
+    },
+    {
+      id: "competitive_intel.report_movement",
+      describe: "Reporting what moved on the watchlist.",
+      classification: "routine",
+      test: (action) =>
+        action.type === "observation"
+          ? "Noticing and logging that a watched source changed is monitoring, not acting."
+          : null,
+    },
+  ],
+
+  approvalRules: [
+    {
+      id: "competitive_intel.acts_on_nothing",
+      describe:
+        "Anything beyond writing a brief or reporting what moved. Occupying a position is a decision, and decisions are yours.",
+      classification: "needs_approval",
+      risk: "medium",
+      test: (action) =>
+        action.type !== "intel_brief" && action.type !== "observation"
+          ? `This agent researches and writes. "${action.type}" would have the business do something, and what Velvex claims about itself is your decision, not an agent's.`
+          : null,
+    },
+  ],
+
+  async propose(ctx: RunContext): Promise<ProposedAction[]> {
+    const day = ctx.now.toISOString().slice(0, 10);
+
+    // The library is a fourth table, added in migration 0002. Checking for it
+    // first turns "the migration has not been run" into a readable line on the
+    // dashboard instead of a failed insert halfway through an expensive run.
+    const ready = await ctx.db.intelReady();
+    if (!ready.ok) {
+      ctx.log(
+        "competitive_intel: intel_briefs is missing, so there is nowhere to file a brief. " +
+          "Apply db/migrations/0002_intelligence_layer.sql, then run this agent again. " +
+          "Nothing was researched, so nothing was spent."
+      );
+      return [];
+    }
+
+    const watchlist =
+      (await state.read<IntelWatchlist>(ctx.db, STATE_KEYS.intelWatchlist)) ??
+      ({ updatedAt: ctx.now.toISOString(), sources: [] } as IntelWatchlist);
+    const previousSnapshots =
+      (await state.read<SourceSnapshotMap>(ctx.db, STATE_KEYS.intelSnapshots)) ?? {};
+
+    const webResearch = flag(ctx.env.INTEL_WEB_RESEARCH_ENABLED);
+
+    // With no watchlist and no web access there is nothing to look at. Saying
+    // so once a cycle is honest; running two Opus calls over an empty desk and
+    // filing the result as a brief would not be.
+    if (watchlist.sources.length === 0 && !webResearch) {
+      ctx.log("competitive_intel: no watchlist and web research is off, nothing to look at");
+      return [
+        {
+          type: "observation",
+          summary: "Competitive Intelligence has nothing to look at yet",
+          payload: {
+            note:
+              "Seed a watchlist by PUTting {updatedAt, sources:[{id,label,url,kind}]} to " +
+              "/api/state/intel.watchlist, or set INTEL_WEB_RESEARCH_ENABLED=\"true\" in wrangler.toml.",
+            active: false,
+          },
+          rationale: "The agent has no sources and no web access, so it has not run and has cost nothing.",
+          dedupeKey: `intel:idle:${day}`,
+        },
+      ];
+    }
+
+    const { changes, snapshots } = await gatherWatchlist(watchlist, previousSnapshots, ctx);
+
+    // Continuity. The last brief tells this one what it said it would check.
+    const previousBriefs = await ctx.db.listIntelBriefs(1).catch(() => []);
+    const previous = previousBriefs[0];
+    const previousDocument = previous
+      ? ((await ctx.db.getIntelBrief(previous.brief_date).catch(() => null))?.document as
+          | IntelBrief
+          | undefined)
+      : undefined;
+    const carriedQuestions = previousDocument?.watchNext ?? [];
+
+    // What the strategist has been weighing, so intelligence answers live
+    // questions rather than arriving beside them. This is the loop the owner's
+    // notes described: intelligence is worth having once strategy has something
+    // to ask it.
+    const strategyReports = await ctx.db
+      .listReports({ agentId: "growth_strategy", limit: 4 })
+      .catch(() => []);
+    const liveStrategyQuestions = strategyReports.map((row) => row.summary).filter(Boolean);
+
+    ctx.log(
+      `competitive_intel: researching (web ${webResearch ? "on" : "off"}, ` +
+        `${carriedQuestions.length} carried question(s))`
+    );
+
+    // --- pass 1: research -------------------------------------------------
+    const research = await ctx.claude.complete({
+      system: RESEARCH_SYSTEM,
+      user: researchPrompt({
+        changes,
+        carriedQuestions,
+        previousHeadline: previousDocument?.headline ?? previous?.headline ?? null,
+        liveStrategyQuestions,
+      }),
+      model: MODEL,
+      // High rather than max: this pass is gathering, and depth here buys less
+      // than depth in the pass that decides what any of it means.
+      effort: "high",
+      maxTokens: 12000,
+      ...(webResearch
+        ? { web: { maxSearches: MAX_SEARCHES, maxFetches: MAX_FETCHES } }
+        : {}),
+    });
+
+    ctx.log(
+      `competitive_intel: research done, ${research.searchesUsed} search(es), ` +
+        `${research.sources.length} page(s) read, $${research.costUsd.toFixed(4)}` +
+        (research.truncated ? ", stopped at the continuation limit" : "")
+    );
+
+    // --- pass 2: compose --------------------------------------------------
+    const composed = await ctx.claude.complete<ComposedBrief>({
+      system: COMPOSE_SYSTEM,
+      user: composePrompt({
+        research: research.text,
+        changes,
+        webResearch,
+        truncated: research.truncated,
+        consulted: research.sources.map((source) => source.url),
+      }),
+      model: MODEL,
+      effort: competitiveIntelAgent.effort,
+      maxTokens: 12000,
+      schema: BRIEF_SCHEMA,
+    });
+
+    if (!composed.parsed) {
+      throw new Error("The composing pass returned no brief matching the schema.");
+    }
+
+    const brief: IntelBrief = {
+      ...clampBrief(composed.parsed),
+      briefDate: day,
+      meta: {
+        generatedAt: ctx.now.toISOString(),
+        sourcesChanged: changes.filter((change) => change.state === "changed").length,
+        sourcesWatched: changes.length,
+        webResearch,
+        searchesUsed: research.searchesUsed,
+        model: MODEL,
+        costUsd: Math.round((research.costUsd + composed.costUsd) * 1_000_000) / 1_000_000,
+      },
+    };
+
+    // Snapshots are written only now, once the run has produced a brief. A run
+    // that failed earlier leaves last week's snapshots in place, so the change
+    // it never got to read is still there to be read next time.
+    await state.write(
+      ctx.db,
+      STATE_KEYS.intelSnapshots,
+      snapshots,
+      `${Object.keys(snapshots).length} watched sources snapshotted`,
+      { scope: "competitive_intel", agent: "competitive_intel", salience: 3, tags: ["intel"] }
+    );
+
+    ctx.log(
+      `competitive_intel: brief composed, ${brief.positioningGaps.length} gap(s), ` +
+        `${brief.competitorMoves.length} move(s), $${brief.meta.costUsd.toFixed(4)} total`
+    );
+
+    const actions: ProposedAction[] = [
+      {
+        type: "intel_brief",
+        summary: brief.title,
+        payload: {
+          brief: brief as unknown as Record<string, unknown>,
+          substantive: briefIsSubstantive(brief),
+        },
+        rationale:
+          `Researched ${brief.meta.sourcesWatched} watched source(s) and ` +
+          `${brief.meta.searchesUsed} search(es), and filed the result as a brief.`,
+        dedupeKey: `intel:brief:${day}`,
+      },
+    ];
+
+    const moved = changes.filter((change) => change.state === "changed");
+    if (moved.length > 0) {
+      actions.push({
+        type: "observation",
+        summary: `${moved.length} watched source${moved.length === 1 ? "" : "s"} changed language this cycle`,
+        payload: {
+          changed: moved.map((change) => ({
+            label: change.label,
+            url: change.url,
+            kind: change.kind,
+            added: change.added,
+            removed: change.removed,
+          })),
+        },
+        rationale: "Recorded against the pages themselves, not the model's recollection of them.",
+        dedupeKey: `intel:moved:${day}`,
+      });
+    }
+
+    // One move, and only one, goes in front of the owner.
+    const move = topMove(brief);
+    if (move) {
+      actions.push({
+        type: "recommendation",
+        summary: move.title,
+        payload: {
+          kind: move.kind,
+          ...move.detail,
+          briefDate: day,
+          briefTitle: brief.title,
+          // Occupying a position changes what Velvex claims about itself, which
+          // the general boundary treats as a messaging change on top of this
+          // agent's own rule. Both should fire; it is that kind of decision.
+          changesPositioning: true,
+        },
+        rationale:
+          `The strongest single move in the ${day} brief. The rest of the brief stays in the ` +
+          `library rather than in this queue.`,
+        dedupeKey: `intel:move:${day}`,
+      });
+    }
+
+    return actions;
+  },
+
+  async execute(action: ProposedAction, ctx: RunContext): Promise<ExecutionResult> {
+    if (action.type === "intel_brief") {
+      const brief = action.payload["brief"] as IntelBrief | undefined;
+      if (!brief) {
+        return { outcome: "failed", error: "No brief on the action to file." };
+      }
+
+      const row = await ctx.db.upsertIntelBrief({
+        brief_date: brief.briefDate,
+        title: brief.title,
+        headline: brief.headline,
+        document: brief as unknown as Record<string, unknown>,
+        gap_count: brief.positioningGaps.length,
+        move_count: brief.competitorMoves.length,
+        source_count: brief.sources.length,
+        sources_watched: brief.meta.sourcesWatched,
+        sources_changed: brief.meta.sourcesChanged,
+        web_research: brief.meta.webResearch,
+        searches_used: brief.meta.searchesUsed,
+        model: brief.meta.model,
+        cost_usd: brief.meta.costUsd,
+        run_id: ctx.runId,
+      });
+
+      // A pointer, not the document. Memory is read into other agents' prompts,
+      // so what goes here is one line telling them a brief exists and where.
+      await state.write(
+        ctx.db,
+        STATE_KEYS.intelLatest,
+        {
+          briefDate: brief.briefDate,
+          id: row.id ?? null,
+          title: brief.title,
+          headline: brief.headline,
+          gaps: brief.positioningGaps.map((gap) => gap.gap),
+        },
+        `Latest competitive intelligence brief (${brief.briefDate}): ${brief.title}`,
+        { scope: "competitive_intel", agent: "competitive_intel", salience: 7, tags: ["intel"] }
+      );
+
+      return {
+        outcome: "executed",
+        externalRef: row.id ?? brief.briefDate,
+        detail: {
+          briefDate: brief.briefDate,
+          title: brief.title,
+          headline: brief.headline,
+          gaps: brief.positioningGaps.length,
+          costUsd: brief.meta.costUsd,
+        },
+      };
+    }
+
+    // Only reached after the owner approves it. Even then, all it does is
+    // record the direction: putting a position into public copy is work for the
+    // agents that own those surfaces, under their own rules.
+    if (action.type === "recommendation") {
+      await ctx.db.writeMemory({
+        key: `positioning.${ctx.now.toISOString().slice(0, 10)}`,
+        scope: "global",
+        kind: "decision",
+        content: `Approved positioning direction: ${action.summary}`,
+        detail: action.payload,
+        // High on purpose. This is read into the writing agents' context, which
+        // is the only way an approved position reaches anything public.
+        salience: 9,
+        source_agent: "competitive_intel",
+        tags: ["intel", "positioning", "strategy"],
+      });
+
+      return {
+        outcome: "executed",
+        detail: {
+          note:
+            "Recorded as an approved positioning direction. Carrying it into public copy stays " +
+            "with the agents that own those channels, under their own rules.",
+        },
+      };
+    }
+
+    return { outcome: "observed", detail: action.payload };
+  },
+};

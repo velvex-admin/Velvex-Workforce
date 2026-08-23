@@ -9,9 +9,13 @@
 
 import { describe, expect, it } from "vitest";
 import { DRAFT_SCHEMA } from "../src/agents/marketing/channel-agent.js";
+import { BRIEF_SCHEMA } from "../src/core/intel.js";
 
 /** Every structured-output schema in the codebase. */
-const SCHEMAS: Array<[string, unknown]> = [["DRAFT_SCHEMA", DRAFT_SCHEMA]];
+const SCHEMAS: Array<[string, unknown]> = [
+  ["DRAFT_SCHEMA", DRAFT_SCHEMA],
+  ["BRIEF_SCHEMA", BRIEF_SCHEMA],
+];
 
 /** Keywords the API rejects inside an output_config schema. */
 const REJECTED = ["maxItems", "minItems", "uniqueItems", "patternProperties"];

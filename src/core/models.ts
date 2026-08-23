@@ -37,6 +37,16 @@ export interface ModelCapabilities {
   /** USD per million tokens, for the cost estimate written into each report. */
   priceInPerMTok: number;
   priceOutPerMTok: number;
+  /**
+   * The server-side web tools this model accepts, by exact `type` string. The
+   * versioned names are not interchangeable: the current generation takes the
+   * 2026-02-09 pair, which filters results in a sandbox before they reach the
+   * context window, and older models only take the earlier pair. Sending the
+   * wrong one is a 400, in the same family of mistake as sending `effort` to
+   * Haiku. `null` on both means no web access for that model.
+   */
+  webSearchToolType: string | null;
+  webFetchToolType: string | null;
 }
 
 export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
@@ -46,6 +56,8 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 1_000_000,
     priceInPerMTok: 5,
     priceOutPerMTok: 25,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   },
   "claude-sonnet-5": {
     adaptiveThinking: true,
@@ -53,6 +65,8 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 1_000_000,
     priceInPerMTok: 3,
     priceOutPerMTok: 15,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   },
   "claude-haiku-4-5": {
     // Haiku 4.5 predates adaptive thinking and the effort parameter. Sending
@@ -62,8 +76,18 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 200_000,
     priceInPerMTok: 1,
     priceOutPerMTok: 5,
+    // Haiku 4.5 predates dynamic filtering, so it takes the earlier pair.
+    webSearchToolType: "web_search_20250305",
+    webFetchToolType: "web_fetch_20250910",
   },
 };
+
+/**
+ * What one web search costs, on top of the tokens the results consume.
+ * Published as $10 per 1,000 searches. Recorded per run so a research agent's
+ * bill is not just its token spend.
+ */
+export const WEB_SEARCH_USD_PER_CALL = 0.01;
 
 export function capabilitiesFor(model: string): ModelCapabilities {
   const known = MODEL_CAPABILITIES[model as ModelId];
@@ -76,6 +100,8 @@ export function capabilitiesFor(model: string): ModelCapabilities {
     contextTokens: 200_000,
     priceInPerMTok: 5,
     priceOutPerMTok: 25,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   };
 }
 

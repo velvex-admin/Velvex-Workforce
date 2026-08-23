@@ -35,6 +35,10 @@ export function dashboardHtml(basePath: string): string {
   --red:#C1666B; --amber:#C98A3E;
   --blue:#7597C4; --blue-glow:rgba(117,151,196,.4);
   --slate:#6B7280; --marketing:#B4915B; --sales:#7597C4; --executive:#6FA787;
+  /* Intelligence is the one section that reads the world outside this system,
+     and it is the only one with a store of its own. Cyan sets it apart from
+     the three operating colours rather than joining them. */
+  --intel:#4FC3D9; --intel-dim:#3A93A6; --intel-glow:rgba(79,195,217,.4);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden}
@@ -115,6 +119,8 @@ a{color:var(--blue);text-decoration:none}
 .section.marketing h2, .section.marketing .swatch{color:var(--marketing)}
 .section.sales h2, .section.sales .swatch{color:var(--sales)}
 .section.executive h2, .section.executive .swatch{color:var(--executive)}
+.section.intelligence h2, .section.intelligence .swatch{color:var(--intel)}
+.section.intelligence{border-color:rgba(79,195,217,.28)}
 .section .agents{display:flex;flex-wrap:wrap;gap:16px 20px;align-items:flex-start}
 
 /* ── Nodes ─────────────────────────────────────────────────── */
@@ -138,6 +144,7 @@ a{color:var(--blue);text-decoration:none}
 .node.marketing .dot{color:var(--marketing)}
 .node.sales .dot{color:var(--sales)}
 .node.executive .dot{color:var(--executive)}
+.node.intelligence .dot{color:var(--intel)}
 .node.orchestration .dot{color:var(--gold)}
 
 /* Pulsing rim for live/paused/inactive so the map reads at a glance. */
@@ -218,6 +225,27 @@ a{color:var(--blue);text-decoration:none}
   50%{transform:scale(1.15);opacity:.05}
 }
 
+/* ── The library ───────────────────────────────────────────────
+   Drawn as a store rather than as a circle, because it is not an agent. The
+   Competitive Intelligence agent is the only thing that writes into it, and
+   the cyan line between the two is the only place on this canvas where a node
+   feeds something other than the Chief-of-Staff. */
+.node.library .dot{
+  width:104px; height:66px; border-radius:14px;
+  background:linear-gradient(160deg, rgba(79,195,217,.16), rgba(79,195,217,.02));
+  border:1.5px solid var(--intel); color:var(--intel);
+  box-shadow:0 0 26px var(--intel-glow);
+  flex-direction:column; gap:1px;
+}
+.node.library .dot::after{border-radius:16px;border-color:var(--intel);opacity:.2}
+.node.library .dot .n{font-family:Georgia,serif;font-size:22px;font-weight:600;line-height:1.1;color:var(--intel)}
+.node.library .dot .u{font-family:ui-monospace,monospace;font-size:8.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-faint)}
+.node.library .label{color:var(--intel);font-size:12.5px}
+.node.library .cadence{color:var(--text-faint)}
+.node.library.empty-store .dot{border-style:dashed;box-shadow:none;opacity:.75}
+.node.library.blocked .dot{border-color:var(--amber);color:var(--amber);box-shadow:0 0 22px rgba(201,138,62,.3)}
+.node.library.blocked .dot .n{color:var(--amber);font-size:13px;font-family:ui-monospace,monospace}
+
 /* ── Connective SVG (behind nodes) ─────────────────────────────── */
 .wires{position:absolute;inset:0;pointer-events:none;overflow:visible;z-index:0}
 .wires path{fill:none;stroke:var(--border);stroke-width:1.2}
@@ -232,6 +260,19 @@ a{color:var(--blue);text-decoration:none}
 .wires .link.marketing{stroke:var(--marketing)}
 .wires .link.sales{stroke:var(--sales)}
 .wires .link.executive{stroke:var(--executive)}
+.wires .link.intelligence{stroke:var(--intel)}
+
+/* The feed from the agent into its library. Same ECG idea as the section
+   lines, in cyan, with a node at each end: one where the work is produced and
+   one where it lands. The far node pulses because that end is what fills. */
+.wires .ecg.intel{stroke:var(--intel);stroke-width:1.6;opacity:.9;filter:drop-shadow(0 0 5px var(--intel-glow))}
+.wires .ecg.intel.ecg-pulse{stroke-width:2.4;opacity:1}
+.wires .ecg-node{fill:var(--intel);transform-box:fill-box;transform-origin:center;filter:drop-shadow(0 0 6px var(--intel-glow))}
+.wires .ecg-node.pulsing{animation:ecg-node 2.4s ease-in-out infinite}
+@keyframes ecg-node{
+  0%,100%{transform:scale(1);opacity:1}
+  50%{transform:scale(1.7);opacity:.45}
+}
 
 /* ── Side panel (agent detail) ─────────────────────────────── */
 .panel{
@@ -274,6 +315,39 @@ a{color:var(--blue);text-decoration:none}
 .badge.amber{color:var(--amber);border-color:rgba(201,138,62,.4)}
 .badge.red{color:var(--red);border-color:rgba(193,102,107,.4)}
 .badge.slate{color:var(--slate);border-color:rgba(107,114,128,.4)}
+.badge.cyan{color:var(--intel);border-color:rgba(79,195,217,.45)}
+
+/* ── Library panel ─────────────────────────────────────────── */
+.panel h3.intel{color:var(--intel)}
+.brief-card{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--intel);border-radius:8px;padding:13px 15px;margin-bottom:9px;cursor:pointer;transition:.15s}
+.brief-card:hover{border-color:var(--intel-dim);border-left-color:var(--intel);transform:translateX(2px)}
+.brief-card h4{font-size:13.5px;font-weight:600;margin-bottom:3px}
+.brief-card .amt{font-family:ui-monospace,monospace;font-size:10px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.brief-card .reason{font-size:12.5px;color:var(--text-dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.brief-body{font-size:13.5px}
+.brief-body .headline{border-left:2px solid var(--intel);padding-left:14px;color:var(--text);margin-bottom:18px;font-size:14.5px}
+.brief-body article{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:9px}
+.brief-body article.gap{border-left:3px solid var(--intel)}
+.brief-body article h5{font-size:13.5px;font-weight:600;margin-bottom:5px;display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.brief-body p{margin-bottom:6px;color:var(--text-dim)}
+.brief-body p:last-child{margin-bottom:0}
+.brief-body p b{color:var(--text-faint);font-weight:600}
+.std{font-family:ui-monospace,monospace;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;padding:2px 6px;border-radius:20px;border:1px solid}
+.std.observed{color:var(--green);border-color:rgba(111,167,135,.45)}
+.std.inferred{color:var(--blue);border-color:rgba(117,151,196,.45)}
+.std.assumption{color:var(--amber);border-color:rgba(201,138,62,.45)}
+.sigtag{font-family:ui-monospace,monospace;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-faint)}
+.sigtag.high{color:var(--red)}
+.sigtag.medium{color:var(--amber)}
+.panel .actions button.intel{border-color:var(--intel-dim);color:var(--intel)}
+.panel .actions button.intel:hover{background:rgba(79,195,217,.08);border-color:var(--intel)}
+.panel a.dl{background:var(--surface);border:1px solid var(--intel-dim);color:var(--intel);padding:8px 14px;border-radius:5px;font-size:12.5px;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.panel a.dl:hover{background:rgba(79,195,217,.08);border-color:var(--intel)}
+.blocked-note{background:linear-gradient(135deg,rgba(201,138,62,.12),rgba(201,138,62,.03));border:1px solid rgba(201,138,62,.3);border-radius:8px;padding:12px 14px;margin-bottom:14px;color:var(--amber);font-size:13px}
+.blocked-note b{display:block;font-family:ui-monospace,monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+.blocked-note code{background:var(--bg);padding:1px 5px;border-radius:3px;font-size:11.5px;color:var(--text-dim)}
+.src-list{font-size:12.5px;color:var(--text-dim);padding-left:20px}
+.src-list li{margin-bottom:4px;word-break:break-word}
 
 /* Approval cards */
 .approval{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;border-left:3px solid var(--amber)}
@@ -357,9 +431,15 @@ const ago = (iso) => {
 
 // ── Global state ────────────────────────────────────────────────
 let AGENTS = [], REPORTS = [], APPROVALS = [], STATUS = {}, SCHEDULES = {}, RUNTIME = {}, SELECTED = null;
+let BRIEFS = [];
 
 // ── Pan / zoom ──────────────────────────────────────────────────
-const view = { x: 40, y: 60, scale: 0.9 };
+// Framing. The canvas grew a fourth section and a store off to the right when
+// Intelligence was added, so the default zoom pulls back far enough that the
+// whole shape is visible on an ordinary laptop without panning for it. A map
+// you have to hunt around to read is not doing its job.
+const DEFAULT_VIEW = { x: 30, y: 40, scale: 0.72 };
+const view = { ...DEFAULT_VIEW };
 const viewport = document.getElementById('viewport');
 const canvas = document.getElementById('canvas');
 const zoomIndicator = document.getElementById('zoom-indicator');
@@ -401,7 +481,7 @@ viewport.addEventListener('wheel', (e) => {
   applyTransform();
 }, { passive: false });
 
-function resetView() { view.x = 40; view.y = 60; view.scale = 0.9; applyTransform(); }
+function resetView() { Object.assign(view, DEFAULT_VIEW); applyTransform(); }
 applyTransform();
 
 // Touch support (basic pan + pinch)
@@ -439,15 +519,21 @@ viewport.addEventListener('touchend', () => { touchState = null; }, { passive: t
 // alone silently rendered "no agents in this batch" over Lead/Pipeline and
 // Objection/FAQ. Both are named here so they cannot drift apart again.
 const SECTION_LAYOUT = {
-  marketing: { x: 460, y: 40,  w: 640, h: 300, label: 'Marketing', batch: 'marketing' },
-  sales:     { x: 460, y: 380, w: 640, h: 180, label: 'Sales', batch: 'sales_management' },
-  executive: { x: 460, y: 600, w: 640, h: 260, label: 'Executive', batch: 'executive' },
+  marketing:    { x: 460, y: 40,  w: 640, h: 300, label: 'Marketing', batch: 'marketing' },
+  sales:        { x: 460, y: 380, w: 640, h: 180, label: 'Sales', batch: 'sales_management' },
+  executive:    { x: 460, y: 600, w: 640, h: 260, label: 'Executive', batch: 'executive' },
+  intelligence: { x: 460, y: 900, w: 640, h: 190, label: 'Intelligence', batch: 'intelligence' },
 };
 const COS_POS = { x: 200, y: 420 };
 const SUB_COMPLETED = { x: 120, y: 570 };
 const SUB_PENDING   = { x: 280, y: 570 };
+// The library sits to the RIGHT of its section, away from the Chief-of-Staff.
+// Everything else on this canvas flows leftward into coordination; this one
+// line flows the other way, into a store. The layout says so before the labels
+// do.
+const LIBRARY_POS = { x: 1290, y: 985 };
 
-// Compute where each node's dot centre lands in canvas space, for drawing wires.
+// Compute where an element's centre lands in canvas space, for drawing wires.
 function nodeCentre(el) {
   const n = el.getBoundingClientRect();
   const c = canvas.getBoundingClientRect();
@@ -458,6 +544,18 @@ function nodeCentre(el) {
 }
 
 // ── Rendering ──────────────────────────────────────────────────
+/**
+ * The centre of a node's DOT, not of the whole node.
+ *
+ * A .node is the dot plus its label, cadence and live thought stacked beneath
+ * it, so the box's centre sits well below the dot. Wires drawn to that point
+ * visibly miss the thing they are connecting, and the taller the node's text
+ * the further out they land.
+ */
+function dotCentre(el) {
+  return nodeCentre(el.querySelector('.dot') || el);
+}
+
 function renderAll() {
   renderChips();
   renderNodes();
@@ -472,6 +570,12 @@ function renderChips() {
   chips.push(['pending', APPROVALS.length, APPROVALS.length ? 'warn' : 'good']);
   const activeConn = (STATUS.connectors || []).filter(c => c.active).map(c => c.channel);
   chips.push(['live channels', activeConn.join(', ') || 'none', activeConn.length ? 'good' : 'warn']);
+  const intel = STATUS.intelligence || {};
+  chips.push([
+    'library',
+    intel.migrationApplied ? (BRIEFS.length + ' brief' + (BRIEFS.length === 1 ? '' : 's')) : 'migration 0002',
+    intel.migrationApplied ? (BRIEFS.length ? 'good' : 'warn') : 'bad',
+  ]);
   document.getElementById('status-chips').innerHTML = chips.map(([k, v, c]) =>
     '<span class="chip ' + c + '"><span class="dot"></span><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></span>'
   ).join('');
@@ -498,6 +602,9 @@ function renderNodes() {
   parts.push(subNodeHtml('completed', 'Completed', SUB_COMPLETED.x, SUB_COMPLETED.y, REPORTS.filter(r => r.outcome === 'executed').length));
   parts.push(subNodeHtml('pending',   'Pending',   SUB_PENDING.x,   SUB_PENDING.y,   APPROVALS.length, APPROVALS.length ? 'red' : ''));
 
+  // The library
+  parts.push(libraryHtml());
+
   nodes.innerHTML = parts.join('');
 
   // Now inject agent dots into their section containers
@@ -520,6 +627,7 @@ function renderNodes() {
       if (kind === 'agent' || kind === 'chief') openAgent(n.dataset.id);
       else if (kind === 'sub-completed') openCompleted();
       else if (kind === 'sub-pending') openPending();
+      else if (kind === 'library') openLibrary();
     });
   });
 
@@ -592,16 +700,69 @@ function subNodeHtml(kind, label, x, y, count, badgeClass) {
   </div>\`;
 }
 
+/**
+ * The store the Competitive Intelligence agent writes into. Three states, and
+ * they are visually different on purpose: blocked means the table it writes to
+ * does not exist yet, which is a setup step rather than an empty shelf, and
+ * showing those two the same way would hide a thing that needs doing.
+ */
+function libraryHtml() {
+  const intel = STATUS.intelligence || {};
+  const blocked = intel.migrationApplied === false;
+  const count = BRIEFS.length;
+  const cls = 'node library intelligence'
+    + (blocked ? ' blocked' : '')
+    + (!blocked && count === 0 ? ' empty-store' : '');
+  const face = blocked
+    ? '<span class="n">migration</span><span class="u">0002 not applied</span>'
+    : \`<span class="n">\${count}</span><span class="u">brief\${count === 1 ? '' : 's'}</span>\`;
+  const sub = blocked
+    ? 'needs setup'
+    : count === 0 ? 'nothing filed yet' : ('newest ' + esc(BRIEFS[0].brief_date));
+  return \`<div class="\${cls}" data-kind="library"
+    title="Every competitive intelligence brief, stored and readable"
+    style="position:absolute;left:\${LIBRARY_POS.x - 52}px;top:\${LIBRARY_POS.y - 48}px">
+    <div class="dot">\${face}</div>
+    <div class="label">Intelligence Library</div>
+    <div class="cadence">\${sub}</div>
+  </div>\`;
+}
+
 // ── Wires ──────────────────────────────────────────────────────
 // The visual metaphor: an animated ECG line runs from each section into COS.
 // Extra thin static lines fan out from COS to every agent, so you see the
 // membership. The two sub-nodes hang off COS with short connectors.
+/**
+ * How much room the drawing actually needs, in canvas coordinates.
+ *
+ * This has to be measured rather than assumed. Everything on this canvas is
+ * absolutely positioned, so .canvas-inner collapses to zero width and height,
+ * and the wires SVG inside it inherits that through inset:0. The paths were
+ * being written correctly and then clipped to a 0x0 box: every ECG line in the
+ * page was in the DOM and invisible. Reading the real extent of the rendered
+ * sections and nodes keeps this correct when the layout moves, which an
+ * assumed constant would not.
+ */
+function canvasExtent() {
+  const c = canvas.getBoundingClientRect();
+  let w = 0, h = 0;
+  document.querySelectorAll('.section, .node').forEach(el => {
+    const r = el.getBoundingClientRect();
+    w = Math.max(w, (r.right - c.left) / view.scale);
+    h = Math.max(h, (r.bottom - c.top) / view.scale);
+  });
+  return { w: Math.ceil(w) + 90, h: Math.ceil(h) + 90 };
+}
+
 function renderWires() {
   const wires = document.getElementById('wires');
   const cosEl = document.querySelector('[data-kind="chief"]');
   if (!cosEl) return;
-  const cos = nodeCentre(cosEl);
-  const w = canvas.offsetWidth, h = canvas.offsetHeight;
+  const cos = dotCentre(cosEl);
+  const { w, h } = canvasExtent();
+  // The canvas is given the size too, so the SVG's inset:0 resolves to it.
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
   wires.setAttribute('width', w);
   wires.setAttribute('height', h);
   wires.setAttribute('viewBox', \`0 0 \${w} \${h}\`);
@@ -610,8 +771,8 @@ function renderWires() {
   const parts = [];
   // Static agent-membership links (faint) — one per agent, coloured by batch
   document.querySelectorAll('.node[data-kind="agent"]').forEach(n => {
-    const c = nodeCentre(n);
-    const batch = n.className.split(/\\s+/).find(x => ['marketing','sales','executive'].includes(x));
+    const c = dotCentre(n);
+    const batch = n.className.split(/\\s+/).find(x => ['marketing','sales','executive','intelligence'].includes(x));
     parts.push(\`<path class="link \${batch || ''}" d="M\${cos.x},\${cos.y} C\${(cos.x+c.x)/2},\${cos.y} \${(cos.x+c.x)/2},\${c.y} \${c.x},\${c.y}"/>\`);
   });
 
@@ -632,12 +793,46 @@ function renderWires() {
     parts.push(\`<path class="ecg ecg-pulse" d="\${spike}"/>\`);
   }
 
+  // The intelligence feed: agent -> library.
+  //
+  // Every other line on this canvas ends at the Chief-of-Staff. This one runs
+  // the other way, from the one agent that produces documents into the one
+  // place that stores them, so it is drawn differently: cyan, thicker, with a
+  // node at each end. The ECG spike sits mid-line as it does on the section
+  // wires, and the dash animation runs a pulse along it from the agent to the
+  // store, in that direction, because that is the direction the work moves.
+  const intelEl = document.querySelector('.node[data-id="competitive_intel"]');
+  const libEl = document.querySelector('[data-kind="library"]');
+  if (intelEl && libEl) {
+    const c = dotCentre(intelEl);
+    const b = dotCentre(libEl);
+    // Both ends clear their node. Drawn from the agent's centre the start node
+    // would sit under the agent's own dot and never be seen, which is half the
+    // point of having a node at each end.
+    const a = { x: c.x + 32, y: c.y };
+    const end = { x: b.x - 58, y: b.y };
+    const mid = (a.x + end.x) / 2;
+    const feed = \`M\${a.x},\${a.y}
+      L\${mid - 52},\${a.y}
+      L\${mid - 34},\${a.y - 14}
+      L\${mid - 20},\${a.y + 24}
+      L\${mid - 4},\${a.y - 30}
+      L\${mid + 12},\${a.y}
+      L\${mid + 52},\${a.y}
+      Q\${end.x - 4},\${a.y} \${end.x},\${end.y}\`;
+    parts.push(\`<path class="ecg intel" d="\${feed}"/>\`);
+    parts.push(\`<path class="ecg intel ecg-pulse" d="\${feed}"/>\`);
+    // A node at each end. The far one pulses: that is the end that fills up.
+    parts.push(\`<circle class="ecg-node" cx="\${a.x}" cy="\${a.y}" r="5.5"/>\`);
+    parts.push(\`<circle class="ecg-node pulsing" cx="\${end.x}" cy="\${end.y}" r="5.5"/>\`);
+  }
+
   // Sub-node links
   const compEl = document.querySelector('[data-kind="sub-completed"]');
   const pendEl = document.querySelector('[data-kind="sub-pending"]');
   if (compEl && pendEl) {
-    const comp = nodeCentre(compEl);
-    const pend = nodeCentre(pendEl);
+    const comp = dotCentre(compEl);
+    const pend = dotCentre(pendEl);
     parts.push(\`<path class="link" d="M\${cos.x},\${cos.y + 34} Q\${cos.x - 30},\${cos.y + 70} \${comp.x},\${comp.y - 20}"/>\`);
     parts.push(\`<path class="link" d="M\${cos.x},\${cos.y + 34} Q\${cos.x + 30},\${cos.y + 70} \${pend.x},\${pend.y - 20}"/>\`);
   }
@@ -790,6 +985,166 @@ function renderApproval(a) {
   </div>\`;
 }
 
+
+// ── The intelligence library ────────────────────────────────────
+// A brief is a document, not a log line, so this reads like one: the headline
+// first, then the findings, each carrying the evidence standard it was written
+// under. The two buttons at the top are the point of the whole feature — the
+// owner asked to be able to save and read these, so every brief leaves as a
+// file or as its own page.
+
+function stdTag(standard) {
+  return '<span class="std ' + esc(standard) + '">' + esc(standard) + '</span>';
+}
+
+function briefSection(heading, body) {
+  return '<h3 class="intel">' + esc(heading) + '</h3>' + (body || '<div class="empty">Nothing this cycle.</div>');
+}
+
+function renderBriefBody(brief) {
+  const list = (rows, fn) => rows && rows.length ? rows.map(fn).join('') : '';
+
+  const language = list(brief.categoryLanguage, item =>
+    '<article><h5>' + esc(item.term) + stdTag(item.standard) + '</h5>' +
+    '<p>' + esc(item.movement) + '</p>' +
+    '<p><b>Evidence.</b> ' + esc(item.evidence) + '</p></article>');
+
+  const moves = list(brief.competitorMoves, item =>
+    '<article><h5>' + esc(item.who) + stdTag(item.standard) +
+    '<span class="sigtag ' + esc(item.significance) + '">' + esc(item.significance) + '</span></h5>' +
+    '<p>' + esc(item.change) + '</p>' +
+    '<p><b>Evidence.</b> ' + esc(item.evidence) + '</p></article>');
+
+  const gaps = list(brief.positioningGaps, item =>
+    '<article class="gap"><h5>' + esc(item.gap) + stdTag(item.standard) + '</h5>' +
+    '<p><b>Why it is open.</b> ' + esc(item.whyOpen) + '</p>' +
+    '<p><b>Why Velvex fits.</b> ' + esc(item.velvexFit) + '</p>' +
+    '<p><b>What it would take.</b> ' + esc(item.whatItWouldTake) + '</p></article>');
+
+  const differentiation = list(brief.differentiationToReinforce, item =>
+    '<article><h5>' + esc(item.claim) + stdTag(item.standard) + '</h5>' +
+    '<p><b>Under pressure from.</b> ' + esc(item.pressure) + '</p>' +
+    '<p><b>Reinforce by.</b> ' + esc(item.reinforcement) + '</p></article>');
+
+  const watchNext = brief.watchNext && brief.watchNext.length
+    ? '<ul class="src-list">' + brief.watchNext.map(line => '<li>' + esc(line) + '</li>').join('') + '</ul>'
+    : '';
+
+  const sources = brief.sources && brief.sources.length
+    ? '<ol class="src-list">' + brief.sources.map(src =>
+        '<li><a href="' + esc(src.url) + '" target="_blank" rel="noreferrer noopener">' +
+        esc(src.title || src.url) + '</a>' + (src.usedFor ? ' — ' + esc(src.usedFor) : '') + '</li>').join('') + '</ol>'
+    : '';
+
+  const meta = brief.meta || {};
+  return '<div class="brief-body">' +
+    '<p class="headline">' + esc(brief.headline) + '</p>' +
+    briefSection('Category language', language) +
+    briefSection('Competitor and adjacent moves', moves) +
+    briefSection('Positioning gaps Velvex could occupy', gaps) +
+    briefSection('Differentiation to reinforce', differentiation) +
+    briefSection('Watch next cycle', watchNext) +
+    briefSection('Limitations', brief.limitations ? '<p style="color:var(--text-dim);font-size:13.5px">' + esc(brief.limitations) + '</p>' : '') +
+    briefSection('Sources', sources) +
+    '<h3 class="intel">Provenance</h3>' +
+    '<div class="rulebox">' +
+      esc(meta.sourcesChanged || 0) + ' of ' + esc(meta.sourcesWatched || 0) + ' watched sources changed · ' +
+      'web research ' + (meta.webResearch ? 'on, ' + esc(meta.searchesUsed || 0) + ' searches' : 'off') + ' · ' +
+      esc(meta.model || 'unknown') + ' · $' + Number(meta.costUsd || 0).toFixed(4) +
+    '</div>' +
+  '</div>';
+}
+
+/** The migration is a setup step, so it gets said plainly rather than implied. */
+function migrationNote() {
+  return '<div class="blocked-note"><b>The library has no table yet</b>' +
+    'Apply <code>db/migrations/0002_intelligence_layer.sql</code> to the Supabase project, ' +
+    'then run the agent. Until then it stops before doing any research, so nothing is being spent.</div>';
+}
+
+async function openLibrary() {
+  SELECTED = null;
+  renderAll();
+  const intel = STATUS.intelligence || {};
+  const blocked = intel.migrationApplied === false;
+
+  const cards = BRIEFS.map(row =>
+    '<div class="brief-card" onclick="openBrief(\\'' + esc(row.brief_date) + '\\')">' +
+      '<h4>' + esc(row.title) + '</h4>' +
+      '<div class="amt">' + esc(row.brief_date) + ' · ' + esc(row.gap_count || 0) + ' gap' +
+        ((row.gap_count || 0) === 1 ? '' : 's') + ' · ' + esc(row.move_count || 0) + ' move' +
+        ((row.move_count || 0) === 1 ? '' : 's') + ' · ' + esc(row.source_count || 0) + ' source' +
+        ((row.source_count || 0) === 1 ? '' : 's') + ' · $' + Number(row.cost_usd || 0).toFixed(4) + '</div>' +
+      '<div class="reason">' + esc(row.headline) + '</div>' +
+    '</div>').join('');
+
+  openPanel(
+    '<h2>Intelligence Library</h2>' +
+    '<div class="meta">' + BRIEFS.length + ' brief' + (BRIEFS.length === 1 ? '' : 's') + ' stored · ' +
+      esc(intel.watchedSources || 0) + ' watched source' + ((intel.watchedSources || 0) === 1 ? '' : 's') + ' · ' +
+      'web research ' + (intel.webResearch ? 'on' : 'off') + '</div>' +
+    (blocked ? migrationNote() : '') +
+    '<p class="lede">Everything the Competitive Intelligence agent has written, kept whole. ' +
+      'A brief is stored exactly as it was composed, so one read a year from now is the brief that was ' +
+      'written rather than a reconstruction of it. Open one to read it, or take it out as a file.</p>' +
+    (BRIEFS.length
+      ? '<h3 class="intel">Briefs, newest first</h3>' + cards
+      : '<div class="empty">' + (blocked
+          ? 'Nothing can be filed until the migration is applied.'
+          : 'Nothing filed yet. The agent runs weekly, or use Run once on its node.') + '</div>') +
+    '<h3 class="intel">Watchlist</h3>' +
+    '<p class="cadence-hint">The pages the agent fetches directly each cycle and compares against ' +
+      'what they said last time. That comparison is the only first-hand evidence in a brief, so the ' +
+      'list is worth keeping current. PUT to <code>/api/intel/watchlist</code> to change it.</p>' +
+    '<div class="actions"><button class="intel" onclick="showWatchlist()">Show watchlist</button></div>' +
+    '<div id="watchlist-out"></div>'
+  );
+}
+
+async function showWatchlist() {
+  const out = document.getElementById('watchlist-out');
+  if (!out) return;
+  out.innerHTML = '<div class="empty">Loading...</div>';
+  const r = await api('/intel/watchlist');
+  const sources = (r.watchlist && r.watchlist.sources) || [];
+  out.innerHTML = sources.length
+    ? '<table class="activity"><thead><tr><th>Source</th><th>Kind</th></tr></thead><tbody>' +
+      sources.map(src =>
+        '<tr><td><a href="' + esc(src.url) + '" target="_blank" rel="noreferrer noopener">' +
+        esc(src.label) + '</a></td><td>' + esc(src.kind) + '</td></tr>').join('') +
+      '</tbody></table>'
+    : '<div class="empty">No sources watched yet. The agent still researches the category if ' +
+      'web research is on, but nothing is being compared week to week.</div>';
+}
+
+async function openBrief(handle) {
+  openPanel('<h2>Loading brief</h2><div class="empty">Fetching ' + esc(handle) + '...</div>');
+
+  // Fetched every time rather than cached. A brief is revised in place by a
+  // same-day re-run, and a reader showing the superseded version of a document
+  // is worse than one extra request.
+  const r = await api('/intel/briefs/' + encodeURIComponent(handle));
+  if (r.error || !r.brief) {
+    openPanel('<h2>Brief unavailable</h2><div class="empty">' + esc(r.error || 'Not found') + '</div>');
+    return;
+  }
+  const row = r.brief;
+  const brief = row.document || {};
+  const base = BASE + '/api/intel/briefs/' + encodeURIComponent(handle);
+
+  openPanel(
+    '<h2>' + esc(brief.title || row.title) + '</h2>' +
+    '<div class="meta">competitive intelligence · ' + esc(row.brief_date) + ' · ' +
+      esc(row.gap_count || 0) + ' positioning gap' + ((row.gap_count || 0) === 1 ? '' : 's') + '</div>' +
+    '<div class="actions">' +
+      '<a class="dl" href="' + base + '/markdown">Download Markdown</a>' +
+      '<a class="dl" href="' + base + '/page" target="_blank" rel="noreferrer">Open as a page</a>' +
+      '<button onclick="openLibrary()">Back to the library</button>' +
+    '</div>' +
+    renderBriefBody(brief)
+  );
+}
+
 // ── Actions ────────────────────────────────────────────────────
 async function decide(id, decision) {
   disableAll(true);
@@ -850,12 +1205,13 @@ function toast(msg, cls = '') {
 
 // ── Data loading ────────────────────────────────────────────────
 async function loadAll() {
-  const [status, approvals, reports, schedules, runtime] = await Promise.all([
+  const [status, approvals, reports, schedules, runtime, briefs] = await Promise.all([
     api('/status'),
     api('/approvals?status=pending'),
     api('/reports?limit=100'),
     api('/schedules'),
     api('/runtime'),
+    api('/intel/briefs?limit=60'),
   ]);
   STATUS = status || {};
   AGENTS = status.agents || [];
@@ -863,6 +1219,7 @@ async function loadAll() {
   REPORTS = reports.reports || [];
   SCHEDULES = schedules.schedules || {};
   RUNTIME = runtime.runtime || {};
+  BRIEFS = briefs.briefs || [];
   renderAll();
   // If any agent is currently running, keep the panel it's open on in sync.
   if (SELECTED && document.getElementById('panel').classList.contains('open')) {

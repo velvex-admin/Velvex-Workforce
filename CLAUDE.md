@@ -35,7 +35,7 @@ should read like one.
 
 ## 2. What VX-03 is
 
-A single Cloudflare Worker running 13 agents against a Supabase database. No
+A single Cloudflare Worker running 15 agents against a Supabase database. No
 framework, no agent library, no SDK for Supabase — plain `fetch` against
 PostgREST, and a thin wrapper around the Anthropic Messages API.
 
@@ -94,7 +94,7 @@ routine/needs-approval line real rather than a comment.
 
 ---
 
-## 5. The 13 agents
+## 5. The 15 agents
 
 | Agent | Batch | Model | Effort | Cadence |
 |---|---|---|---|---|
@@ -109,7 +109,9 @@ routine/needs-approval line real rather than a comment.
 | Objection / FAQ | sales | Sonnet 5 | high | manual |
 | Finance-Watch | executive | Sonnet 5 | medium | daily |
 | Ops-Health | executive | *none* | — | hourly |
+| Site-Integrity | executive | *none* | — | hourly |
 | Growth-Strategy | executive | Opus 5 | max | weekly |
+| Competitive Intelligence | **intelligence** | Opus 5 | high → max | weekly |
 | Chief-of-Staff | orchestration | Opus 5 | high | daily |
 
 ### Why the models differ
@@ -283,6 +285,44 @@ outright.
   them. Implemented as `allowEmDash` in `src/core/voice.ts`, currently `false`
   per the doc. Flip the toggle, do not scatter exceptions.
 - **`/faq` is a pricing page.** Protected from unattended SEO edits.
+- **Every wire on the dashboard was invisible, and had been from the start.**
+  `.canvas-inner` holds only absolutely positioned children, so it collapsed to
+  0x0, and the wires SVG inside it inherits that through `inset:0`. Every ECG
+  line and every membership link was being written into the DOM correctly and
+  then clipped away to nothing. It is invisible to a typecheck, and invisible to
+  any test that only asserts the paths exist. `renderWires()` now measures the
+  real extent of the rendered sections and nodes and sizes the canvas to it, and
+  `test/dashboard-script.test.ts` asserts that it does. Related: wires are drawn
+  to `dotCentre()`, not `nodeCentre()` — a `.node` is the dot plus its label,
+  cadence and live thought, so its box centre sits well below the dot and lines
+  drawn to it visibly miss.
+
+- **The dashboard is a template literal, so its browser code is escaped twice.**
+  A `\'` written inside that literal emits a bare `'` and closes the surrounding
+  JavaScript string early; the page then dies on the first line the browser
+  parses and the canvas is simply blank. It compiles, it typechecks, it ships.
+  `test/dashboard-script.test.ts` parses the emitted script with `new Function`,
+  which is what catches it. Write `\\'` when the browser needs `\'`.
+
+- **Server tools and structured output are kept in separate calls.** Not a
+  discovered trap so much as a refusal to discover one: the intelligence agent
+  researches with web tools and no schema, then composes with a schema and no
+  tools. Given `maxItems` once 400'd every strategist before the model ran, the
+  combination is not worth testing in production.
+
+- **A server-tool turn can stop with `stop_reason: "pause_turn"`.** HTTP 200, no
+  error, no warning, and an answer that just stops partway. `complete()` in
+  `src/lib/claude.ts` resumes it by re-sending with the paused assistant turn
+  appended, up to 4 times, and sets `truncated` if it is still paused after
+  that. Never append a "Continue" message: the API sees the trailing
+  `server_tool_use` block and resumes on its own, and the word would become part
+  of the conversation.
+
+- **A failed web search returns an object where a successful one returns an
+  array.** Both arrive as HTTP 200 inside a `web_search_tool_result` block.
+  Anything reading `.content` has to check which it got; indexing the error
+  object yields nothing and hides the failure.
+
 - **X free tier posts but does not read.** `POST /2/tweets` is included; the
   read endpoints Social Engagement needs (`/2/users/me`, `/2/users/:id/mentions`)
   return `402 credits-depleted` until a paid tier is active. That is a billing
@@ -371,7 +411,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 94 tests
+npx vitest run            # 236 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -395,25 +435,162 @@ src/
     agent.ts            AgentDefinition + the run loop + status board
     schedule.ts         weekly jittered posting plan
     state.ts            typed views over the memory table
+    intel.ts            the brief document, its schema, and page diffing
   agents/
     registry.ts         the roster; runDue() honours schedule overrides
     marketing/          content, channel-agent (shared strategist factory),
                         x, linkedin, facebook, seo-site, analytics,
                         social-engagement
     sales/              lead-pipeline, objection-faq
-    executive/          finance-watch, ops-health, growth-strategy
+    executive/          finance-watch, ops-health, site-integrity,
+                        growth-strategy
+    intelligence/       competitive-intel
     orchestration/      chief-of-staff (Coordinator + an agent)
   connectors/           facebook, x (OAuth 1.0a), linkedin (queue), site
   routes/               api.ts, integrations.ts
   ui/dashboard.ts       the canvas dashboard
 db/migrations/          0001_orchestration_layer.sql
+                        0002_intelligence_layer.sql
 ```
 
 ### Database
 
-Three tables: `reports` (audit trail), `memory` (continuity + typed state),
-`pending_approvals` (the queue). RLS is on with no policies — the Worker uses
-the service role key, which bypasses it; anon keys get nothing.
+Four tables: `reports` (audit trail), `memory` (continuity + typed state),
+`pending_approvals` (the queue), and `intel_briefs` (the intelligence library,
+added in migration 0002). RLS is on with no policies — the Worker uses the
+service role key, which bypasses it; anon keys get nothing.
+
+The architecture doc says three tables and no more. `intel_briefs` departs from
+that deliberately, and the reason is worth keeping: every agent's run pulls
+`memory` rows into its prompt by salience, so a full multi-page brief stored
+there would be read, and paid for, by every other agent on every tick. A brief
+is a document to be retrieved on purpose, not context to be broadcast. What goes
+in `memory` is a one-line pointer at `intel.latest_brief`.
+
+---
+
+## 12b. The intelligence layer
+
+The Competitive Intelligence and Category Positioning Agent is the only agent
+whose subject is outside this system. Every other agent reasons over data we
+already hold. This one reads the category and asks one question of it: which
+position is nobody holding, and could Velvex hold it credibly.
+
+It is observe-only and permanently so. It cannot publish, cannot edit the site,
+cannot contact anyone. It writes documents and it makes a case.
+
+### Before it can run: migration 0002
+
+`db/migrations/0002_intelligence_layer.sql` must be applied, once, before the
+agent is any use. It does two things: creates `intel_briefs`, and **drops** the
+`agent_batch` CHECK constraints on `reports` and `pending_approvals` so a new
+batch never needs a migration again. The vocabulary lives in
+`src/core/types.ts`; duplicating it in the schema only ever produced a
+constraint violation on the day somebody forgot to migrate.
+
+```
+DATABASE_URL='postgresql://...' npm run db:apply
+```
+or paste the file into the Supabase SQL editor.
+
+Until it is applied the agent checks, logs `0002_intelligence_layer.sql`, and
+returns without doing anything, so a missing migration costs nothing rather than
+failing halfway through two Opus passes. `/api/status` reports
+`intelligence.migrationApplied`, and the Library node on the dashboard says
+"migration 0002" in amber rather than showing an empty shelf.
+
+### How one run works
+
+Three stages, and the order matters:
+
+1. **Watchlist fetch and diff. No model.** Every source in `intel.watchlist` is
+   fetched, reduced to visible text, and compared against the snapshot stored at
+   `intel.source_snapshots`. This is the only first-hand evidence in a brief:
+   "their language moved" is a comparison against what the page actually said
+   last week, not the model's impression of it. The diff is set-based on
+   sentences, so a page that reorders its sections has not changed; script and
+   style bodies are dropped, so a changed analytics snippet is not a competitor
+   changing their message.
+2. **Research pass.** Opus 5 at effort `high`, **with** the web tools and **no**
+   output schema. It searches, reads pages, and returns notes plus the list of
+   URLs it actually retrieved.
+3. **Composing pass.** Opus 5 at effort `max`, **with** the schema and **no**
+   tools. It turns that evidence into the brief.
+
+Keeping 2 and 3 apart is deliberate. Structured output and server-side tools are
+not built to interact and this repo has already lost an agent's entire output to
+a schema the API rejected before the model ran. A composing call that cannot
+search cannot quietly fill an evidence gap with a search it forgets to cite. And
+the expensive half can be re-run without paying for the research again.
+
+### The evidence standard
+
+Every finding in a brief is tagged `observed`, `inferred` or `assumption`. That
+is the same standard Velvex applies to a client Ledger, turned on Velvex's own
+intelligence, and it is a required field in `BRIEF_SCHEMA` rather than an
+optional flourish. The prompts are emphatic that a company, price or claim that
+is not in the retrieved notes does not go in the brief: a fabricated competitor
+would put a real decision in front of the owner based on nothing.
+
+### What reaches the approvals queue
+
+Exactly one thing per brief. A brief can carry four positioning gaps and four
+differentiation signals; all eight arriving in the queue every week would bury
+it, and a queue nobody finishes reading is how a two-day X publishing outage sat
+unnoticed between six growth ideas once already. `topMove()` picks the single
+highest-value move — a gap outranks a reinforcement, and observed outranks
+inferred — and the rest stay in the document. The brief itself is routine and
+files without asking. Watchlist movement is one routine observation.
+
+An approved move is written to `memory` at salience 9 under `positioning.<date>`,
+which is how it reaches the writing agents' context. Nothing publishes it.
+
+### The library
+
+`intel_briefs`, one row per cycle, keyed on `brief_date` so a re-run revises that
+day's brief instead of filing a near-duplicate beside it. The whole structured
+document is stored in `document`, so a brief read a year from now is the brief
+that was written rather than a reconstruction.
+
+| Route | What it gives you |
+|---|---|
+| `GET /api/intel/briefs` | the index (no documents, so the list stays cheap) |
+| `GET /api/intel/briefs/:handle` | one brief, whole |
+| `GET /api/intel/briefs/:handle/markdown` | the same brief as a `.md` download |
+| `GET /api/intel/briefs/:handle/page` | the same brief as a standalone page |
+| `GET|PUT /api/intel/watchlist` | what is watched, validated on write |
+
+`:handle` is the brief's uuid or the date it covers. On the dashboard the
+Library is the cyan node to the right of the Intelligence section, fed by an
+animated cyan ECG line from the agent, and it is the one line on the canvas that
+runs away from the Chief-of-Staff rather than into it.
+
+### Seeding the watchlist
+
+```
+PUT /x/<APP_PATH_SECRET>/api/intel/watchlist
+{ "sources": [
+    { "id": "rival-home", "label": "Rival — homepage",
+      "url": "https://rival.example/", "kind": "competitor" }
+] }
+```
+
+`kind` is one of `competitor`, `category`, `adjacent_tooling`, `buyer_language`.
+The endpoint validates and rejects with a list of problems rather than storing a
+malformed list that would fail weekly inside an agent run, several layers away
+from whoever typed it. Twelve sources are fetched per run.
+
+The agent still works with an empty watchlist as long as
+`INTEL_WEB_RESEARCH_ENABLED` is true; it just has no week-on-week comparison. With
+both empty and off, it says so and does not run.
+
+### Web research is a spend switch, not a credential
+
+`INTEL_WEB_RESEARCH_ENABLED` in `wrangler.toml`, currently `"true"`. Web search
+runs server side on the model call, so there is nothing to set up. Searches bill
+at $10 per 1,000 on top of the tokens their results consume, and the agent caps
+itself at 8 searches and 5 fetches per weekly run: a few cents a month. Off, it
+works from the watchlist alone and says so in the brief's limitations.
 
 ---
 
@@ -463,8 +640,12 @@ re-propose these without being asked:
 - **Case-note extractor** — duplicates the Content Agent's pillars.
 - **Voice-note ingester** — that is a webhook into `/api/state/<key>`, not an
   agent. No autonomy boundary, no proposals, nothing to supervise.
-- **Competitive intelligence** — deferred until Growth-Strategy actually raises
-  a question it would answer.
+- ~~**Competitive intelligence**~~ — this was the deferred one, and it is now
+  built. See section 12b. The condition for building it was "until
+  Growth-Strategy actually raises a question it would answer", and the way that
+  condition is honoured is that the two run on the same Monday tick, with
+  intelligence first, and Growth-Strategy reads the newest brief's headline and
+  gaps as part of its own context.
 
 The only ones with a clear case, if volume justifies them later: an **Intake
 Auditor** (validates Tally submissions before they reach the owner) and a

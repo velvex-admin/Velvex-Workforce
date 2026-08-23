@@ -17,6 +17,16 @@ export interface Env {
   X_ENABLED: string;
   LINKEDIN_INTEGRATION_ENABLED: string;
   OPS_PIPELINE_MONITOR_ENABLED: string;
+  /**
+   * Whether the Competitive Intelligence agent may reach the open web.
+   *
+   * Not a credential: web search runs server side on the model call, so there
+   * is nothing to set up. It is a spend switch. Searches bill at $10 per 1,000
+   * on top of the tokens their results consume, and the agent caps itself at 8
+   * a run on a weekly cadence, so on is a few cents a month. Off leaves the
+   * agent working from the watchlist alone, and it says so in the brief.
+   */
+  INTEL_WEB_RESEARCH_ENABLED: string;
 
   // --- secrets (wrangler secret put) --------------------------------------
   /** The unguessable path segment every route lives under. */
@@ -99,6 +109,11 @@ export function readiness(env: Env): Readiness {
   detail["linkedin"] = {
     status: flag(env.LINKEDIN_INTEGRATION_ENABLED) && env.LINKEDIN_PARTNER_TOKEN ? "live" : "inactive",
     note: "integration point only — the agent itself is an external build",
+  };
+  detail["intel_web_research"] = {
+    status: flag(env.INTEL_WEB_RESEARCH_ENABLED) ? "live" : "inactive",
+    note: "Competitive Intelligence reads the open web. Server-side, so no credential; "
+      + "capped at 8 searches per weekly run. Off means it works from the watchlist alone.",
   };
   detail["ops_pipeline_monitor"] = {
     status: flag(env.OPS_PIPELINE_MONITOR_ENABLED) && env.OPS_PIPELINE_STATUS_URL ? "live" : "inactive",
