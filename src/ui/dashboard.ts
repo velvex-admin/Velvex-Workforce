@@ -346,6 +346,15 @@ a{color:var(--blue);text-decoration:none}
 .blocked-note{background:linear-gradient(135deg,rgba(201,138,62,.12),rgba(201,138,62,.03));border:1px solid rgba(201,138,62,.3);border-radius:8px;padding:12px 14px;margin-bottom:14px;color:var(--amber);font-size:13px}
 .blocked-note b{display:block;font-family:ui-monospace,monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
 .blocked-note code{background:var(--bg);padding:1px 5px;border-radius:3px;font-size:11.5px;color:var(--text-dim)}
+.ask-card{background:linear-gradient(135deg,rgba(201,138,62,.13),rgba(201,138,62,.03));border:1px solid rgba(201,138,62,.35);border-left:3px solid var(--amber);border-radius:9px;padding:14px 16px;margin-bottom:12px}
+.ask-card h4{font-size:14px;font-weight:600;color:var(--amber);margin-bottom:7px}
+.ask-card p{font-size:12.5px;color:var(--text-dim);margin-bottom:6px}
+.ask-card p b{color:var(--text-faint);font-weight:600}
+.ask-card textarea{width:100%;min-height:92px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px 11px;border-radius:6px;font-size:13px;line-height:1.55;resize:vertical;margin:8px 0 8px}
+.ask-card textarea:focus{outline:none;border-color:var(--amber)}
+.answered{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:8px;padding:12px 14px;margin-bottom:9px;font-size:12.5px}
+.answered .q{color:var(--text-faint);margin-bottom:5px}
+.answered .a{color:var(--text-dim)}
 .src-list{font-size:12.5px;color:var(--text-dim);padding-left:20px}
 .src-list li{margin-bottom:4px;word-break:break-word}
 
@@ -993,6 +1002,44 @@ function renderApproval(a) {
 // owner asked to be able to save and read these, so every brief leaves as a
 // file or as its own page.
 
+function handleOf(brief) {
+  return (brief && brief.briefDate) || '';
+}
+
+/**
+ * Answering closes the loop. The answer is stored as permanent context first,
+ * then the agent reads it and says what it changes, and that assessment lands
+ * in the approvals queue where it can be taken or rejected. Nothing about it
+ * publishes.
+ */
+async function sendAnswer(briefDate) {
+  const box = document.getElementById('answer-box');
+  const out = document.getElementById('answer-status');
+  const answer = (box && box.value || '').trim();
+  if (!answer) { if (out) out.textContent = 'Write something first.'; return; }
+
+  disableAll(true);
+  if (out) out.textContent = 'Recording, then reading it...';
+  try {
+    const r = await api('/intel/answer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ briefDate, answer }),
+    });
+    if (r.error && !r.recorded) {
+      toast('Error: ' + r.error, 'error');
+      if (out) out.textContent = '';
+      return;
+    }
+    if (r.recorded && !r.assessed) {
+      toast('Answer saved. Reading it failed, so nothing was queued.', 'error');
+    } else {
+      toast('Answer saved. The assessment is waiting on you.');
+    }
+    await loadAll();
+    openLibrary();
+  } finally { disableAll(false); }
+}
+
 function stdTag(standard) {
   return '<span class="std ' + esc(standard) + '">' + esc(standard) + '</span>';
 }
@@ -1036,9 +1083,27 @@ function renderBriefBody(brief) {
         esc(src.title || src.url) + '</a>' + (src.usedFor ? ' — ' + esc(src.usedFor) : '') + '</li>').join('') + '</ol>'
     : '';
 
+  // The question the brief is asking, with the box to answer it. This is the
+  // half of the loop that makes the agent's reading correctable: the outside
+  // world is stale about a young company, and this is where that gets fixed.
+  const q = brief.openQuestion;
+  const ask = q
+    ? '<div class="ask-card">' +
+        '<h4>' + esc(q.question) + '</h4>' +
+        '<p><b>Why it cannot be answered from outside.</b> ' + esc(q.whyItCannotBeAnswered) + '</p>' +
+        '<p><b>What your answer would change.</b> ' + esc(q.whatItWouldChange) + '</p>' +
+        '<textarea id="answer-box" placeholder="A few sentences is enough. What you write here becomes permanent context: every future brief reads it, and the agent will not ask this again."></textarea>' +
+        '<div class="actions">' +
+          '<button class="primary" onclick="sendAnswer(\\'' + esc(handleOf(brief)) + '\\')">Answer it</button>' +
+          '<span id="answer-status" class="cadence-hint" style="margin:0"></span>' +
+        '</div>' +
+      '</div>'
+    : '<div class="empty">Nothing this cycle needed asking.</div>';
+
   const meta = brief.meta || {};
   return '<div class="brief-body">' +
     '<p class="headline">' + esc(brief.headline) + '</p>' +
+    '<h3 class="intel">The question this brief is asking you</h3>' + ask +
     briefSection('Category language', language) +
     briefSection('Competitor and adjacent moves', moves) +
     briefSection('Positioning gaps Velvex could occupy', gaps) +
@@ -1092,6 +1157,13 @@ async function openLibrary() {
       : '<div class="empty">' + (blocked
           ? 'Nothing can be filed until the migration is applied.'
           : 'Nothing filed yet. The agent runs weekly, or use Run once on its node.') + '</div>') +
+    '<h3 class="intel">Where Velvex stands</h3>' +
+    '<p class="cadence-hint">What you have told the agent is true about Velvex right now. It ' +
+      'outranks anything the agent reads about you on the open web, which is how a brief avoids ' +
+      'reporting a stale fact about your own business back to you. Every question you answer is ' +
+      'added here permanently. PUT to <code>/api/intel/position</code> to edit the standing text.</p>' +
+    '<div class="actions"><button class="intel" onclick="showPosition()">Show what it knows</button></div>' +
+    '<div id="position-out"></div>' +
     '<h3 class="intel">Watchlist</h3>' +
     '<p class="cadence-hint">The pages the agent fetches directly each cycle and compares against ' +
       'what they said last time. That comparison is the only first-hand evidence in a brief, so the ' +
@@ -1099,6 +1171,27 @@ async function openLibrary() {
     '<div class="actions"><button class="intel" onclick="showWatchlist()">Show watchlist</button></div>' +
     '<div id="watchlist-out"></div>'
   );
+}
+
+async function showPosition() {
+  const out = document.getElementById('position-out');
+  if (!out) return;
+  out.innerHTML = '<div class="empty">Loading...</div>';
+  const r = await api('/intel/position');
+  const p = r.position || { standing: '', answers: [] };
+  const answers = (p.answers || []).slice().reverse();
+
+  out.innerHTML =
+    (p.standing
+      ? '<div class="rulebox" style="white-space:pre-wrap">' + esc(p.standing) + '</div>'
+      : '<div class="empty">No standing statement yet. Until there is one, the agent treats ' +
+        'everything it finds about Velvex as unverified and says so, rather than repeating it ' +
+        'back to you as a finding.</div>') +
+    (answers.length
+      ? '<h3 class="intel">Questions you have answered</h3>' + answers.map(a =>
+          '<div class="answered"><div class="q">' + esc(a.askedOn) + ' &middot; ' + esc(a.question) + '</div>' +
+          '<div class="a">' + esc(a.answer) + '</div></div>').join('')
+      : '');
 }
 
 async function showWatchlist() {

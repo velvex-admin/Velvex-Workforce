@@ -18,6 +18,9 @@ import {
   diffSource,
   extractText,
   fingerprint,
+  positionContext,
+  POSITION_ANSWER_WINDOW,
+  recordAnswer,
   renderBriefHtml,
   renderBriefMarkdown,
   sentences,
@@ -25,6 +28,7 @@ import {
   type ComposedBrief,
   type IntelBrief,
   type IntelSource,
+  type PositionStatement,
   type SourceSnapshot,
 } from "../src/core/intel.js";
 import { topMove } from "../src/agents/intelligence/competitive-intel.js";
@@ -201,6 +205,11 @@ const fullBrief: IntelBrief = {
   ],
   watchNext: ["Whether Rival republishes a price"],
   limitations: "Pricing for two providers could not be established.",
+  openQuestion: {
+    question: "Has the Vela scoring framework been validated against completed engagements?",
+    whyItCannotBeAnswered: "Nothing published states it either way.",
+    whatItWouldChange: "Whether 'defensible scoring' can be claimed as held ground.",
+  },
   sources: [{ url: "https://example.com/", title: "Rival", usedFor: "pricing" }],
   meta: {
     generatedAt: "2026-08-24T08:00:00.000Z",
@@ -335,5 +344,130 @@ describe("taking a brief out of the system", () => {
   it("names the downloaded file after the cycle it covers", () => {
     expect(briefFilename(fullBrief, "md")).toBe("velvex-intel-2026-08-24.md");
     expect(briefFilename(fullBrief, "html")).toBe("velvex-intel-2026-08-24.html");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The standing position, and the loop that keeps it current.
+//
+// This is the answer to a specific failure: the agent reads the open web, the
+// open web is stale about a young company, and a brief that reports "the
+// framework is unvalidated" to an owner who validated it months ago has spent
+// their attention to tell them something false about their own business.
+// ---------------------------------------------------------------------------
+
+describe("the standing position statement", () => {
+  const position: PositionStatement = {
+    updatedAt: "2026-08-24T00:00:00.000Z",
+    standing: "The Vela scoring framework was validated against completed engagements in June.",
+    answers: [
+      {
+        askedOn: "2026-08-17",
+        question: "Has the framework been validated?",
+        answer: "Yes, internally, against completed engagements.",
+        answeredAt: "2026-08-18T09:00:00.000Z",
+      },
+    ],
+  };
+
+  it("hands the statement over as authoritative, not as background", () => {
+    // The framing is the whole mechanism. Offered as neutral context it would
+    // be weighed against whatever the web said and would sometimes lose, which
+    // is precisely what this exists to prevent.
+    const context = positionContext(position);
+    expect(context).toContain("outranks");
+    expect(context).toContain("validated against completed engagements in June");
+    expect(context).toContain("reading the market, not auditing Velvex");
+  });
+
+  it("carries answered questions so the same one is not asked twice", () => {
+    const context = positionContext(position);
+    expect(context).toContain("Has the framework been validated?");
+    expect(context).toContain("Do not ask them again");
+  });
+
+  it("tells the agent to distrust the public record when nothing is on file", () => {
+    for (const empty of [null, { updatedAt: "x", standing: "   ", answers: [] }]) {
+      const context = positionContext(empty as PositionStatement | null);
+      expect(context).toContain("may be out of date");
+      expect(context).toContain("unverified");
+    }
+  });
+
+  it("only carries the most recent answers into a prompt", () => {
+    const many: PositionStatement = {
+      ...position,
+      answers: Array.from({ length: POSITION_ANSWER_WINDOW + 8 }, (_, i) => ({
+        askedOn: `2026-01-${String(i + 1).padStart(2, "0")}`,
+        question: `question ${i}`,
+        answer: `answer ${i}`,
+        answeredAt: "2026-01-01T00:00:00.000Z",
+      })),
+    };
+    const context = positionContext(many);
+    expect(context).not.toContain("question 0");
+    expect(context).toContain(`question ${POSITION_ANSWER_WINDOW + 7}`);
+  });
+});
+
+describe("recording an answer", () => {
+  const now = new Date("2026-08-24T10:00:00.000Z");
+  const entry = { askedOn: "2026-08-24", question: "Q?", answer: "A." };
+
+  it("starts a position from nothing when there is none yet", () => {
+    const next = recordAnswer(null, entry, now);
+    expect(next.answers).toHaveLength(1);
+    expect(next.answers[0]!.answeredAt).toBe(now.toISOString());
+    expect(next.standing).toBe("");
+  });
+
+  it("appends without disturbing the standing prose", () => {
+    const current: PositionStatement = {
+      updatedAt: "old",
+      standing: "Validated in June.",
+      answers: [
+        { askedOn: "a", question: "q1", answer: "a1", answeredAt: "t1" },
+      ],
+    };
+    const next = recordAnswer(current, entry, now);
+    expect(next.standing).toBe("Validated in June.");
+    expect(next.answers.map((a) => a.question)).toEqual(["q1", "Q?"]);
+  });
+
+  it("keeps the record bounded so it cannot grow without limit", () => {
+    let position: PositionStatement | null = null;
+    for (let i = 0; i < 80; i += 1) {
+      position = recordAnswer(position, { ...entry, question: `q${i}` }, now);
+    }
+    expect(position!.answers.length).toBeLessThanOrEqual(60);
+    // The newest survive; the oldest fall off.
+    expect(position!.answers.at(-1)!.question).toBe("q79");
+  });
+});
+
+describe("the question a brief asks", () => {
+  it("is a required schema field that may be null", () => {
+    const properties = (BRIEF_SCHEMA as any).properties;
+    expect((BRIEF_SCHEMA as any).required).toContain("openQuestion");
+    // Nullable on purpose: a cycle with nothing worth asking must be able to
+    // ask nothing. Forcing a question every week teaches the owner to skip it.
+    expect(properties.openQuestion.type).toEqual(["object", "null"]);
+  });
+
+  it("survives a model that returned no question at all", () => {
+    const clamped = clampBrief({ title: "t", headline: "h" } as unknown as ComposedBrief);
+    expect(clamped.openQuestion).toBeNull();
+  });
+
+  it("reaches both the Markdown and the page renderer", () => {
+    expect(renderBriefMarkdown(fullBrief)).toContain("The question this brief is asking you");
+    expect(renderBriefMarkdown(fullBrief)).toContain("Vela scoring framework");
+    expect(renderBriefHtml(fullBrief)).toContain("Vela scoring framework");
+  });
+
+  it("says so plainly when a brief asked nothing", () => {
+    const quiet = renderBriefMarkdown({ ...fullBrief, openQuestion: null });
+    expect(quiet).toContain("## Limitations");
+    expect(quiet).not.toContain("The question this brief is asking you");
   });
 });

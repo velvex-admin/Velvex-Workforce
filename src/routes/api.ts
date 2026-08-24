@@ -22,12 +22,17 @@ import { DEFAULT_VOICE } from "../core/voice.js";
 import { resolveTiers } from "../core/models.js";
 import {
   briefFilename,
+  emptyPosition,
+  recordAnswer,
   renderBriefHtml,
   renderBriefMarkdown,
   type IntelBrief,
   type IntelSource,
   type IntelWatchlist,
+  type PositionStatement,
 } from "../core/intel.js";
+import { assessAnswer, competitiveIntelAgent } from "../agents/intelligence/competitive-intel.js";
+import { dedupeKey } from "../core/proposal-key.js";
 import { flag } from "../env.js";
 
 export function json(body: unknown, status = 200): Response {
@@ -333,6 +338,151 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       }
 
       return json({ brief: row });
+    }
+
+    // GET|PUT /api/intel/position
+    //   The owner's standing statement of what is true about Velvex now. The
+    //   agent reads it before it reads anything the web says about Velvex, and
+    //   it wins where the two disagree.
+    if (segments[1] === "position") {
+      if (request.method === "GET") {
+        const position = await state.read<PositionStatement>(db, STATE_KEYS.intelPosition);
+        return json({
+          position: position ?? emptyPosition(new Date()),
+          note:
+            "PUT { standing: \"...\" } to replace the standing statement. Answered questions " +
+            "are appended by POST /api/intel/answer and are not overwritten by a PUT here.",
+        });
+      }
+
+      if (request.method === "PUT" || request.method === "POST") {
+        const body = (await request.json().catch(() => null)) as { standing?: unknown } | null;
+        if (!body || typeof body.standing !== "string") {
+          return json({ error: 'Body must be JSON: { standing: "..." }' }, 400);
+        }
+
+        // Answers are appended by the answer route and are the record of a
+        // conversation. Rewriting the standing prose must not silently discard
+        // them, so they are carried across rather than replaced.
+        const current = await state.read<PositionStatement>(db, STATE_KEYS.intelPosition);
+        const next: PositionStatement = {
+          updatedAt: new Date().toISOString(),
+          standing: body.standing,
+          answers: current?.answers ?? [],
+        };
+        await state.write(
+          db,
+          STATE_KEYS.intelPosition,
+          next,
+          `Velvex standing position updated (${next.answers.length} answered questions held)`,
+          { scope: "competitive_intel", salience: 8, tags: ["intel", "positioning"] }
+        );
+        return json({ position: next });
+      }
+    }
+
+    // POST /api/intel/answer  { briefDate, answer }
+    //   Answering the question a brief asked. Two things happen: the answer
+    //   becomes permanent context every future brief reads, and the agent
+    //   reads it now and says what it changes. That assessment goes to the
+    //   approvals queue, so the owner can take it or reject it.
+    if (segments[1] === "answer" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as
+        | { briefDate?: string; answer?: string }
+        | null;
+
+      if (!body?.briefDate || typeof body.answer !== "string" || !body.answer.trim()) {
+        return json({ error: "Body must be JSON: { briefDate, answer }" }, 400);
+      }
+
+      const row = await db.getIntelBrief(body.briefDate);
+      if (!row) return json({ error: `No brief for "${body.briefDate}"` }, 404);
+
+      const brief = (row.document ?? null) as unknown as IntelBrief | null;
+      const question = brief?.openQuestion?.question;
+      if (!question) {
+        return json({ error: `The ${body.briefDate} brief did not ask a question.` }, 409);
+      }
+
+      // Record it first. If the assessment call fails, the answer is still
+      // kept: losing what the owner told us because a model call errored would
+      // be the worst outcome here, and it is the easy one to get wrong.
+      const current = await state.read<PositionStatement>(db, STATE_KEYS.intelPosition);
+      const updated = recordAnswer(
+        current,
+        { askedOn: body.briefDate, question, answer: body.answer.trim() },
+        new Date()
+      );
+      await state.write(
+        db,
+        STATE_KEYS.intelPosition,
+        updated,
+        `Velvex standing position: ${updated.answers.length} answered question(s)`,
+        { scope: "competitive_intel", salience: 8, tags: ["intel", "positioning"] }
+      );
+
+      const ctx = buildContext(env, { trigger: "manual" });
+      let assessment: string;
+      let costUsd = 0;
+      try {
+        const result = await assessAnswer(
+          { briefDate: body.briefDate, question, answer: body.answer.trim(), brief },
+          ctx
+        );
+        assessment = result.assessment;
+        costUsd = result.costUsd;
+      } catch (err) {
+        return json({
+          recorded: true,
+          assessed: false,
+          position: updated,
+          error: `The answer was recorded, but reading it failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }
+
+      // Straight to the queue rather than executed. What Velvex claims about
+      // itself is the owner's decision; this agent researches and argues.
+      const action = {
+        type: "recommendation" as const,
+        summary: `What your answer changes: ${question.slice(0, 90)}`,
+        channel: "internal" as const,
+        payload: {
+          kind: "answer_assessment",
+          briefDate: body.briefDate,
+          question,
+          answer: body.answer.trim(),
+          analysis: assessment,
+          changesPositioning: true,
+        },
+        rationale: "You answered the question the brief asked. This is what it changes.",
+        dedupeKey: `intel:answer:${body.briefDate}`,
+      };
+
+      const queued = await db.queueApproval({
+        agent_id: "competitive_intel",
+        agent_batch: "intelligence",
+        title: action.summary,
+        rationale: action.rationale,
+        action,
+        trigger_rule: "competitive_intel.acts_on_nothing",
+        trigger_reason:
+          "An assessment is a case, not a change. Approving it records the direction; " +
+          "rejecting it drops it. Nothing publishes either way.",
+        risk: "medium",
+        dedupe_key: dedupeKey(competitiveIntelAgent.id, action),
+      });
+
+      return json({
+        recorded: true,
+        assessed: true,
+        assessment,
+        costUsd,
+        queued: Boolean(queued),
+        approvalId: queued?.id ?? null,
+        position: updated,
+      });
     }
 
     if (segments[1] === "watchlist") {

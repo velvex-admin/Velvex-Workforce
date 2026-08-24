@@ -54,10 +54,12 @@ import {
   diffSource,
   extractText,
   fingerprint,
+  positionContext,
   STANDING_QUESTIONS,
   type ComposedBrief,
   type IntelBrief,
   type IntelWatchlist,
+  type PositionStatement,
   type SourceChange,
   type SourceSnapshot,
   type SourceSnapshotMap,
@@ -191,6 +193,7 @@ How to work:
 - Quote. When a provider words something in a particular way, bring back their words, not your paraphrase.
 - Never name a company, a price, a claim or a trend you did not actually see on a page you retrieved. If you could not establish something, say that you could not establish it. An honest gap is worth more here than a confident guess, and a fabricated competitor would put a decision in front of the owner based on nothing.
 - Say plainly where the evidence is thin.
+- You will be given a standing statement from the owner about what is true of Velvex right now. It outranks the open web on that subject. The public record about a young company goes stale fast, and reporting a stale fact about Velvex back to its own owner as a finding is worse than useless. Where a page you read contradicts the statement, note that the public record is out of date and move on. You are researching the market, not auditing Velvex.
 
 Write it back as notes: dense, specific, quoted where it matters, with the URL beside each claim. No structure requirements, no conclusions, no recommendations. Notes. No em dashes.`;
 
@@ -199,8 +202,13 @@ function researchPrompt(args: {
   carriedQuestions: string[];
   previousHeadline: string | null;
   liveStrategyQuestions: string[];
+  position: PositionStatement | null;
 }): string {
   const parts: string[] = [];
+
+  // First, and deliberately: the model reads what is actually true of Velvex
+  // before it reads anything the outside world says about it.
+  parts.push(positionContext(args.position));
 
   parts.push(
     `Standing questions, asked every cycle:\n${STANDING_QUESTIONS.map((q) => `- ${q}`).join("\n")}`
@@ -255,6 +263,8 @@ Rules that are not negotiable:
 - "What it would take" must be concrete enough to act on: a specific surface, a specific claim, a specific thing that would have to become true. Never "consider repositioning".
 - Differentiation to reinforce means a thing Velvex already is, that somebody else is starting to claim or that the category is starting to treat as generic. Name the erosion, then name where to answer it.
 - If a cycle genuinely found little, say so in the headline and leave the arrays short. A thin brief that says it is thin is useful. A padded one destroys the value of every brief after it.
+- The owner's standing statement about Velvex outranks the open web. Never write a finding that contradicts it. If the research notes carry a stale claim about Velvex, say the public record is out of date, and treat correcting it as a differentiation item rather than a competitor finding.
+- Ask exactly one question, or none. The open question is the single thing you could not establish from outside that the owner could settle in a few sentences, and that would actually change the next brief. Do not ask what the standing statement already answers, and do not ask a question you have asked before. If nothing this cycle clears that bar, set it to null. A question asked to fill the field teaches the owner to skip the field.
 
 Caps, which the schema does not enforce: at most ${BRIEF_LIMITS.categoryLanguage} category language entries, ${BRIEF_LIMITS.competitorMoves} competitor moves, ${BRIEF_LIMITS.positioningGaps} positioning gaps, ${BRIEF_LIMITS.differentiationToReinforce} differentiation signals, ${BRIEF_LIMITS.watchNext} things to watch next. Fewer, better ones beat filling the quota.
 
@@ -268,8 +278,11 @@ function composePrompt(args: {
   webResearch: boolean;
   truncated: boolean;
   consulted: string[];
+  position: PositionStatement | null;
 }): string {
   const parts: string[] = [];
+
+  parts.push(positionContext(args.position));
 
   parts.push(`Research notes from this cycle:\n${args.research || "(the research pass returned nothing)"}`);
 
@@ -299,6 +312,73 @@ function composePrompt(args: {
   }
 
   return parts.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// The other half of the loop: the owner answers, the agent reads the answer.
+// ---------------------------------------------------------------------------
+
+const ASSESS_SYSTEM = `You are the competitive intelligence analyst for Velvex. Last cycle you asked the owner one question, because it was the one thing you could not establish from outside. They have answered it.
+
+${BUSINESS_CONTEXT}
+
+Read their answer against the brief you wrote, and say what it changes. Three things, briefly:
+
+1. What is now settled that was not. State it as fact, in one or two sentences, because it is now the record.
+2. What that changes about the reading in the brief. If a gap you named is now clearly open, say so and say why the answer makes it open. If a gap is now closed off, say that instead, and be willing to say the brief was wrong.
+3. One concrete thing worth doing about it, or nothing. "Nothing yet, and here is what would have to be true first" is a real answer and a better one than inventing a move.
+
+Rules:
+
+- The owner's answer is authoritative about Velvex. Do not argue with it, do not hedge it, do not ask them to prove it. Your job is to work out what it means, not to audit it.
+- Do not restate the brief. They read it.
+- If their answer means something you wrote was out of date or plainly wrong, say that in the first line. An intelligence function that cannot correct itself is worth nothing.
+- Be direct. Nothing you say happens without their approval, so hedging costs you accuracy and buys nothing.
+- No em dashes. No filler. Under 250 words.`;
+
+/**
+ * Assess one answered question.
+ *
+ * Deliberately a separate, cheap call rather than folded into the next weekly
+ * brief. An answer given today that is not read until next Monday teaches the
+ * owner that answering does not do anything, and the loop dies. This runs the
+ * moment they answer.
+ *
+ * On the reasoning tier despite being short: it reads the owner's own words
+ * about their business and decides what they mean for positioning. Getting
+ * that wrong wastes the attention of the one person whose attention this whole
+ * system exists to protect, and the call is a few thousand tokens at most.
+ * Effort is medium, because the hard judgement was already done in the brief.
+ */
+export async function assessAnswer(
+  args: { briefDate: string; question: string; answer: string; brief: IntelBrief | null },
+  ctx: RunContext
+): Promise<{ assessment: string; costUsd: number }> {
+  const brief = args.brief;
+  const summary = brief
+    ? `The brief you wrote on ${brief.briefDate}, titled "${brief.title}":\n${brief.headline}\n\n` +
+      `Positioning gaps you named:\n` +
+      (brief.positioningGaps.map((gap) => `- ${gap.gap} (${gap.standard}): ${gap.whyOpen}`).join("\n") ||
+        "- (none)") +
+      `\n\nDifferentiation you flagged:\n` +
+      (brief.differentiationToReinforce
+        .map((item) => `- ${item.claim} (${item.standard}): ${item.pressure}`)
+        .join("\n") || "- (none)") +
+      `\n\nWhat you said you could not establish:\n${brief.limitations}`
+    : "(the brief this question came from is no longer available)";
+
+  const result = await ctx.claude.complete({
+    system: ASSESS_SYSTEM,
+    user:
+      `${summary}\n\n` +
+      `The question you asked:\n${args.question}\n\n` +
+      `The owner's answer:\n${args.answer}`,
+    model: MODEL,
+    effort: "medium",
+    maxTokens: 2000,
+  });
+
+  return { assessment: result.text, costUsd: result.costUsd };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +505,12 @@ export const competitiveIntelAgent: AgentDefinition = {
     const previousSnapshots =
       (await state.read<SourceSnapshotMap>(ctx.db, STATE_KEYS.intelSnapshots)) ?? {};
 
+    // What the owner says is true of Velvex right now. Read before anything the
+    // outside world says about it, and it wins where the two disagree.
+    const position = await state
+      .read<PositionStatement>(ctx.db, STATE_KEYS.intelPosition)
+      .catch(() => null);
+
     const webResearch = flag(ctx.env.INTEL_WEB_RESEARCH_ENABLED);
 
     // With no watchlist and no web access there is nothing to look at. Saying
@@ -471,7 +557,8 @@ export const competitiveIntelAgent: AgentDefinition = {
 
     ctx.log(
       `competitive_intel: researching (web ${webResearch ? "on" : "off"}, ` +
-        `${carriedQuestions.length} carried question(s))`
+        `${carriedQuestions.length} carried question(s), ` +
+        `${position ? `${position.answers.length} answered` : "no position statement"})`
     );
 
     // --- pass 1: research -------------------------------------------------
@@ -482,6 +569,7 @@ export const competitiveIntelAgent: AgentDefinition = {
         carriedQuestions,
         previousHeadline: previousDocument?.headline ?? previous?.headline ?? null,
         liveStrategyQuestions,
+        position,
       }),
       model: MODEL,
       // High rather than max: this pass is gathering, and depth here buys less
@@ -508,6 +596,7 @@ export const competitiveIntelAgent: AgentDefinition = {
         webResearch,
         truncated: research.truncated,
         consulted: research.sources.map((source) => source.url),
+        position,
       }),
       model: MODEL,
       effort: competitiveIntelAgent.effort,
@@ -546,7 +635,9 @@ export const competitiveIntelAgent: AgentDefinition = {
 
     ctx.log(
       `competitive_intel: brief composed, ${brief.positioningGaps.length} gap(s), ` +
-        `${brief.competitorMoves.length} move(s), $${brief.meta.costUsd.toFixed(4)} total`
+        `${brief.competitorMoves.length} move(s), ` +
+        `${brief.openQuestion ? "one question for you" : "nothing to ask"}, ` +
+        `$${brief.meta.costUsd.toFixed(4)} total`
     );
 
     const actions: ProposedAction[] = [
@@ -666,8 +757,13 @@ export const competitiveIntelAgent: AgentDefinition = {
     // record the direction: putting a position into public copy is work for the
     // agents that own those surfaces, under their own rules.
     if (action.type === "recommendation") {
+      // The kind is part of the key. A brief's top move and an assessment of an
+      // answered question are both recommendations and can both be approved on
+      // the same day; memory keys are unique, so a date alone would let the
+      // second silently overwrite the first.
+      const kind = String(action.payload["kind"] ?? "direction").replace(/[^a-z0-9_]/gi, "_");
       await ctx.db.writeMemory({
-        key: `positioning.${ctx.now.toISOString().slice(0, 10)}`,
+        key: `positioning.${ctx.now.toISOString().slice(0, 10)}.${kind}`,
         scope: "global",
         kind: "decision",
         content: `Approved positioning direction: ${action.summary}`,

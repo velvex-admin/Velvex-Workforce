@@ -132,6 +132,56 @@ export interface DifferentiationSignal {
   standard: EvidenceStandard;
 }
 
+/**
+ * What Velvex actually is, in the owner's own words, as of now.
+ *
+ * This exists because of a specific failure mode. The agent reads the outside
+ * world, and the outside world is out of date about a young company: it will
+ * find that a framework was unvalidated, that a price was different, that a
+ * claim had not been made yet, and it will report those as observed facts
+ * because on the page it read, they are. A brief that tells the owner something
+ * about their own business that stopped being true months ago costs them
+ * attention and credibility in the same stroke.
+ *
+ * So the owner keeps a standing statement here, and it OUTRANKS anything the
+ * agent infers from the web. Not "consider this too": where the two conflict,
+ * this wins and the brief says the public record is stale. The agent is reading
+ * the market, not auditing Velvex.
+ *
+ * It grows two ways: the owner edits it directly, and every question the agent
+ * asks that the owner answers is appended to it, so the loop compounds instead
+ * of asking the same thing every cycle.
+ */
+export interface PositionStatement {
+  updatedAt: string;
+  /** Free prose: what is true now, what has changed, what is no longer true. */
+  standing: string;
+  /** Answered questions, newest last. Each one is a fact the agent now holds. */
+  answers: Array<{
+    askedOn: string;
+    question: string;
+    answer: string;
+    answeredAt: string;
+  }>;
+}
+
+/**
+ * The one question this brief would most like answered.
+ *
+ * A brief is written from outside. Some of what it could not establish is not
+ * on any page: it is in the owner's head. Asking exactly one question per cycle
+ * makes the intelligence loop two-way without turning it into a form to fill
+ * in, and the answer becomes durable context that every later brief reads.
+ */
+export interface OpenQuestion {
+  /** One question. Answerable in a few sentences, not an essay. */
+  question: string;
+  /** Why the agent cannot answer it from the outside. */
+  whyItCannotBeAnswered: string;
+  /** What a good answer would change about the next brief. */
+  whatItWouldChange: string;
+}
+
 export interface BriefSource {
   url: string;
   title?: string;
@@ -164,6 +214,13 @@ export interface IntelBrief {
   watchNext: string[];
   /** What could not be established, stated rather than papered over. */
   limitations: string;
+
+  /**
+   * The one thing the agent wants to ask the owner. Null when the cycle raised
+   * nothing worth their time: a question asked for the sake of asking trains
+   * the owner to ignore the question.
+   */
+  openQuestion: OpenQuestion | null;
 
   sources: BriefSource[];
 
@@ -217,6 +274,7 @@ export const BRIEF_SCHEMA: Record<string, unknown> = {
     "differentiationToReinforce",
     "watchNext",
     "limitations",
+    "openQuestion",
     "sources",
   ],
   properties: {
@@ -282,6 +340,18 @@ export const BRIEF_SCHEMA: Record<string, unknown> = {
     },
     watchNext: { type: "array", items: { type: "string" } },
     limitations: { type: "string" },
+    // Nullable: a cycle that raised nothing worth the owner's time asks
+    // nothing. A question asked to fill the field trains them to skip it.
+    openQuestion: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["question", "whyItCannotBeAnswered", "whatItWouldChange"],
+      properties: {
+        question: { type: "string" },
+        whyItCannotBeAnswered: { type: "string" },
+        whatItWouldChange: { type: "string" },
+      },
+    },
     sources: {
       type: "array",
       items: {
@@ -314,6 +384,81 @@ export function clampBrief(brief: ComposedBrief): ComposedBrief {
     ),
     watchNext: (brief.watchNext ?? []).slice(0, BRIEF_LIMITS.watchNext),
     sources: (brief.sources ?? []).slice(0, BRIEF_LIMITS.sources),
+    openQuestion: brief.openQuestion ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The owner's standing position, and the loop that keeps it current.
+// ---------------------------------------------------------------------------
+
+/** How many answered questions are carried into a prompt. The newest matter most. */
+export const POSITION_ANSWER_WINDOW = 12;
+
+export function emptyPosition(now: Date): PositionStatement {
+  return { updatedAt: now.toISOString(), standing: "", answers: [] };
+}
+
+/**
+ * The position statement, written for a model to read as authoritative.
+ *
+ * The framing here is the whole point. Handed to a model as neutral background
+ * it would be weighed against whatever the web said and sometimes lose, which
+ * is exactly the failure this is meant to prevent. It is handed over as a
+ * correction with precedence, and the prompts say so again.
+ */
+export function positionContext(position: PositionStatement | null): string {
+  if (!position || (!position.standing.trim() && position.answers.length === 0)) {
+    return (
+      "No standing position statement has been recorded. Anything you find about Velvex " +
+      "on the open web may be out of date, and you cannot tell which parts. Treat every " +
+      "such finding as unverified, say so, and do not describe Velvex's own maturity, " +
+      "validation or capability as though the public record settled it."
+    );
+  }
+
+  const parts: string[] = [];
+  if (position.standing.trim()) {
+    parts.push(
+      `What is true about Velvex now, stated by the owner:\n${position.standing.trim()}`
+    );
+  }
+
+  const answers = position.answers.slice(-POSITION_ANSWER_WINDOW);
+  if (answers.length > 0) {
+    const asked = answers
+      .map((entry) => `- Q (${entry.askedOn}): ${entry.question}\n  A: ${entry.answer}`)
+      .join("\n");
+    parts.push(
+      "Questions this agent asked in earlier cycles, and the owner's answers. These are " +
+        `settled. Do not ask them again.\n${asked}`
+    );
+  }
+
+  parts.push(
+    "This statement outranks anything you find on the open web about Velvex itself. Where " +
+      "a page contradicts it, the page is stale: say that the public record is out of date " +
+      "rather than reporting the stale version as a finding. You are reading the market, " +
+      "not auditing Velvex."
+  );
+
+  return parts.join("\n\n");
+}
+
+/** Record an answered question, newest last, bounded. */
+export function recordAnswer(
+  position: PositionStatement | null,
+  entry: { askedOn: string; question: string; answer: string },
+  now: Date
+): PositionStatement {
+  const base = position ?? emptyPosition(now);
+  return {
+    ...base,
+    updatedAt: now.toISOString(),
+    answers: [
+      ...base.answers,
+      { ...entry, answeredAt: now.toISOString() },
+    ].slice(-60),
   };
 }
 
@@ -547,6 +692,17 @@ export function renderBriefMarkdown(brief: IntelBrief): string {
   out.push(bullet(brief.watchNext));
   out.push("");
 
+  if (brief.openQuestion) {
+    out.push("## The question this brief is asking you");
+    out.push("");
+    out.push(`**${brief.openQuestion.question}**`);
+    out.push("");
+    out.push(`Why it cannot be answered from outside: ${brief.openQuestion.whyItCannotBeAnswered}`);
+    out.push("");
+    out.push(`What your answer would change: ${brief.openQuestion.whatItWouldChange}`);
+    out.push("");
+  }
+
   out.push("## Limitations");
   out.push("");
   out.push(brief.limitations || "_None stated._");
@@ -647,6 +803,16 @@ export function renderBriefHtml(brief: IntelBrief): string {
         .join("")
     : empty;
 
+  const question = brief.openQuestion
+    ? `<article class="ask"><h3>${escapeHtml(brief.openQuestion.question)}</h3>` +
+      `<p class="ev"><b>Why it cannot be answered from outside.</b> ${escapeHtml(
+        brief.openQuestion.whyItCannotBeAnswered
+      )}</p>` +
+      `<p class="ev"><b>What your answer would change.</b> ${escapeHtml(
+        brief.openQuestion.whatItWouldChange
+      )}</p></article>`
+    : `<p class="empty">Nothing this cycle needed asking.</p>`;
+
   const watchNext = brief.watchNext.length
     ? `<ul>${brief.watchNext.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
     : empty;
@@ -682,6 +848,8 @@ h2{font-family:ui-monospace,monospace;font-size:11px;text-transform:uppercase;le
 h3{font-size:15.5px;font-weight:600;margin-bottom:6px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 article{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:16px 18px;margin-bottom:12px}
 article.gap{border-left:3px solid var(--cyan)}
+article.ask{border-left:3px solid #C98A3E;background:rgba(201,138,62,.07)}
+article.ask h3{color:#C98A3E}
 p{margin-bottom:8px}
 p:last-child{margin-bottom:0}
 .ev{font-size:13.5px;color:var(--dim)}
@@ -710,6 +878,7 @@ footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--border);font-
   ${section("Competitor and adjacent moves", competitorMoves)}
   ${section("Positioning gaps Velvex could occupy", gaps)}
   ${section("Differentiation to reinforce", differentiation)}
+  ${section("The question this brief is asking you", question)}
   ${section("Watch next cycle", watchNext)}
   ${section("Limitations", `<p class="ev">${escapeHtml(brief.limitations || "None stated.")}</p>`)}
   ${section("Sources", sources)}

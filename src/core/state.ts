@@ -36,6 +36,12 @@ export const STATE_KEYS = {
    * tick by agents that never asked for it.
    */
   intelLatest: "intel.latest_brief",
+  /**
+   * The owner's standing statement of where Velvex actually stands, plus every
+   * question the agent has asked and had answered. Authoritative over anything
+   * the agent reads about Velvex on the open web.
+   */
+  intelPosition: "intel.position",
 } as const;
 
 /**

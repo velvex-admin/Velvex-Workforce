@@ -304,6 +304,12 @@ outright.
   `test/dashboard-script.test.ts` parses the emitted script with `new Function`,
   which is what catches it. Write `\\'` when the browser needs `\'`.
 
+- **A backtick inside a prompt template literal closes it.** The agent prompts
+  are template literals, so a stray `` ` `` around a field name ends the string
+  early and the file stops compiling. Cheaper than the dashboard version of this
+  trap because `tsc` catches it, but it is the same mistake: write prompts in
+  plain prose and quote field names with ordinary quotes.
+
 - **Server tools and structured output are kept in separate calls.** Not a
   discovered trap so much as a refusal to discover one: the intelligence agent
   researches with web tools and no schema, then composes with a schema and no
@@ -383,10 +389,43 @@ input the agent really emits.
 ## 11. Getting code onto the owner's machine
 
 The Claude GitHub App has **read-only** access to this repo, so pushes from a
-Claude session fail with 403. The owner pushes from their own Chromebook
-terminal. File downloads to that machine have repeatedly failed to appear on the
-Linux filesystem, and hand-transcribed base64 in chat **corrupts** — do not try
-it.
+Claude session fail with 403. **This is a plan limitation, not a
+misconfiguration:** the owner is on Claude Pro, and write access to a repository
+requires an organisation or enterprise subscription. Do not spend a session
+retrying it, and do not send the owner to the GitHub App install page as though
+it were fixable there. Confirmed dead ends, all returning 403 on write while
+reads succeed: `git push`, `add_repo` with `access: "push"`, and the GitHub MCP
+write tools (`create_branch` returns `Resource not accessible by integration`).
+
+**The owner pushes from their own Chromebook terminal.** Getting the code there
+is the real problem, and the cause was found on 2026-08-24: **ChromeOS and the
+Linux container have separate filesystems.** A file downloaded in Chrome lands in
+the ChromeOS "My files → Downloads", which the Linux container cannot see, so
+`~/Downloads` inside Linux is a different and empty folder. That is the whole
+explanation for years of "downloads never appear".
+
+The fix, once, in the ChromeOS **Files** app: right-click **Downloads** →
+**Share with Linux**. It then appears in the container at
+`/mnt/chromeos/MyFiles/Downloads/`. Dragging a file into **Linux files** instead
+copies it to `~/`. Either works; they are different paths, so say which one you
+mean.
+
+A verified transfer then looks like this, and note that Chrome may put the file
+in a subfolder, so find it rather than assuming the path:
+
+```
+BUNDLE=$(find /mnt/chromeos/MyFiles/Downloads -name '*.bundle' -print -quit)
+md5sum "$BUNDLE"                 # must match what the session reported
+cd ~/Velvex-Workforce
+git fetch "$BUNDLE" HEAD:<branch>
+git checkout <branch> && npx tsc --noEmit && npx vitest run
+git push -u origin <branch>
+```
+
+`git bundle` is the right artifact: it carries real commits with their history
+and message, it verifies with `git bundle verify`, and a corrupted one fails
+loudly instead of applying badly. Hand-transcribed base64 in chat **corrupts** —
+do not try it.
 
 **The reliable route** (verified byte-perfect with md5):
 
@@ -411,7 +450,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 236 tests
+npx vitest run            # 249 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -545,6 +584,62 @@ files without asking. Watchlist movement is one routine observation.
 An approved move is written to `memory` at salience 9 under `positioning.<date>`,
 which is how it reaches the writing agents' context. Nothing publishes it.
 
+### The loop back: what the owner tells it
+
+The agent reads the open web, and the open web is stale about a young company.
+Left alone it will find that a framework was unvalidated, that a price was
+different, that a claim had not been made yet, and report those as observed
+facts, because on the page it read they are. A brief that tells the owner
+something false about their own business has spent their attention to do it.
+
+Two mechanisms fix that, and together they are the second half of the agent.
+
+**`intel.position`** is the owner's standing statement of what is true about
+Velvex now, and it **outranks anything the agent reads about Velvex on the web**.
+Not "weigh this too": where the two conflict, the page is stale and the brief
+says so. `positionContext()` in `src/core/intel.ts` is what frames it that way,
+and both prompts repeat it. With nothing on file the agent is told to treat
+everything it finds about Velvex as unverified rather than repeating it back.
+
+```
+PUT /x/<APP_PATH_SECRET>/api/intel/position
+{ "standing": "The Vela framework was validated against completed engagements in June 2026. ..." }
+```
+
+A PUT replaces the prose and **keeps** the answered questions; they are a record
+of a conversation, not draft text.
+
+**One question per brief.** `openQuestion` is the single thing the agent could
+not establish from outside that the owner could settle in a few sentences. It is
+nullable on purpose: a cycle with nothing worth asking asks nothing, because a
+question asked to fill the field teaches the owner to skip the field.
+
+Answering closes the loop:
+
+```
+POST /x/<APP_PATH_SECRET>/api/intel/answer
+{ "briefDate": "2026-08-24", "answer": "..." }
+```
+
+Three things happen, in this order:
+
+1. The answer is appended to `intel.position` **first**. If the next step fails,
+   what the owner said is still kept: losing it to a model error would be the
+   worst outcome and the easy one to get wrong.
+2. `assessAnswer()` runs one Opus call at effort `medium` and says what the
+   answer changes, including whether the brief was wrong.
+3. That assessment is **queued**, not executed. The owner approves it (it becomes
+   a positioning note at salience 9, which is how it reaches the writing agents)
+   or rejects it. Nothing publishes either way.
+
+On the dashboard this is the amber card at the top of a brief, with the answer
+box, and "Show what it knows" under the Library panel's position section.
+
+Note the memory key: `positioning.<date>.<kind>`. A brief's top move and an
+answer assessment are both recommendations and can both be approved on the same
+day; memory keys are unique, so a date alone would let one silently overwrite
+the other.
+
 ### The library
 
 `intel_briefs`, one row per cycle, keyed on `brief_date` so a re-run revises that
@@ -576,6 +671,15 @@ PUT /x/<APP_PATH_SECRET>/api/intel/watchlist
 ```
 
 `kind` is one of `competitor`, `category`, `adjacent_tooling`, `buyer_language`.
+
+**The kinds are not a formality.** The owner's read is that nothing in the market
+matches Velvex: scoring tools return a number, Velvex returns a structural
+reading, and those are different products. That is correct, and it is exactly why
+those tools belong on the list as `category` rather than `competitor`. You do not
+watch a company because it matches you today. You watch it because it is where a
+match would first appear, and the first sign is always the language moving before
+the product does. A scoring tool that starts saying "dependency" and "load
+bearing" has told you something a year before it could deliver it.
 The endpoint validates and rejects with a list of problems rather than storing a
 malformed list that would fail weekly inside an agent run, several layers away
 from whoever typed it. Twelve sources are fetched per run.

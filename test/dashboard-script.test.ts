@@ -74,6 +74,17 @@ describe("the intelligence library on the page", () => {
     expect(body).toContain("/intel/briefs?limit=");
   });
 
+  it("puts the answer box on the question the brief asked", () => {
+    expect(body).toContain("function sendAnswer");
+    expect(body).toContain("answer-box");
+    expect(body).toContain("/intel/answer");
+  });
+
+  it("shows what the agent has been told about Velvex", () => {
+    expect(body).toContain("function showPosition");
+    expect(body).toContain("/intel/position");
+  });
+
   it("says the migration is missing rather than showing an empty shelf", () => {
     expect(body).toContain("function migrationNote");
     expect(body).toContain("0002_intelligence_layer.sql");
