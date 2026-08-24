@@ -450,7 +450,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 249 tests
+npx vitest run            # 264 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -490,6 +490,8 @@ src/
   ui/dashboard.ts       the canvas dashboard
 db/migrations/          0001_orchestration_layer.sql
                         0002_intelligence_layer.sql
+db/seeds/               intel-watchlist.json (verified, PUT to the API)
+                        intel-position.md (draft; owner fills the blanks)
 ```
 
 ### Database
@@ -683,6 +685,49 @@ bearing" has told you something a year before it could deliver it.
 The endpoint validates and rejects with a list of problems rather than storing a
 malformed list that would fail weekly inside an agent run, several layers away
 from whoever typed it. Twelve sources are fetched per run.
+
+**A researched, verified starting list ships in the repo:**
+`db/seeds/intel-watchlist.json`, ten sources, applied with
+
+```
+curl -X PUT "$BASE/api/intel/watchlist" -H 'Content-Type: application/json' \
+  --data-binary @db/seeds/intel-watchlist.json
+```
+
+The endpoint reads only `sources`, so the `_comment` and `_rejected` keys in
+that file are ignored and are there for whoever reads it next.
+
+Every URL in it was fetched with the agent's own User-Agent and run through its
+own `extractText()` before being added. That check matters more than it sounds:
+three obvious candidates were rejected because they refuse us. SCOREMAX
+(`getscoremax.com`) and SCORE.org both return 403, and Hello Alice's Business
+Health Score returns 429. A source that cannot be fetched is worse than no
+source, because it reports "unreachable" every week forever and teaches you to
+stop reading the column. They are listed in `_rejected` with the reason so
+nobody re-adds them without checking.
+
+`test/intel-watchlist-seed.test.ts` validates the file as data, but deliberately
+does **not** check that the URLs still resolve: that is a network fact which
+changes without anyone touching this repo, and a suite that goes red because a
+competitor had an outage is a suite people stop believing. The agent reports an
+unreachable source on every run, which is the right place for that signal.
+
+The closest thing to a real competitor found so far is **Lumena Global's
+Operational Readiness Assessment**, and it is worth knowing why it is close and
+why it is not the same product. It makes the identical rhetorical move ("Strategy
+tells you where to go. An operational readiness assessment tells you whether the
+current version of your business can get there"), but its seven pillars are
+operating-model and org design rather than commercial architecture, it runs two
+to four weeks against Velvex's 24 hours, and it publishes no price. Watch it for
+movement on any of those three.
+
+### Seeding the position statement
+
+`db/seeds/intel-position.md` is the draft to send to `intel.position`. The half
+drawn from `src/core/business.ts` and `src/core/config.ts` is filled in; the half
+only the owner can answer is left blank on purpose and **must stay that way until
+they answer it**. A guessed entry there does not stay a guess: `intel.position`
+outranks the public record, so a wrong line in it is worse than an empty file.
 
 The agent still works with an empty watchlist as long as
 `INTEL_WEB_RESEARCH_ENABLED` is true; it just has no week-on-week comparison. With
