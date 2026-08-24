@@ -450,7 +450,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 264 tests
+npx vitest run            # 281 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -490,7 +490,7 @@ src/
   ui/dashboard.ts       the canvas dashboard
 db/migrations/          0001_orchestration_layer.sql
                         0002_intelligence_layer.sql
-db/seeds/               intel-watchlist.json (verified, PUT to the API)
+db/seeds/               intel-candidates.json (verified; proposed, not applied)
                         intel-position.md (draft; owner fills the blanks)
 ```
 
@@ -540,12 +540,55 @@ failing halfway through two Opus passes. `/api/status` reports
 `intelligence.migrationApplied`, and the Library node on the dashboard says
 "migration 0002" in amber rather than showing an empty shelf.
 
+### Nothing is watched until the owner says so
+
+The owner's read is that nothing in this market matches Velvex: scoring tools
+return a number, Velvex returns a structural reading, and those are different
+products. That is correct, and it decides the design. A watchlist assembled from
+guesses about who competes would be a list of non-competitors, watched forever,
+producing diffs nobody cares about.
+
+So the agent **proposes** and the owner **rules**:
+
+```
+discovery finds a candidate
+        ↓
+queued as its own approval, with evidence and a suggested kind
+        ↓
+  accepted → joins intel.watchlist, fetched and diffed every run from then on
+  rejected → suppressed for 180 days, however often it is rediscovered
+```
+
+`REJECTION_COOLDOWN_DAYS` is 180 and the expiry is deliberate: "not a
+competitor" is a statement about now, not about always. The clock is dated from
+**when the owner decided**, not from when the agent noticed, so a rejection made
+two months ago has two months less to run rather than restarting.
+
+Rejecting an approval does not run the agent, so a rejection would leave no
+trace and the same candidate would come back next Monday. `absorbRejections()`
+reads the agent's own rejected proposals at the start of each run and records
+the verdicts itself. That is why there is no reject hook on the runner:
+rejection stays free of side effects everywhere else in the system, which is
+worth more than the week of delay.
+
+`candidateIsOpen()` blocks three cases: already watched, already accepted, still
+in cooldown. It matches on a normalised URL as well as on the name, because
+discovery re-finds the same page every week and describes it differently each
+time.
+
+**The shipped batch.** `db/seeds/intel-candidates.json` is ten researched,
+verified candidates, compiled into the Worker and proposed **four per run**,
+highest signal first. They are not a watchlist: nothing there is fetched until
+it is accepted. Order matters, because the batch drains a few a week: the one
+real competitor is first, then the pages where category language hardens, then
+buyer vocabulary.
+
 ### How one run works
 
-Three stages, and the order matters:
+Four stages, and the order matters:
 
-1. **Watchlist fetch and diff. No model.** Every source in `intel.watchlist` is
-   fetched, reduced to visible text, and compared against the snapshot stored at
+1. **Watchlist fetch and diff. No model.** Every accepted source is fetched,
+   reduced to visible text, and compared against the snapshot stored at
    `intel.source_snapshots`. This is the only first-hand evidence in a brief:
    "their language moved" is a comparison against what the page actually said
    last week, not the model's impression of it. The diff is set-based on
@@ -555,10 +598,23 @@ Three stages, and the order matters:
 2. **Research pass.** Opus 5 at effort `high`, **with** the web tools and **no**
    output schema. It searches, reads pages, and returns notes plus the list of
    URLs it actually retrieved.
-3. **Composing pass.** Opus 5 at effort `max`, **with** the schema and **no**
-   tools. It turns that evidence into the brief.
+3. **Discovery and triage.** Opus 5 at effort `medium`, **with** a schema and
+   **no** tools. It does two things the expensive pass should not be paid for:
+   proposes candidates, and decides whether the week was material at all.
+4. **Composing pass.** Opus 5 at effort `max`, **with** the schema and **no**
+   tools. Only reached if the week was material.
 
-Keeping 2 and 3 apart is deliberate. Structured output and server-side tools are
+**A quiet week writes no brief.** If nothing on the watchlist moved, no
+candidate is pending, and triage says the category did not shift, the run stops
+after stage 3 and files one observation carrying the triage's own sentence. A
+brief every week regardless of what happened is how a library stops meaning
+anything, and the expensive pass is never paid for on a week with nothing in it.
+
+With web research off and nothing watched, **no model runs at all**: the pending
+candidates are put to the owner directly, because deciding them is what unblocks
+the agent.
+
+Keeping 2 and 4 apart is deliberate. Structured output and server-side tools are
 not built to interact and this repo has already lost an agent's entire output to
 a schema the API rejected before the model ran. A composing call that cannot
 search cannot quietly fill an evidence gap with a search it forgets to cite. And
@@ -575,7 +631,13 @@ would put a real decision in front of the owner based on nothing.
 
 ### What reaches the approvals queue
 
-Exactly one thing per brief. A brief can carry four positioning gaps and four
+Candidates, and exactly one move per brief.
+
+Each candidate is its own decision, capped at four a run for the same reason a
+brief carries one move: a queue arriving with ten maybes is a queue nobody
+finishes.
+
+Beyond candidates, exactly one thing per brief. A brief can carry four positioning gaps and four
 differentiation signals; all eight arriving in the queue every week would bury
 it, and a queue nobody finishes reading is how a two-day X publishing outage sat
 unnoticed between six growth ideas once already. `topMove()` picks the single
@@ -656,13 +718,14 @@ that was written rather than a reconstruction.
 | `GET /api/intel/briefs/:handle/markdown` | the same brief as a `.md` download |
 | `GET /api/intel/briefs/:handle/page` | the same brief as a standalone page |
 | `GET|PUT /api/intel/watchlist` | what is watched, validated on write |
+| `GET /api/intel/candidates` | what has been ruled on, and cooldown remaining |
 
 `:handle` is the brief's uuid or the date it covers. On the dashboard the
 Library is the cyan node to the right of the Intelligence section, fed by an
 animated cyan ECG line from the agent, and it is the one line on the canvas that
 runs away from the Chief-of-Staff rather than into it.
 
-### Seeding the watchlist
+### The watchlist, once things are on it
 
 ```
 PUT /x/<APP_PATH_SECRET>/api/intel/watchlist
@@ -672,45 +735,32 @@ PUT /x/<APP_PATH_SECRET>/api/intel/watchlist
 ] }
 ```
 
-`kind` is one of `competitor`, `category`, `adjacent_tooling`, `buyer_language`.
+That endpoint still exists for direct control, and the validator rejects with a
+list of problems rather than storing something that would fail weekly inside an
+agent run. But the normal path is not this: it is accepting a candidate, which
+writes the same entry and records the verdict in one step. Twelve sources are
+fetched per run.
 
-**The kinds are not a formality.** The owner's read is that nothing in the market
-matches Velvex: scoring tools return a number, Velvex returns a structural
-reading, and those are different products. That is correct, and it is exactly why
-those tools belong on the list as `category` rather than `competitor`. You do not
-watch a company because it matches you today. You watch it because it is where a
-match would first appear, and the first sign is always the language moving before
-the product does. A scoring tool that starts saying "dependency" and "load
-bearing" has told you something a year before it could deliver it.
-The endpoint validates and rejects with a list of problems rather than storing a
-malformed list that would fail weekly inside an agent run, several layers away
-from whoever typed it. Twelve sources are fetched per run.
+`kind` is one of `competitor`, `category`, `adjacent_tooling`, `buyer_language`,
+and the kinds are not a formality. You do not watch a company because it matches
+you today. You watch it because it is where a match would first appear, and the
+first sign is always the language moving before the product does. A scoring tool
+that starts saying "dependency" and "load bearing" has told you something a year
+before it could deliver it.
 
-**A researched, verified starting list ships in the repo:**
-`db/seeds/intel-watchlist.json`, ten sources, applied with
+Every URL in the shipped batch was fetched with the agent's own User-Agent and
+run through its own `extractText()` before being added. That check matters more
+than it sounds: three obvious candidates were rejected because they refuse us.
+SCOREMAX (`getscoremax.com`) and SCORE.org both return 403, and Hello Alice's
+Business Health Score returns 429. A source that cannot be fetched is worse than
+no source, because it reports "unreachable" every week forever and teaches you
+to stop reading the column. They are in `_rejected` with the reason so nobody
+re-adds them without checking.
 
-```
-curl -X PUT "$BASE/api/intel/watchlist" -H 'Content-Type: application/json' \
-  --data-binary @db/seeds/intel-watchlist.json
-```
-
-The endpoint reads only `sources`, so the `_comment` and `_rejected` keys in
-that file are ignored and are there for whoever reads it next.
-
-Every URL in it was fetched with the agent's own User-Agent and run through its
-own `extractText()` before being added. That check matters more than it sounds:
-three obvious candidates were rejected because they refuse us. SCOREMAX
-(`getscoremax.com`) and SCORE.org both return 403, and Hello Alice's Business
-Health Score returns 429. A source that cannot be fetched is worse than no
-source, because it reports "unreachable" every week forever and teaches you to
-stop reading the column. They are listed in `_rejected` with the reason so
-nobody re-adds them without checking.
-
-`test/intel-watchlist-seed.test.ts` validates the file as data, but deliberately
+`test/intel-candidate-seed.test.ts` validates the file as data, but deliberately
 does **not** check that the URLs still resolve: that is a network fact which
 changes without anyone touching this repo, and a suite that goes red because a
-competitor had an outage is a suite people stop believing. The agent reports an
-unreachable source on every run, which is the right place for that signal.
+competitor had an outage is a suite people stop believing.
 
 The closest thing to a real competitor found so far is **Lumena Global's
 Operational Readiness Assessment**, and it is worth knowing why it is close and
@@ -729,9 +779,8 @@ only the owner can answer is left blank on purpose and **must stay that way unti
 they answer it**. A guessed entry there does not stay a guess: `intel.position`
 outranks the public record, so a wrong line in it is worse than an empty file.
 
-The agent still works with an empty watchlist as long as
-`INTEL_WEB_RESEARCH_ENABLED` is true; it just has no week-on-week comparison. With
-both empty and off, it says so and does not run.
+The agent works with an empty watchlist as long as `INTEL_WEB_RESEARCH_ENABLED`
+is true; it just has no week-on-week comparison until something is accepted.
 
 ### Web research is a spend switch, not a credential
 

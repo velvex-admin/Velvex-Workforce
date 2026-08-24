@@ -42,6 +42,12 @@ export const STATE_KEYS = {
    * the agent reads about Velvex on the open web.
    */
   intelPosition: "intel.position",
+  /**
+   * The owner's rulings on watch candidates: what was accepted onto the
+   * watchlist, what was rejected, and when a rejection stops applying. Nothing
+   * is fetched until it appears here as accepted.
+   */
+  intelCandidates: "intel.candidate_verdicts",
 } as const;
 
 /**

@@ -16,6 +16,8 @@ import { financeWatchAgent } from "../src/agents/executive/finance-watch.js";
 import { opsHealthAgent } from "../src/agents/executive/ops-health.js";
 import { growthStrategyAgent } from "../src/agents/executive/growth-strategy.js";
 import { competitiveIntelAgent } from "../src/agents/intelligence/competitive-intel.js";
+import { recordVerdict, type CandidateLedger } from "../src/core/intel.js";
+import SEED from "../db/seeds/intel-candidates.json";
 import { marketingAnalyticsAgent } from "../src/agents/marketing/analytics.js";
 import { FAQ_LIBRARY } from "../src/core/config.js";
 import { action, ruleContext } from "./helpers.js";
@@ -392,13 +394,120 @@ describe("Competitive Intelligence Agent", () => {
     expect(logs.join(" ")).toContain("0002_intelligence_layer.sql");
   });
 
-  it("says it has nothing to look at rather than researching an empty desk", async () => {
-    const result = await competitiveIntelAgent.propose({
+  // A memory stub that answers per key, because the agent reads five different
+  // pieces of state and they are not interchangeable.
+  const memoryStub = (values: Record<string, unknown>) => ({
+    readMemory: async (opts: { keys?: string[] }) => {
+      const key = opts?.keys?.[0];
+      if (!key || !(key in values)) return [];
+      return [{ key, content: "", detail: { value: values[key] } }];
+    },
+    writeMemory: async (row: unknown) => row,
+    intelReady: async () => ({ ok: true }),
+    listIntelBriefs: async () => [],
+    getIntelBrief: async () => null,
+    listReports: async () => [],
+    listApprovals: async () => [],
+  });
+
+  /** A ledger in which every shipped candidate has already been ruled on. */
+  const allSeedsRuled = () => {
+    let ledger: CandidateLedger = {};
+    for (const candidate of SEED.candidates) {
+      ledger = recordVerdict(
+        ledger,
+        { name: candidate.name, url: candidate.url, verdict: "rejected" },
+        new Date("2026-08-01T00:00:00Z")
+      );
+    }
+    return ledger;
+  };
+
+  const runWith = async (
+    db: unknown,
+    complete: (args: { schema?: unknown }) => Promise<unknown>,
+    logs: string[] = []
+  ) =>
+    competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "true" } as unknown as import("../src/env.js").Env,
+      db: db as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: { complete } as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: (message) => logs.push(message),
+    });
+
+  const research = { text: "Checked the usual pages.", costUsd: 0.1, sources: [], searchesUsed: 3, truncated: false };
+
+  it("writes no brief on a week where nothing moved", async () => {
+    // The point of the triage pass. A brief filed every week regardless of what
+    // happened is how a library stops meaning anything, so a quiet week costs
+    // one cheap pass and the expensive composing pass never runs.
+    const logs: string[] = [];
+    let schemaCalls = 0;
+
+    const result = await runWith(
+      memoryStub({ "intel.candidate_verdicts": allSeedsRuled() }),
+      async (args) => {
+        if (!args.schema) return research;
+        schemaCalls += 1;
+        return {
+          text: "{}",
+          parsed: { anythingMaterial: false, quietNote: "No provider changed its claims.", candidates: [] },
+          costUsd: 0.02,
+          sources: [],
+          searchesUsed: 0,
+          truncated: false,
+        };
+      },
+      logs
+    );
+
+    // Exactly one schema'd call: discovery. The composing pass never ran.
+    expect(schemaCalls).toBe(1);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("observation");
+    expect(result[0]!.payload["quiet"]).toBe(true);
+    expect(result[0]!.summary).toContain("No provider changed its claims");
+    expect(logs.join(" ")).toContain("quiet week, no brief");
+  });
+
+  it("puts candidates to the owner rather than watching them itself", async () => {
+    const proposed = await runWith(memoryStub({}), async (args) =>
+      args.schema
+        ? {
+            text: "{}",
+            parsed: { anythingMaterial: false, quietNote: "quiet", candidates: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 0,
+            truncated: false,
+          }
+        : research
+    );
+
+    // Nothing material, but the shipped batch is unruled, so the week is not
+    // quiet: those decisions are the work.
+    const candidates = proposed.filter((a) => a.payload["kind"] === "watch_candidate");
+    expect(candidates.length).toBeGreaterThan(0);
+    // Bounded, so the queue is never buried by a list of maybes.
+    expect(candidates.length).toBeLessThanOrEqual(4);
+    // The one real competitor is put first, because the batch drains a few a week.
+    expect(candidates[0]!.payload["suggestedKind"]).toBe("competitor");
+    for (const candidate of candidates) {
+      expect((await classify(competitiveIntelAgent, candidate)).classification).toBe(
+        "needs_approval"
+      );
+    }
+  });
+
+  it("spends nothing when there is nothing to research and nothing watched", async () => {
+    const logs: string[] = [];
+    const proposed = await competitiveIntelAgent.propose({
       env: { INTEL_WEB_RESEARCH_ENABLED: "false" } as unknown as import("../src/env.js").Env,
-      db: {
-        intelReady: async () => ({ ok: true }),
-        readMemory: async () => [],
-      } as unknown as import("../src/lib/supabase.js").Supabase,
+      db: memoryStub({}) as unknown as import("../src/lib/supabase.js").Supabase,
       claude: new Proxy(
         {},
         {
@@ -411,13 +520,34 @@ describe("Competitive Intelligence Agent", () => {
       runId: "r",
       now: new Date("2026-08-24T08:00:00Z"),
       trigger: "cron",
+      log: (m) => logs.push(m),
+    });
+
+    // Candidates still need ruling on, and putting them to the owner needs no
+    // model at all. The Proxy above would throw if one were called.
+    expect(proposed.every((a) => a.payload["kind"] === "watch_candidate")).toBe(true);
+    expect(logs.join(" ")).toContain("No model was called");
+  });
+
+  it("says it has nothing to look at once every candidate has been ruled on", async () => {
+    const proposed = await competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "false" } as unknown as import("../src/env.js").Env,
+      db: memoryStub({
+        "intel.candidate_verdicts": allSeedsRuled(),
+      }) as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: new Proxy({}, { get() { throw new Error("must not be called"); } }) as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
       log: () => {},
     });
 
-    expect(result).toHaveLength(1);
-    expect(result[0]!.type).toBe("observation");
-    expect(result[0]!.payload["active"]).toBe(false);
+    expect(proposed).toHaveLength(1);
+    expect(proposed[0]!.type).toBe("observation");
+    expect(proposed[0]!.payload["active"]).toBe(false);
   });
+
 });
 
 describe("Channel strategist drafts and growth ideas", () => {

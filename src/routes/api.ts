@@ -22,10 +22,13 @@ import { DEFAULT_VOICE } from "../core/voice.js";
 import { resolveTiers } from "../core/models.js";
 import {
   briefFilename,
+  cooldownRemainingDays,
   emptyPosition,
   recordAnswer,
+  REJECTION_COOLDOWN_DAYS,
   renderBriefHtml,
   renderBriefMarkdown,
+  type CandidateLedger,
   type IntelBrief,
   type IntelSource,
   type IntelWatchlist,
@@ -482,6 +485,30 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
         queued: Boolean(queued),
         approvalId: queued?.id ?? null,
         position: updated,
+      });
+    }
+
+    // GET /api/intel/candidates
+    //   What has been ruled on, and when a rejection stops applying. Nothing is
+    //   fetched until it appears here as accepted.
+    if (segments[1] === "candidates" && request.method === "GET") {
+      const ledger = (await state.read<CandidateLedger>(db, STATE_KEYS.intelCandidates)) ?? {};
+      const now = new Date();
+      const entries = Object.values(ledger)
+        .map((verdict) => ({
+          ...verdict,
+          cooldownDaysLeft: cooldownRemainingDays(verdict, now),
+        }))
+        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+
+      return json({
+        candidates: entries,
+        accepted: entries.filter((entry) => entry.verdict === "accepted").length,
+        rejected: entries.filter((entry) => entry.verdict === "rejected").length,
+        cooldownDays: REJECTION_COOLDOWN_DAYS,
+        note:
+          "A rejection is suppressed for " + REJECTION_COOLDOWN_DAYS + " days and then the " +
+          "candidate can be proposed again. A market moves, so a rejection expires.",
       });
     }
 

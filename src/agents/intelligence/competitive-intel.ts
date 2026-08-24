@@ -46,9 +46,16 @@ import { MODELS } from "../../core/models.js";
 import { BUSINESS, BUSINESS_CONTEXT } from "../../core/business.js";
 import { STATE_KEYS, state } from "../../core/state.js";
 import { flag } from "../../env.js";
+import SEED from "../../../db/seeds/intel-candidates.json";
 import {
   BRIEF_LIMITS,
   BRIEF_SCHEMA,
+  candidateId,
+  candidateIsOpen,
+  DISCOVERY_SCHEMA,
+  normaliseUrl,
+  recordVerdict,
+  REJECTION_COOLDOWN_DAYS,
   briefIsSubstantive,
   clampBrief,
   diffSource,
@@ -56,10 +63,14 @@ import {
   fingerprint,
   positionContext,
   STANDING_QUESTIONS,
+  type CandidateLedger,
   type ComposedBrief,
+  type DiscoveryResult,
   type IntelBrief,
+  type IntelSource,
   type IntelWatchlist,
   type PositionStatement,
+  type WatchCandidate,
   type SourceChange,
   type SourceSnapshot,
   type SourceSnapshotMap,
@@ -81,6 +92,23 @@ const MAX_SOURCES_PER_RUN = 12;
 
 /** Per-source fetch timeout. A slow competitor site must not stall the tick. */
 const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * How many candidates go to the owner in one run.
+ *
+ * Deliberately small. Every candidate is a separate decision, and a queue that
+ * arrives with ten of them is a queue nobody finishes: the same reasoning that
+ * caps a brief at one positioning move. The shipped batch drains a few per week
+ * until it is exhausted, and discovery then takes over.
+ */
+const MAX_CANDIDATES_PER_RUN = 4;
+
+/** The researched starting batch, proposed rather than applied. */
+const SEED_CANDIDATES: WatchCandidate[] = (
+  SEED as unknown as {
+    candidates: Array<WatchCandidate & { id: string }>;
+  }
+).candidates;
 
 // ---------------------------------------------------------------------------
 // Watchlist gathering. No model.
@@ -315,6 +343,132 @@ function composePrompt(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Discovery: proposing what to watch, and the gate in front of it.
+// ---------------------------------------------------------------------------
+
+const DISCOVERY_SYSTEM = `You are the competitive intelligence researcher for Velvex. You have just finished a research pass. Two jobs now, and only these two.
+
+${BUSINESS_CONTEXT}
+
+FIRST. Decide whether this cycle found anything material. Be strict. Material means at least one of: a provider changed what they claim or how they bound their offer, a term in the category shifted meaning or ownership, a new entrant appeared, or a page on the watchlist moved its language. It does NOT mean you read some interesting pages. Most weeks in a small category are quiet, and saying so is the honest answer. If nothing moved, set anythingMaterial to false and write one plain sentence in quietNote saying what you checked and what was still the same. That sentence is the whole output for the week, so make it worth reading.
+
+SECOND. Propose anything worth watching from now on, or nothing.
+
+A candidate is a company or a page that could tell Velvex something week after week. Two kinds are worth proposing, and they are not the same:
+
+- Something that might actually compete. Velvex returns a structural reading of commercial architecture, not a score. A tool that returns a number is not a competitor today, however similar the marketing sounds. Propose it as a competitor only if it reads a business structurally and delivers a judgement, not a rating.
+- Something that is where a match would first appear. Category index pages, providers whose language is drifting toward structural vocabulary, and the places buyers and investors describe this problem in their own words. These are worth watching precisely because they do not match today. Language moves before product does.
+
+Rules:
+
+- Only propose a page you actually retrieved this cycle. A URL you did not open does not go in. If you cannot give the evidence, do not propose it.
+- Evidence means what the page said, quoted or closely paraphrased. Not "appears to be a competitor".
+- Tag the standard honestly. "observed" if you read it. "inferred" if you are reasoning from something you read. Never "observed" for a page you only saw in a search result.
+- Propose at most three, and fewer is better. Each one costs the owner a decision, and a list of maybes trains them to stop reading the list.
+- Do not propose Velvex, and do not propose anything already being watched. You will be told what is already watched.
+- If nothing is worth watching, return an empty list. That is a normal week.
+
+No em dashes. No filler.`;
+
+/**
+ * One candidate, as a decision for the owner.
+ *
+ * Every field they need to rule on it is in the payload, because approving is
+ * what puts the page on the watchlist and there is no second chance to ask.
+ */
+function candidateAction(candidate: WatchCandidate): ProposedAction {
+  return {
+    type: "recommendation",
+    summary: `Watch ${candidate.name}?`,
+    channel: "internal",
+    payload: {
+      kind: "watch_candidate",
+      name: candidate.name,
+      url: candidate.url,
+      suggestedKind: candidate.suggestedKind,
+      whyItMightMatch: candidate.whyItMightMatch,
+      evidence: candidate.evidence,
+      standard: candidate.standard,
+      cooldownDays: REJECTION_COOLDOWN_DAYS,
+    },
+    rationale:
+      `${candidate.whyItMightMatch} Accept and it gets fetched and compared every week. ` +
+      `Reject and it will not be proposed again for ${REJECTION_COOLDOWN_DAYS} days.`,
+    dedupeKey: `intel:candidate:${candidateId(candidate.name)}`,
+  };
+}
+
+/**
+ * Fold the owner's rejections back into the ledger.
+ *
+ * Rejecting an approval does not run the agent, so a rejection would otherwise
+ * leave no trace and the same candidate would be proposed again next week. The
+ * agent reads its own rejected proposals at the start of a run and records the
+ * verdict itself. Doing it here rather than adding a reject hook to the runner
+ * keeps rejection free of side effects everywhere else in the system, which is
+ * a property worth more than the small delay.
+ */
+async function absorbRejections(
+  ledger: CandidateLedger,
+  ctx: RunContext
+): Promise<{ ledger: CandidateLedger; absorbed: number }> {
+  const rejected = await ctx.db.listApprovals("rejected", 100).catch(() => []);
+  let next = ledger;
+  let absorbed = 0;
+
+  for (const row of rejected) {
+    if (row.agent_id !== "competitive_intel") continue;
+    const payload = (row.action?.payload ?? {}) as Record<string, unknown>;
+    if (payload["kind"] !== "watch_candidate") continue;
+
+    const name = String(payload["name"] ?? "");
+    const url = String(payload["url"] ?? "");
+    if (!name || !url) continue;
+
+    const existing = next[candidateId(name)];
+    // Already recorded. Re-recording would restart the cooldown every week,
+    // which would quietly turn a 180 day suppression into a permanent one.
+    if (existing && existing.verdict === "rejected") continue;
+    if (existing && existing.verdict === "accepted") continue;
+
+    next = recordVerdict(
+      next,
+      { name, url, verdict: "rejected", note: row.decision_note ?? undefined },
+      // Dated from the decision, not from now, so a rejection made two months
+      // ago has two months less to run rather than starting over.
+      row.decided_at ? new Date(row.decided_at) : ctx.now
+    );
+    absorbed += 1;
+  }
+
+  return { ledger: next, absorbed };
+}
+
+/**
+ * Which candidates may be put to the owner this run.
+ *
+ * The shipped batch is drained first, because it was researched and verified by
+ * hand and is better than anything a cold discovery pass will find in week one.
+ * Discovery fills whatever is left of the allowance.
+ */
+function selectCandidates(
+  discovered: WatchCandidate[],
+  ledger: CandidateLedger,
+  watched: readonly IntelSource[],
+  now: Date
+): WatchCandidate[] {
+  const open = (list: WatchCandidate[]) =>
+    list.filter((candidate) => candidateIsOpen(candidate, ledger, watched, now));
+
+  const seed = open(SEED_CANDIDATES);
+  const found = open(discovered).filter(
+    (candidate) => !seed.some((entry) => candidateId(entry.name) === candidateId(candidate.name))
+  );
+
+  return [...seed, ...found].slice(0, MAX_CANDIDATES_PER_RUN);
+}
+
+// ---------------------------------------------------------------------------
 // The other half of the loop: the owner answers, the agent reads the answer.
 // ---------------------------------------------------------------------------
 
@@ -511,27 +665,61 @@ export const competitiveIntelAgent: AgentDefinition = {
       .read<PositionStatement>(ctx.db, STATE_KEYS.intelPosition)
       .catch(() => null);
 
+    // What the owner has already ruled on. Read before anything is proposed, so
+    // a decision they have made is never put to them twice.
+    const storedLedger =
+      (await state.read<CandidateLedger>(ctx.db, STATE_KEYS.intelCandidates)) ?? {};
+    const { ledger, absorbed } = await absorbRejections(storedLedger, ctx);
+    if (absorbed > 0) {
+      ctx.log(
+        `competitive_intel: ${absorbed} rejection(s) recorded, suppressed for ` +
+          `${REJECTION_COOLDOWN_DAYS} days from when you decided`
+      );
+      await state.write(
+        ctx.db,
+        STATE_KEYS.intelCandidates,
+        ledger,
+        `${Object.keys(ledger).length} watch candidate(s) ruled on`,
+        { scope: "competitive_intel", agent: "competitive_intel", salience: 5, tags: ["intel"] }
+      );
+    }
+
     const webResearch = flag(ctx.env.INTEL_WEB_RESEARCH_ENABLED);
 
     // With no watchlist and no web access there is nothing to look at. Saying
     // so once a cycle is honest; running two Opus calls over an empty desk and
     // filing the result as a brief would not be.
+    // With web research off and nothing on the watchlist there is nothing to
+    // research and nothing to compare, so no model runs at all. What is left is
+    // the candidates still waiting to be ruled on: those are put to the owner
+    // directly, because deciding them is what unblocks the agent.
     if (watchlist.sources.length === 0 && !webResearch) {
-      ctx.log("competitive_intel: no watchlist and web research is off, nothing to look at");
-      return [
-        {
-          type: "observation",
-          summary: "Competitive Intelligence has nothing to look at yet",
-          payload: {
-            note:
-              "Seed a watchlist by PUTting {updatedAt, sources:[{id,label,url,kind}]} to " +
-              "/api/state/intel.watchlist, or set INTEL_WEB_RESEARCH_ENABLED=\"true\" in wrangler.toml.",
-            active: false,
+      const pending = selectCandidates([], ledger, watchlist.sources, ctx.now);
+
+      if (pending.length === 0) {
+        ctx.log("competitive_intel: nothing watched, nothing pending, web research off");
+        return [
+          {
+            type: "observation",
+            summary: "Competitive Intelligence has nothing to look at yet",
+            payload: {
+              note:
+                "Every shipped candidate has been ruled on and nothing is being watched. Set " +
+                "INTEL_WEB_RESEARCH_ENABLED=\"true\" in wrangler.toml to let it look for new ones.",
+              active: false,
+            },
+            rationale:
+              "No sources, no pending candidates and no web access, so it has not run and has cost nothing.",
+            dedupeKey: `intel:idle:${day}`,
           },
-          rationale: "The agent has no sources and no web access, so it has not run and has cost nothing.",
-          dedupeKey: `intel:idle:${day}`,
-        },
-      ];
+        ];
+      }
+
+      ctx.log(
+        `competitive_intel: web research off and nothing watched, ` +
+          `putting ${pending.length} candidate(s) to you. No model was called.`
+      );
+      return pending.map(candidateAction);
     }
 
     const { changes, snapshots } = await gatherWatchlist(watchlist, previousSnapshots, ctx);
@@ -587,7 +775,81 @@ export const competitiveIntelAgent: AgentDefinition = {
         (research.truncated ? ", stopped at the continuation limit" : "")
     );
 
-    // --- pass 2: compose --------------------------------------------------
+    // --- pass 2: discovery and triage ------------------------------------
+    //
+    // Cheap, schema'd, no tools. It does two things the expensive pass should
+    // not be paid to do: decide whether the week was material at all, and
+    // propose what is worth watching from now on. Putting the triage here is
+    // what makes a quiet week cost one pass instead of two.
+    const watchedList = watchlist.sources
+      .map((source) => `- ${source.label} (${source.kind}) ${source.url}`)
+      .join("\n");
+
+    const discovery = await ctx.claude.complete<DiscoveryResult>({
+      system: DISCOVERY_SYSTEM,
+      user:
+        `${positionContext(position)}\n\n` +
+        `Your research notes from this cycle:\n${research.text || "(nothing returned)"}\n\n` +
+        `Watchlist evidence, fetched directly:\n${describeChanges(changes)}\n\n` +
+        `Already watched, do not propose these again:\n${watchedList || "(nothing watched yet)"}\n\n` +
+        `Pages you actually retrieved this cycle:\n${
+          research.sources.map((source) => `- ${source.url}`).join("\n") || "(none)"
+        }`,
+      model: MODEL,
+      effort: "medium",
+      maxTokens: 4000,
+      schema: DISCOVERY_SCHEMA,
+    });
+
+    const found = discovery.parsed?.candidates ?? [];
+    const proposals = selectCandidates(found, ledger, watchlist.sources, ctx.now);
+    const movedCount = changes.filter((change) => change.state === "changed").length;
+
+    ctx.log(
+      `competitive_intel: discovery found ${found.length} candidate(s), ` +
+        `${proposals.length} to put to you, material=${discovery.parsed?.anythingMaterial ?? false}`
+    );
+
+    const candidateActions: ProposedAction[] = proposals.map(candidateAction);
+
+    // --- the quiet week ---------------------------------------------------
+    //
+    // Nothing moved on the watchlist, nothing new to rule on, and the triage
+    // says the category did not shift. There is no brief to write. Writing one
+    // anyway would cost the expensive pass and, worse, would teach the owner
+    // that a brief in the library does not mean anything happened.
+    if (!discovery.parsed?.anythingMaterial && movedCount === 0 && proposals.length === 0) {
+      const note = discovery.parsed?.quietNote?.trim() || "Nothing in the category moved this cycle.";
+      const spent = research.costUsd + discovery.costUsd;
+
+      await state.write(
+        ctx.db,
+        STATE_KEYS.intelSnapshots,
+        snapshots,
+        `${Object.keys(snapshots).length} watched sources snapshotted`,
+        { scope: "competitive_intel", agent: "competitive_intel", salience: 3, tags: ["intel"] }
+      );
+
+      ctx.log(`competitive_intel: quiet week, no brief. ${note} ($${spent.toFixed(4)})`);
+      return [
+        {
+          type: "observation",
+          summary: `Quiet week: ${note}`,
+          payload: {
+            quiet: true,
+            sourcesWatched: changes.length,
+            searchesUsed: research.searchesUsed,
+            costUsd: Math.round(spent * 1_000_000) / 1_000_000,
+          },
+          rationale:
+            "The category did not move and nothing new is worth watching, so no brief was " +
+            "composed. A brief every week regardless of what happened is how briefs stop being read.",
+          dedupeKey: `intel:quiet:${day}`,
+        },
+      ];
+    }
+
+    // --- pass 3: compose --------------------------------------------------
     const composed = await ctx.claude.complete<ComposedBrief>({
       system: COMPOSE_SYSTEM,
       user: composePrompt({
@@ -674,6 +936,9 @@ export const competitiveIntelAgent: AgentDefinition = {
       });
     }
 
+    // Candidates to rule on. Each is its own decision, capped per run.
+    actions.push(...candidateActions);
+
     // One move, and only one, goes in front of the owner.
     const move = topMove(brief);
     if (move) {
@@ -749,6 +1014,74 @@ export const competitiveIntelAgent: AgentDefinition = {
           headline: brief.headline,
           gaps: brief.positioningGaps.length,
           costUsd: brief.meta.costUsd,
+        },
+      };
+    }
+
+    // Accepting a candidate is the one thing an approval here actually changes.
+    // It adds a page to what gets fetched and compared every week, which is why
+    // it is a decision rather than something the agent does for itself.
+    if (action.type === "recommendation" && action.payload["kind"] === "watch_candidate") {
+      const name = String(action.payload["name"] ?? "");
+      const url = String(action.payload["url"] ?? "");
+      const kind = String(action.payload["suggestedKind"] ?? "category") as IntelSource["kind"];
+      if (!name || !url) {
+        return { outcome: "failed", error: "The candidate carried no name or URL." };
+      }
+
+      const watchlist =
+        (await state.read<IntelWatchlist>(ctx.db, STATE_KEYS.intelWatchlist)) ??
+        ({ updatedAt: ctx.now.toISOString(), sources: [] } as IntelWatchlist);
+
+      const id = candidateId(name);
+      // Idempotent: approving twice must not create a second entry, which would
+      // share one snapshot key and make each report the other as a rewrite.
+      const already = watchlist.sources.some(
+        (source) => source.id === id || normaliseUrl(source.url) === normaliseUrl(url)
+      );
+      const sources = already
+        ? watchlist.sources
+        : [
+            ...watchlist.sources,
+            {
+              id,
+              label: name,
+              url,
+              kind,
+              ...(action.payload["whyItMightMatch"]
+                ? { note: String(action.payload["whyItMightMatch"]) }
+                : {}),
+            },
+          ];
+
+      await state.write(
+        ctx.db,
+        STATE_KEYS.intelWatchlist,
+        { updatedAt: ctx.now.toISOString(), sources },
+        `${sources.length} sources on the competitive intelligence watchlist`,
+        { scope: "competitive_intel", agent: "competitive_intel", salience: 7, tags: ["intel"] }
+      );
+
+      const ledger = (await state.read<CandidateLedger>(ctx.db, STATE_KEYS.intelCandidates)) ?? {};
+      await state.write(
+        ctx.db,
+        STATE_KEYS.intelCandidates,
+        recordVerdict(ledger, { name, url, verdict: "accepted" }, ctx.now),
+        `${Object.keys(ledger).length + 1} watch candidate(s) ruled on`,
+        { scope: "competitive_intel", agent: "competitive_intel", salience: 5, tags: ["intel"] }
+      );
+
+      return {
+        outcome: "executed",
+        externalRef: id,
+        detail: {
+          watching: name,
+          url,
+          kind,
+          note: already
+            ? "Already on the watchlist; the verdict was recorded and nothing was duplicated."
+            : "Added to the watchlist. It will be fetched and compared against itself every run.",
+          watchlistSize: sources.length,
         },
       };
     }

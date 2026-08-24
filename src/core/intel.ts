@@ -84,12 +84,198 @@ export interface SourceChange {
   status: number;
 }
 
+/**
+ * Velvex's own evidence standard, applied to Velvex's own intelligence.
+ *
+ * Declared here rather than beside the brief because discovery uses it too: a
+ * candidate the agent merely suspects is a different thing from one it saw a
+ * page for, and the difference has to survive into the owner's decision.
+ */
+export type EvidenceStandard = "observed" | "inferred" | "assumption";
+
+const EVIDENCE_VALUES: EvidenceStandard[] = ["observed", "inferred", "assumption"];
+
+// ---------------------------------------------------------------------------
+// Discovery: how something gets onto the watchlist in the first place.
+//
+// The owner's read is that nothing in this market matches Velvex, and that is
+// correct: scoring tools return a number, Velvex returns a structural reading.
+// A watchlist assembled from guesses about who competes would therefore be a
+// list of non-competitors, watched forever, generating diffs nobody cares
+// about.
+//
+// So nothing is watched until the owner has said it should be. Each cycle the
+// agent proposes what it found, the owner accepts or rejects, and only accepted
+// candidates are ever fetched and snapshotted. A rejection is not a shrug: it
+// is a verdict with a shelf life, so the same company cannot come back next
+// Monday under a slightly different description.
+// ---------------------------------------------------------------------------
+
+/** How long a rejected candidate stays out of the proposals. */
+export const REJECTION_COOLDOWN_DAYS = 180;
+
+/** A company or page the agent thinks might be worth watching. */
+export interface WatchCandidate {
+  name: string;
+  url: string;
+  /** Why this might match Velvex, in the agent's own words. */
+  whyItMightMatch: string;
+  /** What was actually seen. Never a recollection. */
+  evidence: string;
+  standard: EvidenceStandard;
+  /** What the agent thinks it is, which the owner may disagree with. */
+  suggestedKind: SourceKind;
+}
+
+/** The owner's ruling on one candidate, and when it stops applying. */
+export interface CandidateVerdict {
+  id: string;
+  name: string;
+  url: string;
+  verdict: "accepted" | "rejected";
+  decidedAt: string;
+  /**
+   * Set on a rejection. Until this date the candidate is not proposed again,
+   * however the agent rediscovers it. A market does move, so a rejection
+   * expires rather than being permanent: "not a competitor" is a statement
+   * about now, not about always.
+   */
+  suppressedUntil?: string;
+  note?: string;
+}
+
+export type CandidateLedger = Record<string, CandidateVerdict>;
+
+/** A stable id from a company name or URL. Used as the ledger key. */
+export function candidateId(nameOrUrl: string): string {
+  return nameOrUrl
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+/** Host plus path, lowercased, so two spellings of one page compare equal. */
+export function normaliseUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, "");
+    return `${parsed.hostname.replace(/^www\./, "")}${path}`.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+/**
+ * Whether a candidate may be put to the owner right now.
+ *
+ * Three ways it may not: it is already watched, it was already accepted, or it
+ * was rejected and the cooldown has not run out. Re-proposing any of those
+ * wastes a queue slot on a decision the owner has already made, which is the
+ * fastest way to teach someone to stop reading the queue.
+ */
+export function candidateIsOpen(
+  candidate: { name: string; url: string },
+  ledger: CandidateLedger,
+  watched: readonly IntelSource[],
+  now: Date
+): boolean {
+  const target = normaliseUrl(candidate.url);
+  if (watched.some((source) => normaliseUrl(source.url) === target)) return false;
+
+  const byId = ledger[candidateId(candidate.name)] ?? ledger[candidateId(candidate.url)];
+  const byUrl = Object.values(ledger).find((entry) => normaliseUrl(entry.url) === target);
+  const verdict = byId ?? byUrl;
+  if (!verdict) return true;
+
+  if (verdict.verdict === "accepted") return false;
+  if (!verdict.suppressedUntil) return true;
+  return new Date(verdict.suppressedUntil).getTime() <= now.getTime();
+}
+
+/** Record a ruling. A rejection carries its own expiry. */
+export function recordVerdict(
+  ledger: CandidateLedger,
+  entry: { name: string; url: string; verdict: "accepted" | "rejected"; note?: string },
+  now: Date
+): CandidateLedger {
+  const id = candidateId(entry.name || entry.url);
+  const suppressedUntil =
+    entry.verdict === "rejected"
+      ? new Date(now.getTime() + REJECTION_COOLDOWN_DAYS * 86_400_000).toISOString()
+      : undefined;
+
+  return {
+    ...ledger,
+    [id]: {
+      id,
+      name: entry.name,
+      url: entry.url,
+      verdict: entry.verdict,
+      decidedAt: now.toISOString(),
+      ...(suppressedUntil ? { suppressedUntil } : {}),
+      ...(entry.note ? { note: entry.note } : {}),
+    },
+  };
+}
+
+/** Days until a rejected candidate can be proposed again. Zero when it can. */
+export function cooldownRemainingDays(verdict: CandidateVerdict, now: Date): number {
+  if (verdict.verdict !== "rejected" || !verdict.suppressedUntil) return 0;
+  const ms = new Date(verdict.suppressedUntil).getTime() - now.getTime();
+  return ms <= 0 ? 0 : Math.ceil(ms / 86_400_000);
+}
+
+/**
+ * What the discovery pass returns.
+ *
+ * `anythingMaterial` is the whole reason this pass is separate and cheap. On a
+ * week where the category did not move and no new candidate appeared, there is
+ * nothing worth a brief, and composing one anyway would cost the expensive
+ * pass and teach the owner that briefs are wallpaper. It decides whether the
+ * cycle continues.
+ */
+export interface DiscoveryResult {
+  anythingMaterial: boolean;
+  /** One line explaining the call, read straight into the log on a quiet week. */
+  quietNote: string;
+  candidates: WatchCandidate[];
+}
+
+export const DISCOVERY_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["anythingMaterial", "quietNote", "candidates"],
+  properties: {
+    anythingMaterial: { type: "boolean" },
+    quietNote: { type: "string" },
+    candidates: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "url", "whyItMightMatch", "evidence", "standard", "suggestedKind"],
+        properties: {
+          name: { type: "string" },
+          url: { type: "string" },
+          whyItMightMatch: { type: "string" },
+          evidence: { type: "string" },
+          standard: { type: "string", enum: EVIDENCE_VALUES },
+          suggestedKind: {
+            type: "string",
+            enum: ["competitor", "category", "adjacent_tooling", "buyer_language"],
+          },
+        },
+      },
+    },
+  },
+};
+
 // ---------------------------------------------------------------------------
 // The brief itself.
 // ---------------------------------------------------------------------------
-
-/** Velvex's own evidence standard, applied to Velvex's own intelligence. */
-export type EvidenceStandard = "observed" | "inferred" | "assumption";
 
 export interface CategoryLanguageShift {
   /** The term being tracked, e.g. "scale readiness". */
@@ -251,8 +437,6 @@ export const BRIEF_LIMITS = {
   watchNext: 6,
   sources: 25,
 } as const;
-
-const EVIDENCE_VALUES: EvidenceStandard[] = ["observed", "inferred", "assumption"];
 
 /**
  * The structured-output schema for the composing call.

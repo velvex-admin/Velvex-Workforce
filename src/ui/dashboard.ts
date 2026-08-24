@@ -355,6 +355,11 @@ a{color:var(--blue);text-decoration:none}
 .answered{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:8px;padding:12px 14px;margin-bottom:9px;font-size:12.5px}
 .answered .q{color:var(--text-faint);margin-bottom:5px}
 .answered .a{color:var(--text-dim)}
+.verdict{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:9px 12px;margin-bottom:6px;font-size:12.5px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.verdict.accepted{border-left:3px solid var(--green)}
+.verdict.rejected{border-left:3px solid var(--slate);opacity:.8}
+.verdict .nm{color:var(--text);flex:1;min-width:140px}
+.verdict .when{font-family:ui-monospace,monospace;font-size:10px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em}
 .src-list{font-size:12.5px;color:var(--text-dim);padding-left:20px}
 .src-list li{margin-bottom:4px;word-break:break-word}
 
@@ -1164,13 +1169,44 @@ async function openLibrary() {
       'added here permanently. PUT to <code>/api/intel/position</code> to edit the standing text.</p>' +
     '<div class="actions"><button class="intel" onclick="showPosition()">Show what it knows</button></div>' +
     '<div id="position-out"></div>' +
-    '<h3 class="intel">Watchlist</h3>' +
+    '<h3 class="intel">What it may watch</h3>' +
+    '<p class="cadence-hint">Nothing is fetched until you have accepted it. Each week the agent ' +
+      'proposes what it found, a few at a time, and every one is a separate decision in the ' +
+      'queue. Accept and it gets fetched and compared against itself every run. Reject and it ' +
+      'will not be proposed again for 180 days, however often it is rediscovered. A market ' +
+      'moves, so a rejection expires rather than being permanent.</p>' +
+    '<div class="actions"><button class="intel" onclick="showVerdicts()">Show what you have ruled on</button></div>' +
+    '<div id="verdicts-out"></div>' +
+    '<h3 class="intel">Currently watched</h3>' +
     '<p class="cadence-hint">The pages the agent fetches directly each cycle and compares against ' +
       'what they said last time. That comparison is the only first-hand evidence in a brief, so the ' +
       'list is worth keeping current. PUT to <code>/api/intel/watchlist</code> to change it.</p>' +
     '<div class="actions"><button class="intel" onclick="showWatchlist()">Show watchlist</button></div>' +
     '<div id="watchlist-out"></div>'
   );
+}
+
+async function showVerdicts() {
+  const out = document.getElementById('verdicts-out');
+  if (!out) return;
+  out.innerHTML = '<div class="empty">Loading...</div>';
+  const r = await api('/intel/candidates');
+  const rows = r.candidates || [];
+  if (!rows.length) {
+    out.innerHTML = '<div class="empty">Nothing ruled on yet. The agent will start proposing ' +
+      'candidates on its next run, and they arrive in the approvals queue.</div>';
+    return;
+  }
+  out.innerHTML = rows.map(v => {
+    const left = v.cooldownDaysLeft > 0
+      ? v.cooldownDaysLeft + 'd left'
+      : (v.verdict === 'rejected' ? 'can be proposed again' : 'watching');
+    return '<div class="verdict ' + esc(v.verdict) + '">' +
+      '<span class="nm">' + esc(v.name) + '</span>' +
+      '<span class="badge ' + (v.verdict === 'accepted' ? 'green' : 'slate') + '">' + esc(v.verdict) + '</span>' +
+      '<span class="when">' + esc(left) + '</span>' +
+    '</div>';
+  }).join('');
 }
 
 async function showPosition() {

@@ -12,6 +12,13 @@ import { describe, expect, it } from "vitest";
 import {
   BRIEF_LIMITS,
   BRIEF_SCHEMA,
+  candidateId,
+  candidateIsOpen,
+  cooldownRemainingDays,
+  DISCOVERY_SCHEMA,
+  normaliseUrl,
+  recordVerdict,
+  REJECTION_COOLDOWN_DAYS,
   briefIsSubstantive,
   briefFilename,
   clampBrief,
@@ -25,6 +32,7 @@ import {
   renderBriefMarkdown,
   sentences,
   SNAPSHOT_TEXT_CAP,
+  type CandidateLedger,
   type ComposedBrief,
   type IntelBrief,
   type IntelSource,
@@ -469,5 +477,126 @@ describe("the question a brief asks", () => {
     const quiet = renderBriefMarkdown({ ...fullBrief, openQuestion: null });
     expect(quiet).toContain("## Limitations");
     expect(quiet).not.toContain("The question this brief is asking you");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The discovery gate.
+//
+// Nothing reaches the watchlist until the owner has said it should. The part
+// that has to be right is the suppression: a rejection that silently expires
+// early puts a decision back in front of someone who already made it, and a
+// rejection whose clock restarts every week turns a 180 day cooldown into a
+// permanent ban nobody chose.
+// ---------------------------------------------------------------------------
+
+const now = new Date("2026-08-24T00:00:00.000Z");
+const rival = { name: "Rival Diagnostics", url: "https://rival.example/assessment" };
+
+describe("identifying a candidate", () => {
+  it("derives a stable id from a name or a URL", () => {
+    expect(candidateId("Rival Diagnostics")).toBe("rival-diagnostics");
+    expect(candidateId("https://www.Rival.example/Assessment/")).toBe("rival-example-assessment");
+  });
+
+  it("treats spellings of one page as one page", () => {
+    // Otherwise accepting a candidate twice would create two watchlist entries
+    // for the same URL, and each snapshot would report the other as a rewrite.
+    const forms = [
+      "https://rival.example/assessment",
+      "https://www.rival.example/assessment/",
+      "HTTPS://Rival.Example/Assessment",
+    ];
+    expect(new Set(forms.map(normaliseUrl)).size).toBe(1);
+  });
+});
+
+describe("whether a candidate may be put to the owner", () => {
+  const watched = [
+    { id: "watched", label: "Already watched", url: "https://watched.example/", kind: "category" as const },
+  ];
+
+  it("opens a candidate nobody has ruled on", () => {
+    expect(candidateIsOpen(rival, {}, [], now)).toBe(true);
+  });
+
+  it("never re-proposes something already being watched", () => {
+    expect(
+      candidateIsOpen({ name: "Whatever", url: "https://www.watched.example" }, {}, watched, now)
+    ).toBe(false);
+  });
+
+  it("never re-proposes something already accepted", () => {
+    const ledger = recordVerdict({}, { ...rival, verdict: "accepted" }, now);
+    expect(candidateIsOpen(rival, ledger, [], now)).toBe(false);
+  });
+
+  it("suppresses a rejection for the full cooldown and not a day less", () => {
+    const ledger = recordVerdict({}, { ...rival, verdict: "rejected" }, now);
+    const dayBefore = new Date(now.getTime() + (REJECTION_COOLDOWN_DAYS - 1) * 86_400_000);
+    const dayAfter = new Date(now.getTime() + (REJECTION_COOLDOWN_DAYS + 1) * 86_400_000);
+
+    expect(candidateIsOpen(rival, ledger, [], dayBefore)).toBe(false);
+    // A market moves. "Not a competitor" is a statement about now, not about
+    // always, so the rejection expires rather than being permanent.
+    expect(candidateIsOpen(rival, ledger, [], dayAfter)).toBe(true);
+  });
+
+  it("recognises a rejected candidate that comes back under a new name", () => {
+    // The whole point of the cooldown. Discovery re-finds the same page every
+    // week and will happily describe it differently each time.
+    const ledger = recordVerdict({}, { ...rival, verdict: "rejected" }, now);
+    const renamed = { name: "Rival Diagnostics Inc (formerly Rival)", url: rival.url };
+    expect(candidateIsOpen(renamed, ledger, [], now)).toBe(false);
+  });
+
+  it("counts down the days left rather than only saying blocked", () => {
+    const ledger = recordVerdict({}, { ...rival, verdict: "rejected" }, now);
+    const verdict = ledger[candidateId(rival.name)]!;
+    expect(cooldownRemainingDays(verdict, now)).toBe(REJECTION_COOLDOWN_DAYS);
+    expect(
+      cooldownRemainingDays(verdict, new Date(now.getTime() + 179 * 86_400_000))
+    ).toBe(1);
+    expect(
+      cooldownRemainingDays(verdict, new Date(now.getTime() + 400 * 86_400_000))
+    ).toBe(0);
+  });
+
+  it("puts no expiry on an acceptance", () => {
+    const ledger = recordVerdict({}, { ...rival, verdict: "accepted" }, now);
+    const verdict = ledger[candidateId(rival.name)]!;
+    expect(verdict.suppressedUntil).toBeUndefined();
+    expect(cooldownRemainingDays(verdict, now)).toBe(0);
+  });
+
+  it("keeps earlier rulings when a new one is recorded", () => {
+    let ledger: CandidateLedger = recordVerdict({}, { ...rival, verdict: "rejected" }, now);
+    ledger = recordVerdict(
+      ledger,
+      { name: "Other Co", url: "https://other.example/", verdict: "accepted" },
+      now
+    );
+    expect(Object.keys(ledger)).toHaveLength(2);
+    expect(ledger[candidateId(rival.name)]!.verdict).toBe("rejected");
+  });
+});
+
+describe("the discovery schema", () => {
+  it("states no array length constraint, which the API rejects", () => {
+    expect(JSON.stringify(DISCOVERY_SCHEMA)).not.toContain("maxItems");
+  });
+
+  it("makes the quiet-week decision a required field", () => {
+    // If this were optional a missing value would read as falsy, and every week
+    // would silently become a quiet week with no brief.
+    expect((DISCOVERY_SCHEMA as any).required).toContain("anythingMaterial");
+    expect((DISCOVERY_SCHEMA as any).required).toContain("quietNote");
+  });
+
+  it("requires evidence and a standard on every candidate", () => {
+    const item = (DISCOVERY_SCHEMA as any).properties.candidates.items;
+    expect(item.required).toContain("evidence");
+    expect(item.required).toContain("standard");
+    expect(item.required).toContain("url");
   });
 });

@@ -80,6 +80,12 @@ describe("the intelligence library on the page", () => {
     expect(body).toContain("/intel/answer");
   });
 
+  it("shows what has been ruled on and what is still in cooldown", () => {
+    expect(body).toContain("function showVerdicts");
+    expect(body).toContain("/intel/candidates");
+    expect(body).toContain("cooldownDaysLeft");
+  });
+
   it("shows what the agent has been told about Velvex", () => {
     expect(body).toContain("function showPosition");
     expect(body).toContain("/intel/position");
