@@ -1288,13 +1288,26 @@ async function decide(id, decision) {
   } finally { disableAll(false); }
 }
 
+/**
+ * Firing an agent starts it; it does not wait for it.
+ *
+ * The API returns as soon as the work is handed off, because a run can take
+ * minutes and holding the request open past the edge timeout is what produced a
+ * 524 while the Worker kept spending. Progress arrives through the status board
+ * instead, so the only thing to do here is start polling quickly enough to see
+ * the agent light up.
+ */
 async function runAgent(id) {
   disableAll(true);
   try {
     const r = await api('/run/' + id, { method: 'POST' });
-    toast(r.error ? ('Error: ' + r.error) : 'Fired ' + id, r.error ? 'error' : '');
+    toast(r.error ? ('Error: ' + r.error) : 'Started ' + id + ', watch the trail', r.error ? 'error' : '');
     await loadAll();
     openAgent(id);
+    // The status board is written a moment after the response returns, so one
+    // immediate reload would show the agent still idle and drop back to the
+    // slow poll. Look again shortly.
+    setTimeout(async () => { await loadAll(); if (SELECTED === id) openAgent(id); }, 2000);
   } finally { disableAll(false); }
 }
 
@@ -1302,8 +1315,9 @@ async function runTick(cadence) {
   disableAll(true);
   try {
     const r = await api('/run?cadence=' + cadence, { method: 'POST' });
-    toast(r.error ? ('Error: ' + r.error) : (\`Fired \${cadence} agents\`), r.error ? 'error' : '');
+    toast(r.error ? ('Error: ' + r.error) : (\`Started the \${cadence} agents\`), r.error ? 'error' : '');
     await loadAll();
+    setTimeout(loadAll, 2000);
   } finally { disableAll(false); }
 }
 

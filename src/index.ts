@@ -68,7 +68,7 @@ function authorize(url: URL, env: Env): Authorized | null {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     // The LinkedIn partner reaches its endpoints with a bearer token rather
@@ -114,7 +114,7 @@ export default {
 
     if (rest.startsWith("/api/")) {
       try {
-        return await handleApi(request, env, rest.slice("/api/".length));
+        return await handleApi(request, env, rest.slice("/api/".length), execCtx);
       } catch (err) {
         console.error(err);
         return json(

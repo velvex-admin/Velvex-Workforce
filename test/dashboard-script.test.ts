@@ -91,6 +91,14 @@ describe("the intelligence library on the page", () => {
     expect(body).toContain("/intel/position");
   });
 
+  it("starts a run rather than waiting for it", () => {
+    // Holding the request open until the agent finished is what produced a 524
+    // while the Worker kept spending. The button starts the work and the status
+    // board reports it.
+    expect(body).toContain("Started ");
+    expect(body).not.toContain("'Fired '");
+  });
+
   it("says the migration is missing rather than showing an empty shelf", () => {
     expect(body).toContain("function migrationNote");
     expect(body).toContain("0002_intelligence_layer.sql");

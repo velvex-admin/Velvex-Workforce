@@ -87,7 +87,12 @@ export function buildContext(
   };
 }
 
-export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
+export async function handleApi(
+  request: Request,
+  env: Env,
+  path: string,
+  execCtx?: ExecutionContext
+): Promise<Response> {
   const url = new URL(request.url);
   const segments = path.split("/").filter(Boolean);
 
@@ -201,19 +206,58 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   }
 
   // POST /api/run  or  POST /api/run/:agentId
+  //
+  // Starts the work and returns immediately. It does NOT wait for the run to
+  // finish, and that is the whole point of this route's shape.
+  //
+  // An agent run is not a web request. The intelligence agent alone fetches a
+  // dozen pages and then makes three model calls, one of them with server-side
+  // search that can be resumed several times. Held inside the HTTP request that
+  // comfortably exceeds Cloudflare's edge timeout, and the caller gets a 524
+  // while the Worker carries on running and carries on billing. That happened,
+  // twice, and the second time it cost real money for a result nobody ever saw.
+  //
+  // So the work is handed to waitUntil, which keeps the Worker alive past the
+  // response, and progress is watched through the status board the runner
+  // already writes: /api/runtime, which is what the dashboard polls. Waiting on
+  // a socket was never how you were meant to watch a run.
   if (segments[0] === "run" && request.method === "POST") {
     const logs: string[] = [];
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const ctx = buildContext(env, { trigger: "manual", input: body, logs });
+    const agentId = segments[1];
+    const cadence = (url.searchParams.get("cadence") ?? "hourly") as "hourly" | "daily" | "weekly";
 
-    if (segments[1]) {
-      const result = await runOne(segments[1] as AgentId, ctx);
-      return json({ runId: ctx.runId, result, logs });
+    const work = agentId
+      ? runOne(agentId as AgentId, ctx).then(
+          (result) => console.log(`vx03 manual ${agentId}: ${JSON.stringify(result)}`),
+          (err) => console.error(`vx03 manual ${agentId} failed`, err)
+        )
+      : runDue(cadence, ctx).then(
+          (results) => console.log(`vx03 manual ${cadence}: ${results.length} agent(s)`),
+          (err) => console.error(`vx03 manual ${cadence} failed`, err)
+        );
+
+    if (execCtx) {
+      execCtx.waitUntil(work);
+    } else {
+      // No execution context (a direct call in a test). Awaiting is correct
+      // there, and there is no edge timeout in front of it.
+      await work;
     }
 
-    const cadence = (url.searchParams.get("cadence") ?? "hourly") as "hourly" | "daily" | "weekly";
-    const results = await runDue(cadence, ctx);
-    return json({ runId: ctx.runId, cadence, results, logs });
+    return json(
+      {
+        runId: ctx.runId,
+        started: true,
+        ...(agentId ? { agent: agentId } : { cadence }),
+        note:
+          "Started in the background. Watch it on the dashboard, or poll " +
+          "/api/runtime for the live status and thought trail. This response " +
+          "does not mean the run finished.",
+      },
+      202
+    );
   }
 
   // GET /api/runtime

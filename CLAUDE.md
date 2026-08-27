@@ -324,6 +324,21 @@ outright.
   `server_tool_use` block and resumes on its own, and the word would become part
   of the conversation.
 
+- **An agent run is not a web request, and holding one open gives you a 524.**
+  `POST /api/run/:agentId` used to run the agent and then respond. The
+  intelligence agent fetches a dozen pages and makes three model calls, one with
+  server-side search that can be resumed several times, so it comfortably passes
+  Cloudflare's ~100 second edge timeout. The caller gets **524 A Timeout
+  Occurred**, and the Worker carries on running and carries on billing: the run
+  may well finish and file its brief, minutes after whoever pressed the button
+  concluded it had failed. Check `/api/intel/briefs` before assuming a 524 run
+  produced nothing. The route now hands the work to `execCtx.waitUntil()` and
+  returns **202** immediately; progress is watched through `/api/runtime`, which
+  is the status board the runner already writes and the dashboard already polls.
+  Scheduled (cron) runs were never affected — they have a far longer allowance
+  than an HTTP request, which is why the weekly tick could succeed while the
+  manual button timed out.
+
 - **Resuming a paused server-tool turn re-sends everything, at full price.**
   This cost real money before it was found: a research pass paused, and each
   resume re-sent the whole accumulated conversation including every search
@@ -476,7 +491,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 291 tests
+npx vitest run            # 292 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
