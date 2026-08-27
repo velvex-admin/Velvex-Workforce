@@ -601,6 +601,14 @@ export const competitiveIntelAgent: AgentDefinition = {
   cadence: "weekly",
   observeOnly: true,
   approvedChannels: ["internal"],
+  /**
+   * The most one weekly run may cost. Three passes on Opus with web access,
+   * and one of them can be resumed several times, so this is the one agent in
+   * the system that can run away. A normal run lands well under this; hitting
+   * it means something is wrong and the run stops rather than finding out how
+   * expensive wrong gets.
+   */
+  spendCapUsd: 1.25,
 
   routineRules: [
     {
@@ -763,7 +771,10 @@ export const competitiveIntelAgent: AgentDefinition = {
       // High rather than max: this pass is gathering, and depth here buys less
       // than depth in the pass that decides what any of it means.
       effort: "high",
-      maxTokens: 12000,
+      // Thinking is billed inside max_tokens on this model, so a budget sized
+      // for the answer alone gets consumed before the answer starts. This is
+      // sized for both.
+      maxTokens: 32000,
       ...(webResearch
         ? { web: { maxSearches: MAX_SEARCHES, maxFetches: MAX_FETCHES } }
         : {}),
@@ -862,7 +873,11 @@ export const competitiveIntelAgent: AgentDefinition = {
       }),
       model: MODEL,
       effort: competitiveIntelAgent.effort,
-      maxTokens: 12000,
+      // Effort "max" thinks hard, and that thinking comes out of the same
+      // budget as the JSON. Too small a number here does not shorten the brief,
+      // it truncates it mid-object and the parse fails after the tokens are
+      // already paid for.
+      maxTokens: 32000,
       schema: BRIEF_SCHEMA,
     });
 

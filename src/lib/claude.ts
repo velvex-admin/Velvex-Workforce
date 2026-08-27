@@ -47,6 +47,8 @@ export interface WebAccess {
   allowedDomains?: string[];
   /** When set, these hosts are excluded. Never send both lists. */
   blockedDomains?: string[];
+  /** Ceiling on what one fetched page may contribute. Defaults to 12k tokens. */
+  maxContentTokens?: number;
 }
 
 /** A page the model actually looked at, pulled out of the result blocks. */
@@ -100,6 +102,28 @@ export interface CompleteResult<T = string> {
  */
 const MAX_CONTINUATIONS = 4;
 
+/**
+ * Thrown when a run has spent its allowance.
+ *
+ * This exists because of a real incident: a research pass with server tools
+ * paused four times, each resume re-sent the whole accumulated conversation at
+ * full input price, and one run cost over three dollars before failing. Nothing
+ * in the system noticed, because nothing was counting. A ceiling that stops the
+ * run is the difference between a bad run and an expensive one.
+ */
+export class BudgetExceededError extends Error {
+  constructor(
+    readonly spentUsd: number,
+    readonly capUsd: number
+  ) {
+    super(
+      `This run has spent $${spentUsd.toFixed(4)} against a cap of $${capUsd.toFixed(2)}, ` +
+        "so it stopped rather than continuing to spend."
+    );
+    this.name = "BudgetExceededError";
+  }
+}
+
 export class ModelError extends Error {
   constructor(
     message: string,
@@ -128,6 +152,17 @@ export interface BuiltRequest {
   };
   /** Server-side tools only. We never declare a tool we would have to run. */
   tools?: Array<Record<string, unknown>>;
+  /**
+   * Cache the request prefix.
+   *
+   * This matters most on a resumed server-tool turn. Resuming re-sends the
+   * whole conversation so far, and a research pass accumulates every search
+   * result and fetched page into it: without caching, four resumes over sixty
+   * thousand tokens of accumulated context bills roughly six hundred thousand
+   * input tokens, which is what turned one run into three dollars. Cache reads
+   * bill at a tenth of the input rate, so the same run costs cents.
+   */
+  cache_control?: { type: "ephemeral" };
 }
 
 interface CurrentMessage extends Anthropic.Message {
@@ -231,7 +266,12 @@ export function buildRequest(args: {
 
   if (args.web) {
     const tools = webTools(args.model, args.web);
-    if (tools.length > 0) request.tools = tools;
+    if (tools.length > 0) {
+      request.tools = tools;
+      // Only worth asking for on the calls that can grow: a short single-shot
+      // request never reaches the minimum cacheable prefix anyway.
+      request.cache_control = { type: "ephemeral" };
+    }
   }
 
   return request;
@@ -269,6 +309,10 @@ export function webTools(model: string, web: WebAccess): Array<Record<string, un
       type: capabilities.webFetchToolType,
       name: "web_fetch",
       max_uses: web.maxFetches,
+      // Without a cap one long page can dominate the conversation, and every
+      // later resume re-sends it. Enough for a competitor's homepage and their
+      // pricing page, not enough for somebody's documentation site.
+      max_content_tokens: web.maxContentTokens ?? 12_000,
       ...domains,
     });
   }
@@ -296,6 +340,31 @@ export class Claude {
   /** Running totals for this Worker invocation, so a run can report its cost. */
   spentUsd = 0;
   callCount = 0;
+
+  /**
+   * What the current run may still spend. Null means uncapped.
+   *
+   * Checked before every request INCLUDING every continuation of a paused
+   * server-tool turn, because that loop is where an expensive run actually
+   * becomes expensive: the cost is spent between requests, so a check that only
+   * ran once at the start would not have stopped anything.
+   */
+  private capUsd: number | null = null;
+
+  /** Cap spend for the work about to happen, measured from what is already spent. */
+  capSpend(additionalUsd: number): void {
+    this.capUsd = Math.round((this.spentUsd + additionalUsd) * 1_000_000) / 1_000_000;
+  }
+
+  clearSpendCap(): void {
+    this.capUsd = null;
+  }
+
+  private assertWithinBudget(): void {
+    if (this.capUsd !== null && this.spentUsd >= this.capUsd) {
+      throw new BudgetExceededError(this.spentUsd, this.capUsd);
+    }
+  }
 
   constructor(env: Env) {
     this.client = new Anthropic({ apiKey: requireSecret(env, "ANTHROPIC_API_KEY") });
@@ -344,6 +413,7 @@ export class Claude {
       let response!: CurrentMessage;
 
       for (let attempt = 0; ; attempt += 1) {
+        this.assertWithinBudget();
         response = (await this.client.messages.create({
           ...request,
           messages,
@@ -358,10 +428,36 @@ export class Claude {
         for (const block of response.content) {
           if (block.type === "text") text += block.text;
         }
-        usage = addUsage(usage, response.usage as unknown as TokenUsage);
+        const turnUsage = response.usage as unknown as TokenUsage;
+        usage = addUsage(usage, turnUsage);
         searchesUsed += countSearches(response.content);
         for (const source of extractWebSources(response.content)) {
           if (!sources.some((existing) => existing.url === source.url)) sources.push(source);
+        }
+
+        // Bank this turn's cost immediately. The ceiling has to see money spent
+        // by the turn that just finished, not only at the end of the whole call.
+        this.spentUsd =
+          Math.round(
+            (this.spentUsd +
+              estimateCostUsd(model, turnUsage) +
+              countSearches(response.content) * WEB_SEARCH_USD_PER_CALL) *
+              1_000_000
+          ) / 1_000_000;
+
+        // Running out of output budget is a distinct failure and it must say so.
+        // On a schema'd call it truncates the JSON, and the parse error that
+        // follows blames the model for "not returning JSON" while hiding the
+        // real cause. The tokens are billed either way.
+        if (response.stop_reason === "max_tokens") {
+          throw new ModelError(
+            `Ran out of output budget on ${model} (max_tokens ${request.max_tokens}). ` +
+              (args.schema
+                ? "The structured reply was cut off mid-JSON. Raise maxTokens for this call, " +
+                  "or lower the effort: on this model thinking is billed inside max_tokens, so " +
+                  "a high effort setting can consume the whole budget before the answer starts."
+                : "Raise maxTokens for this call.")
+          );
         }
 
         if (response.stop_reason !== "pause_turn") break;
@@ -385,13 +481,12 @@ export class Claude {
         }
       }
 
-      // Searches are billed per call on top of tokens, so they are added here
-      // rather than left off the estimate the dashboard shows.
+      // Already banked turn by turn inside the loop above, so this is only the
+      // total to report back. Adding it to spentUsd again would double count.
       const costUsd =
         Math.round(
           (estimateCostUsd(model, usage) + searchesUsed * WEB_SEARCH_USD_PER_CALL) * 1_000_000
         ) / 1_000_000;
-      this.spentUsd = Math.round((this.spentUsd + costUsd) * 1_000_000) / 1_000_000;
       this.callCount += 1;
 
       return {
@@ -406,7 +501,7 @@ export class Claude {
         truncated,
       };
     } catch (err) {
-      if (err instanceof ModelError) throw err;
+      if (err instanceof ModelError || err instanceof BudgetExceededError) throw err;
       throw new ModelError(
         `Claude call failed on ${model}: ${err instanceof Error ? err.message : String(err)}`,
         err

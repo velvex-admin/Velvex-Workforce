@@ -70,6 +70,20 @@ export interface AgentDefinition {
   /** Built elsewhere — we expose an integration point, we do not run it. */
   externalBuild?: boolean;
 
+  /**
+   * The most this agent may spend in one run, in USD. Unset means uncapped.
+   *
+   * A ceiling, not a budget: it is there so a run that goes wrong stops instead
+   * of continuing to spend. It exists because one did. A research pass paused
+   * four times, every resume re-sent the whole accumulated conversation at full
+   * input price, and the run cost over three dollars before failing on
+   * something unrelated. Nothing noticed, because nothing was counting.
+   *
+   * Hitting it is a failure, and it reports as one: the agent is told what it
+   * spent, and the owner sees it in the queue like any other problem.
+   */
+  spendCapUsd?: number;
+
   routineRules: AutonomyRule[];
   approvalRules: AutonomyRule[];
 
@@ -176,7 +190,15 @@ export async function runAgent(
     if (!(ctx.claude instanceof Claude)) return;
     result.costUsd = Math.round((ctx.claude.spentUsd - spendBefore) * 1_000_000) / 1_000_000;
     result.modelCalls = ctx.claude.callCount - callsBefore;
+    // Always lift the ceiling on the way out. The Claude client is shared by
+    // every agent on a tick, so leaving one agent's cap in place would starve
+    // whichever agent ran next.
+    ctx.claude.clearSpendCap();
   };
+
+  if (ctx.claude instanceof Claude && agent.spendCapUsd) {
+    ctx.claude.capSpend(agent.spendCapUsd);
+  }
 
   if (agent.externalBuild) {
     ctx.log(`${agent.id}: external build, nothing to run on our side`);

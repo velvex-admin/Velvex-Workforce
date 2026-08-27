@@ -324,6 +324,32 @@ outright.
   `server_tool_use` block and resumes on its own, and the word would become part
   of the conversation.
 
+- **Resuming a paused server-tool turn re-sends everything, at full price.**
+  This cost real money before it was found: a research pass paused, and each
+  resume re-sent the whole accumulated conversation including every search
+  result and every fetched page. Four resumes over roughly 60k tokens of
+  accumulated context bills around 600k input tokens, which is over three
+  dollars on Opus for a single call. The fix is `cache_control: {type:
+  "ephemeral"}` on any request carrying web tools, so re-sent prefixes bill at a
+  tenth. `test/spend-ceiling.test.ts` does that arithmetic against the real
+  pricing table so the number cannot quietly drift.
+
+- **`max_tokens` includes thinking on this generation, and running out of it
+  truncates structured output mid-JSON.** The parse then fails with "expected
+  JSON matching the schema", which blames the model and hides the cause, and the
+  tokens are billed either way. `complete()` now checks for
+  `stop_reason: "max_tokens"` and says what actually happened. A call at effort
+  `max` needs a budget sized for the thinking AND the answer: the intelligence
+  agent's passes use 32000, not 12000.
+
+- **Nothing was counting money between requests.** `AgentDefinition.spendCapUsd`
+  is a per-run ceiling the runner applies before `propose()` and lifts on the
+  way out, and `Claude` checks it before every request including every
+  continuation. Checking only at the start of a run would not have stopped
+  anything, because the spend happens between requests. Competitive Intelligence
+  is capped at $1.25; hitting it is reported as a failure like any other, so it
+  reaches the approvals queue rather than the logs.
+
 - **A failed web search returns an object where a successful one returns an
   array.** Both arrive as HTTP 200 inside a `web_search_tool_result` block.
   Anything reading `.content` has to check which it got; indexing the error
@@ -450,7 +476,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 281 tests
+npx vitest run            # 291 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
