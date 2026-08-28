@@ -559,6 +559,46 @@ describe("Competitive Intelligence Agent", () => {
     expect(logs.join(" ")).toContain("the ceiling stopped the composing pass");
   });
 
+  it("writes the pages to re-read into the scan prompt as URLs", async () => {
+    // web_fetch only retrieves a URL already present in the conversation, so
+    // this is the difference between a scan that checks and one that assumes.
+    let scanUser = "";
+
+    await runWith(
+      memoryStub({
+        "intel.watchlist": {
+          updatedAt: "2026-08-01T00:00:00Z",
+          sources: [
+            {
+              id: "rival",
+              label: "Rival",
+              url: "https://rival.example/pricing",
+              kind: "competitor",
+            },
+          ],
+        },
+      }),
+      async (args) => {
+        const pass = passOf(args);
+        if (pass === "scan") {
+          scanUser = (args as { user?: string }).user ?? "";
+          return {
+            text: "{}",
+            parsed: { somethingMoved: false, why: "quiet", leads: [], settledNow: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        return research;
+      }
+    );
+
+    expect(scanUser).toContain("https://rival.example/pricing");
+    expect(scanUser).toContain("Pages worth re-reading");
+  });
+
   it("still runs the expensive passes when the scan finds movement", async () => {
     // The gate has to open as well as close, or the agent quietly stops working
     // and looks like it is saving money.

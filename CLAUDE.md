@@ -757,6 +757,17 @@ hardening; buyer vocabulary moving; anything that dates the last brief's central
 claim; a watched source that changed. Explicitly not: blog posts, rebrands,
 funding with no product change, general AI news.
 
+**A scan that cannot fetch is a scan that assumes.** `web_fetch` will only
+retrieve a URL already present in the conversation. The first scan was handed the
+last brief's *headline*, which names companies in prose, so every fetch call
+failed, it verified one provider of five from search snippets alone, and still
+reported "nothing moved" — honestly noting in its own words that four checks
+could not be completed. A false "nothing moved" is the one failure this gate must
+not have, because it looks exactly like the gate working. `recheckUrls()` now
+hands the scan the watchlist URLs and the previous brief's `sources`, capped at
+`MAX_RECHECK_URLS` (10), with the owner's own accepted sources first; the fetch
+budget is 4, not 2.
+
 **Memory has to subtract, or it costs more every cycle.** Carrying every open
 question forward is what took research from $0.66 to $1.18 in one cycle, and it
 grows on its own because each brief adds more. Two bounds now: at most

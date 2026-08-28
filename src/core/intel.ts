@@ -312,6 +312,42 @@ export const SCAN_SCHEMA: Record<string, unknown> = {
   },
 };
 
+/** How many URLs the scan is handed to re-read. More than it can fetch, so it chooses. */
+export const MAX_RECHECK_URLS = 10;
+
+/**
+ * The pages the scan may re-read, newest evidence first.
+ *
+ * This exists because of a measured failure rather than a hunch. The scan is
+ * given web_fetch, and web_fetch will only retrieve a URL that is already
+ * present in the conversation. The first scan was handed the last brief's
+ * headline, which names companies in prose, so it had no valid target, every
+ * fetch call failed, and it fell back to search alone: it verified one provider
+ * of five and reported "nothing moved" for the rest. A gate that cannot look is
+ * a gate that under-reports movement, and a false "nothing moved" is the one
+ * failure this design must not have.
+ *
+ * Watchlist URLs come first because those are the owner's own accepted sources.
+ */
+export function recheckUrls(
+  watched: readonly IntelSource[],
+  previous: readonly BriefSource[] | undefined
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (url: string | undefined): void => {
+    const clean = (url ?? "").trim();
+    if (!clean || !/^https?:\/\//i.test(clean)) return;
+    const key = normaliseUrl(clean);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(clean);
+  };
+  for (const source of watched) push(source.url);
+  for (const source of previous ?? []) push(source.url);
+  return out.slice(0, MAX_RECHECK_URLS);
+}
+
 /** How many settled findings are carried. Bounded, or it stops being subtractive. */
 export const MAX_SETTLED = 12;
 

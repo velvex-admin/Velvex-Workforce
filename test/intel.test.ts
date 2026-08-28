@@ -40,6 +40,8 @@ import {
   type SourceSnapshot,
   mergeSettled,
   MAX_SETTLED,
+  recheckUrls,
+  MAX_RECHECK_URLS,
 } from "../src/core/intel.js";
 import { topMove } from "../src/agents/intelligence/competitive-intel.js";
 
@@ -623,5 +625,48 @@ describe("settled findings, the memory that subtracts", () => {
 
   it("drops empty lines rather than storing them", () => {
     expect(mergeSettled([], ["", "   ", "real"])).toEqual(["real"]);
+  });
+});
+
+describe("the pages the scan is allowed to re-read", () => {
+  const watched = [
+    { id: "a", label: "A", url: "https://rival.example/pricing", kind: "competitor" as const },
+  ];
+  const previous = [
+    { url: "https://forthetechofit.com/book-a-diagnostic" },
+    { url: "https://valuebuildersystem.com/eight-drivers" },
+  ];
+
+  it("hands over real URLs, because web_fetch cannot use a company name", () => {
+    // The measured failure: the scan was given the last brief's headline, which
+    // names companies in prose. web_fetch only retrieves URLs already in the
+    // conversation, so every fetch call failed and the scan verified one
+    // provider of five before reporting that nothing had moved.
+    const urls = recheckUrls(watched, previous);
+    expect(urls).toContain("https://forthetechofit.com/book-a-diagnostic");
+    expect(urls.every((url) => /^https?:\/\//.test(url))).toBe(true);
+  });
+
+  it("puts the owner's own accepted sources first", () => {
+    expect(recheckUrls(watched, previous)[0]).toBe("https://rival.example/pricing");
+  });
+
+  it("does not list the same page twice under two spellings", () => {
+    const dupes = [{ url: "https://WWW.Rival.example/pricing/" }];
+    expect(recheckUrls(watched, dupes)).toHaveLength(1);
+  });
+
+  it("drops anything that is not a fetchable URL", () => {
+    const junk = [{ url: "Level Up Professional Services" }, { url: "" }, { url: "mailto:a@b.c" }];
+    expect(recheckUrls([], junk)).toEqual([]);
+  });
+
+  it("stays bounded, since the scan has a small fetch budget", () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ url: `https://e${i}.example/p` }));
+    expect(recheckUrls([], many)).toHaveLength(MAX_RECHECK_URLS);
+  });
+
+  it("copes with a brief that recorded no sources", () => {
+    expect(recheckUrls(watched, undefined)).toEqual(["https://rival.example/pricing"]);
   });
 });

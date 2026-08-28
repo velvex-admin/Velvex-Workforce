@@ -77,6 +77,7 @@ import {
   type SourceSnapshotMap,
   SCAN_SCHEMA,
   mergeSettled,
+  recheckUrls,
   type ScanResult,
 } from "../../core/intel.js";
 
@@ -240,6 +241,7 @@ function scanPrompt(args: {
   settled: string[];
   changes: SourceChange[];
   position: PositionStatement | null;
+  recheck: string[];
 }): string {
   const parts: string[] = [];
 
@@ -264,6 +266,19 @@ function scanPrompt(args: {
     parts.push(
       `Already settled. Do not spend this pass re-establishing any of these; only report one if it has CHANGED:\n` +
         args.settled.map((line) => `- ${line}`).join("\n")
+    );
+  }
+
+  if (args.recheck.length) {
+    // web_fetch will only retrieve a URL that is already in the conversation,
+    // so the pages worth re-reading have to be written out here as URLs. Naming
+    // the companies in prose is what left the first scan with nothing it could
+    // legally fetch.
+    parts.push(
+      `Pages worth re-reading, if a search result suggests one of them may have changed. ` +
+        `You have a small fetch budget, so spend it on the ones that look different rather ` +
+        `than working down the list:\n` +
+        args.recheck.map((url) => `- ${url}`).join("\n")
     );
   }
 
@@ -865,6 +880,7 @@ export const competitiveIntelAgent: AgentDefinition = {
           settled,
           changes,
           position,
+          recheck: recheckUrls(watchlist.sources, previousDocument?.sources),
         }),
         // The balanced model, not the reasoning one. This pass matches what it
         // reads against what it was told is settled; it does not judge what any
@@ -874,7 +890,11 @@ export const competitiveIntelAgent: AgentDefinition = {
         effort: "low",
         maxTokens: 8000,
         schema: SCAN_SCHEMA,
-        web: { maxSearches: 3, maxFetches: 2, maxContentTokens: 6000 },
+        // Four fetches, not two. The first scan could verify one provider of
+        // five, which is not enough for "nothing moved" to mean anything. On
+        // the balanced model four pages at 6000 tokens is a few cents, against
+        // a research pass that costs a dollar.
+        web: { maxSearches: 3, maxFetches: 4, maxContentTokens: 6000 },
       });
 
       const verdict = scan.parsed;
