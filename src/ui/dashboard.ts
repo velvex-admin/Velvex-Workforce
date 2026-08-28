@@ -172,6 +172,12 @@ a{color:var(--blue);text-decoration:none}
 }
 .status-tag.working{color:var(--amber)}
 .status-tag.failed{color:var(--red)}
+.status-tag.stalled{color:var(--slate)}
+/* A stalled run is not a working one: no pulse, no glow, so the canvas stops
+   claiming an agent is thinking when nothing is on the other end. */
+.node.stalled .dot{border-color:var(--slate);border-style:dashed;box-shadow:none}
+.node.stalled .dot::after{animation:none;opacity:.25;border-color:var(--slate);border-style:dashed}
+.node.stalled .thought{color:var(--text-faint);font-style:italic}
 @keyframes pulse-fast{
   0%,100%{transform:scale(1);opacity:.6}
   50%{transform:scale(1.2);opacity:.15}
@@ -646,7 +652,39 @@ function renderNodes() {
   });
 
   // The nodes rely on layout for wire coordinates; wait a frame.
-  requestAnimationFrame(renderWires);
+  requestAnimationFrame(() => { restackSections(); renderWires(); });
+}
+
+// Sections are absolutely positioned at authored coordinates, and their heights
+// are whatever their contents come to. Those two facts disagree the moment a
+// section holds more than its authored box allowed for: Marketing carries seven
+// agents, each a dot plus a label plus a cadence plus a live thought, which
+// wraps to two rows and runs past the bottom of its own box. The Sales box is
+// painted at a fixed y below it, so it covered the last row's cadence line —
+// Social Engagement's schedule was simply not visible.
+//
+// Rather than nudge the constants until it looks right for the current roster,
+// measure. The authored y values set the ORDER and the first section's origin;
+// every section after it is placed under the real, rendered bottom of the one
+// before. Adding an agent can no longer hide a label.
+const SECTION_GAP = 44;
+function restackSections() {
+  const keys = Object.keys(SECTION_LAYOUT);
+  let cursor = null;
+  for (const key of keys) {
+    const el = document.querySelector('.section.' + key);
+    if (!el) continue;
+    if (cursor === null) cursor = SECTION_LAYOUT[key].y;
+    el.style.top = cursor + 'px';
+    cursor += el.offsetHeight + SECTION_GAP;
+  }
+  // The library hangs off the Intelligence section, so it travels with it.
+  const intel = document.querySelector('.section.intelligence');
+  const lib = document.querySelector('[data-kind="library"]');
+  if (intel && lib) {
+    const centre = intel.offsetTop + intel.offsetHeight / 2;
+    lib.style.top = (centre - 48) + 'px';
+  }
 }
 
 function countBatch(b) { return AGENTS.filter(a => a.batch === b).length; }
@@ -658,29 +696,59 @@ function activeInBatch(b) {
   }).length;
 }
 
+// A run that says "running" but has stopped proving it.
+//
+// A Worker killed mid-run cannot write its own ending, so its row keeps saying
+// "running" forever and the dot pulses amber as though it were thinking. The
+// runner now writes heartbeatAt about once a minute; anything older than a few
+// of those means nobody is home. Rows written before heartbeats existed fall
+// back to their last thought, then to startedAt.
+const STALE_AFTER_MS = 4 * 60 * 1000;
+function lastSignOfLife(rt) {
+  if (!rt) return 0;
+  const thoughts = rt.thoughts || [];
+  const last = thoughts.length ? thoughts[thoughts.length - 1].at : null;
+  const stamps = [rt.heartbeatAt, last, rt.startedAt]
+    .filter(Boolean)
+    .map(t => Date.parse(t))
+    .filter(t => !isNaN(t));
+  return stamps.length ? Math.max.apply(null, stamps) : 0;
+}
+function runIsStale(rt) {
+  if (!rt || rt.status !== 'running') return false;
+  const seen = lastSignOfLife(rt);
+  return seen > 0 && (Date.now() - seen) > STALE_AFTER_MS;
+}
+
 function nodeCard(a) {
   const schedule = SCHEDULES[a.id];
   const paused = schedule && schedule.cadence === 'paused';
   const effectiveCadence = schedule ? schedule.cadence : a.cadence;
   const isMock = a.externalBuild || (a.model === null && (a.id === 'ops_health'));
   const rt = RUNTIME[a.id];
-  const isWorking = rt && rt.status === 'running';
+  const stale = runIsStale(rt);
+  const isWorking = rt && rt.status === 'running' && !stale;
   const isFailed = rt && rt.status === 'failed';
   const cls = 'node ' + a.batch +
     (paused ? ' paused' : '') +
     (isMock ? ' mock' : '') +
     (SELECTED === a.id ? ' selected' : '') +
     (isWorking ? ' working' : '') +
+    (stale ? ' stalled' : '') +
     (isFailed ? ' failed-status' : '');
   const initials = initialsOf(a.name);
   const statusTag = isWorking
     ? '<div class="status-tag working">' + esc(rt.phase || 'working') + '</div>'
-    : isFailed
-      ? '<div class="status-tag failed">failed</div>'
-      : '';
+    : stale
+      ? '<div class="status-tag stalled">no signal</div>'
+      : isFailed
+        ? '<div class="status-tag failed">failed</div>'
+        : '';
   const thought = isWorking && rt.latestThought
     ? '<div class="thought" title="' + esc(rt.latestThought) + '">' + esc(rt.latestThought) + '</div>'
-    : '';
+    : stale
+      ? '<div class="thought" title="last heard from ' + esc(ago(new Date(lastSignOfLife(rt)).toISOString())) + '">last seen ' + esc(ago(new Date(lastSignOfLife(rt)).toISOString())) + '</div>'
+      : '';
   return \`<div class="\${cls}" data-kind="agent" data-id="\${esc(a.id)}" title="\${esc(a.description)}">
     <div class="dot">\${statusTag}\${esc(initials)}</div>
     <div class="label">\${esc(a.name)}</div>
@@ -883,11 +951,17 @@ async function openAgent(id) {
     \`<button onclick="setSchedule('\${id}', '\${c}')" \${effCadence === c ? 'class="selected"' : ''}>\${c}</button>\`
   ).join('');
 
-  const nowThinking = rt && rt.status === 'running'
+  const staleRun = runIsStale(rt);
+  const nowThinking = rt && rt.status === 'running' && !staleRun
     ? \`<div class="now-thinking">
          <div class="spinner"></div>
          <div class="text"><b>currently \${esc(rt.phase || 'working')}</b>\${esc(rt.latestThought || '')}</div>
        </div>\`
+    : staleRun
+      ? \`<div class="now-thinking" style="border-color:rgba(107,114,128,.35)">
+           <div style="width:14px;height:14px;border-radius:50%;border:2px dashed var(--slate);margin-top:3px;flex-shrink:0"></div>
+           <div class="text" style="color:var(--text-dim)"><b>no signal since \${esc(ago(new Date(lastSignOfLife(rt)).toISOString()))}</b>This run stopped reporting. A run killed part way cannot record its own ending, so the row still says it is working. Run it again to replace this.</div>
+         </div>\`
     : rt && rt.status === 'failed'
       ? \`<div class="now-thinking" style="border-color:rgba(193,102,107,.3);background:linear-gradient(135deg,rgba(193,102,107,.12),rgba(193,102,107,.03))">
            <div style="width:14px;height:14px;border-radius:50%;background:var(--red);opacity:.6;margin-top:3px;flex-shrink:0"></div>
@@ -896,7 +970,7 @@ async function openAgent(id) {
       : '';
 
   const thoughtTrail = rt && rt.thoughts && rt.thoughts.length
-    ? \`<h3>Thought trail (\${rt.status === 'running' ? 'live' : 'last run'})</h3>
+    ? \`<h3>Thought trail (\${rt.status === 'running' && !staleRun ? 'live' : 'last run'})</h3>
        <div class="thought-trail">\${rt.thoughts.slice().reverse().map(t =>
          \`<div><span class="ts">\${esc(new Date(t.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }))}</span>\${esc(t.text)}</div>\`
        ).join('')}</div>
@@ -1390,7 +1464,11 @@ async function loadAll() {
 }
 
 /** Poll faster while anything is running, slower when nothing is. */
-function anyRunning() { return Object.values(RUNTIME).some(r => r && r.status === 'running'); }
+// A stalled row does not count as running. Without this the page polls every
+// three seconds forever because of one dead entry nobody will ever clear.
+function anyRunning() {
+  return Object.values(RUNTIME).some(r => r && r.status === 'running' && !runIsStale(r));
+}
 async function tick() {
   await loadAll();
   clearTimeout(pollTimer);

@@ -81,6 +81,16 @@ export interface AgentRuntimeStatus {
   latestThought?: string;
   /** Up to the last 12 log lines from this run (or the previous one, when idle). */
   thoughts?: Array<{ at: string; text: string }>;
+  /**
+   * Proof the isolate running this agent was still alive at this moment.
+   *
+   * Without it a "running" row is indistinguishable from a run that was killed
+   * mid-flight, because a killed Worker cannot write its own epitaph. That is
+   * not hypothetical: a manual run was terminated thirty seconds in and its row
+   * read "running" for half an hour afterwards, which is exactly the state
+   * anyone watching would read as "still thinking".
+   */
+  heartbeatAt?: string;
   /** Human-readable counts once the run has settled. */
   proposed?: number;
   executed?: number;

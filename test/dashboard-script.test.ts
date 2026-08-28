@@ -143,3 +143,83 @@ describe("the page's own styling", () => {
     expect(head).toContain(".wires .ecg.intel");
   });
 });
+
+describe("a run that stopped reporting", () => {
+  const body = scriptBody(html);
+
+  /** Pull the two pure staleness helpers out of the emitted page and run them. */
+  function staleness() {
+    const start = body.indexOf("const STALE_AFTER_MS");
+    const end = body.indexOf("function nodeCard");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return new Function(
+      body.slice(start, end) + "\nreturn { runIsStale, lastSignOfLife, STALE_AFTER_MS };"
+    )() as {
+      runIsStale: (rt: unknown) => boolean;
+      lastSignOfLife: (rt: unknown) => number;
+      STALE_AFTER_MS: number;
+    };
+  }
+
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  it("calls a heartbeating run live", () => {
+    const { runIsStale } = staleness();
+    expect(
+      runIsStale({ status: "running", startedAt: ago(40 * 60_000), heartbeatAt: ago(3_000) })
+    ).toBe(false);
+  });
+
+  it("calls a run with a long-dead heartbeat stalled", () => {
+    // The real incident: a Worker killed thirty seconds in left a row reading
+    // "running" for half an hour, and the dot pulsed amber the whole time.
+    const { runIsStale } = staleness();
+    expect(
+      runIsStale({ status: "running", startedAt: ago(30 * 60_000), heartbeatAt: ago(29 * 60_000) })
+    ).toBe(true);
+  });
+
+  it("falls back to the last thought when a row predates heartbeats", () => {
+    const { runIsStale } = staleness();
+    const old = { status: "running", startedAt: ago(60 * 60_000), thoughts: [{ at: ago(20 * 60_000), text: "x" }] };
+    const fresh = { status: "running", startedAt: ago(60 * 60_000), thoughts: [{ at: ago(2_000), text: "x" }] };
+    expect(runIsStale(old)).toBe(true);
+    expect(runIsStale(fresh)).toBe(false);
+  });
+
+  it("never calls a finished run stalled", () => {
+    const { runIsStale } = staleness();
+    expect(runIsStale({ status: "idle", startedAt: ago(99 * 60_000) })).toBe(false);
+    expect(runIsStale({ status: "failed", startedAt: ago(99 * 60_000) })).toBe(false);
+    expect(runIsStale(undefined)).toBe(false);
+  });
+
+  it("stops a dead row from holding the page on the fast poll", () => {
+    // Otherwise one zombie makes the dashboard poll every three seconds forever.
+    expect(body).toContain("r.status === 'running' && !runIsStale(r)");
+  });
+});
+
+describe("sections that outgrow their authored box", () => {
+  const body = scriptBody(html);
+
+  // The behaviour itself needs a browser: Marketing renders 391px tall against
+  // an authored 300, so the Sales box was painted over Social Engagement's
+  // cadence label. Verified with Playwright against a real Chromium, where
+  // elementFromPoint at the label's centre returned "section sales" before this
+  // and the label itself after. What is asserted here is that the measuring
+  // step still exists and still runs before the wires are drawn.
+  it("restacks from measured heights rather than authored ones", () => {
+    expect(body).toContain("function restackSections");
+    expect(body).toContain("el.offsetHeight + SECTION_GAP");
+  });
+
+  it("restacks before drawing wires, so the lines land on moved nodes", () => {
+    expect(body).toMatch(/restackSections\(\);\s*renderWires\(\)/);
+  });
+
+  it("carries the library with the section it hangs off", () => {
+    expect(body).toContain('document.querySelector(\'[data-kind="library"]\')');
+  });
+});

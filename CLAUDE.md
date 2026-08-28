@@ -306,6 +306,31 @@ outright.
   cadence and live thought, so its box centre sits well below the dot and lines
   drawn to it visibly miss.
 
+- **A killed Worker cannot write its own ending, so a status row lies.** A run
+  terminated mid-flight leaves `runtime.agent_status` reading `running` forever,
+  and the dashboard pulsed an amber "thinking" ring on Competitive Intelligence
+  for half an hour after it had been dead for twenty-nine of them. The runner now
+  writes `heartbeatAt` about once a minute while an agent works (`HEARTBEAT_MS`
+  in `src/core/agent.ts`, cleared the moment the run leaves propose/execute), and
+  the dashboard treats a `running` row with no sign of life for four minutes as
+  **stalled**: dashed grey dot, "no signal", no spinner, and it stops counting
+  toward `anyRunning()` so one dead row cannot hold the page on the 3s poll. Rows
+  written before heartbeats existed fall back to their last thought, then to
+  `startedAt`.
+
+- **Sections are absolutely positioned but their heights are whatever fits.**
+  Those two facts disagree the moment a section holds more than its authored box
+  allowed: Marketing renders **391px** tall against an authored `h: 300`, so the
+  Sales box, painted at a fixed `y: 380`, covered the last row — Social
+  Engagement's cadence label was behind it. `elementFromPoint` at the label's
+  centre returned `section sales`. `restackSections()` now places each section
+  under the measured bottom of the one before it, so adding an agent can never
+  hide a label again; the authored `y` only sets the first section's origin and
+  the order. It runs before `renderWires()` so the lines land on the moved nodes,
+  and the Library node travels with the Intelligence section. Verified in a real
+  Chromium, because neither a typecheck nor a substring test can see a covered
+  element.
+
 - **The dashboard is a template literal, so its browser code is escaped twice.**
   A `\'` written inside that literal emits a bare `'` and closes the surrounding
   JavaScript string early; the page then dies on the first line the browser

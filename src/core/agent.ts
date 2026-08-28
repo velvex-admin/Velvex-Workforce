@@ -133,6 +133,8 @@ const OBSERVE_ONLY_TYPES = new Set([
   "intel_brief",
 ]);
 const MAX_THOUGHTS = 12;
+/** How often a running agent proves it is still alive. */
+const HEARTBEAT_MS = 60_000;
 
 /**
  * Writes the running agent's status board so the dashboard can show what it is
@@ -241,6 +243,7 @@ export async function runAgent(
             {
               thoughts: [...thoughts],
               latestThought: thoughts[thoughts.length - 1]?.text,
+              heartbeatAt: new Date().toISOString(),
             },
             ctx
           );
@@ -285,6 +288,14 @@ export async function runAgent(
     ctx
   );
 
+  // A pulse while the agent works, so a row that says "running" can be trusted.
+  // Log lines already flush the board, but this agent can spend minutes inside a
+  // single model call without emitting one, and silence has to stay
+  // distinguishable from death. Cheap: one write a minute, and it stops the
+  // moment the run leaves propose/execute.
+  const beat = setInterval(flushThoughts, HEARTBEAT_MS);
+  const stopBeat = (): void => clearInterval(beat);
+
   let actions: ProposedAction[];
   try {
     actions = await agent.propose(runCtx);
@@ -303,6 +314,7 @@ export async function runAgent(
       runCtx
     );
     settleSpend();
+    stopBeat();
     await settleThoughts();
     await writeStatus(
       agent.id,
@@ -407,6 +419,7 @@ export async function runAgent(
   }
 
   settleSpend();
+  stopBeat();
 
   await settleThoughts();
   await writeStatus(
