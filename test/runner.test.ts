@@ -171,13 +171,17 @@ describe("the live thought trail", () => {
   /** A memory table just real enough for state.read/state.write. */
   function fakeDb() {
     const rows = new Map<string, unknown>();
+    const calls = { reads: 0, writes: 0 };
     return {
+      calls,
       db: {
         async readMemory({ keys }: { keys: string[] }) {
+          calls.reads += 1;
           const key = keys[0] ?? "";
           return rows.has(key) ? [{ detail: { value: rows.get(key) } }] : [];
         },
         async writeMemory({ key, detail }: { key: string; detail: Record<string, unknown> }) {
+          calls.writes += 1;
           rows.set(key, detail["value"]);
         },
       } as unknown as RunContext["db"],
@@ -241,3 +245,80 @@ describe("the live thought trail", () => {
   });
 });
 
+describe("what the trail costs an invocation", () => {
+  /** Same fake memory table, but counting every round trip. */
+  function countingDb() {
+    const rows = new Map<string, unknown>();
+    const calls = { reads: 0, writes: 0 };
+    return {
+      calls,
+      db: {
+        async readMemory({ keys }: { keys: string[] }) {
+          calls.reads += 1;
+          const key = keys[0] ?? "";
+          return rows.has(key) ? [{ detail: { value: rows.get(key) } }] : [];
+        },
+        async writeMemory({ key, detail }: { key: string; detail: Record<string, unknown> }) {
+          calls.writes += 1;
+          rows.set(key, detail["value"]);
+        },
+      } as unknown as RunContext["db"],
+      board: () =>
+        (rows.get("runtime.agent_status") ?? {}) as Record<
+          string,
+          { latestThought?: string; thoughts?: Array<{ text: string }> }
+        >,
+    };
+  }
+
+  /** A run that logs once a minute for ten minutes, in simulated time. */
+  async function longRun(db: RunContext["db"]) {
+    const agent = agentThatProposes([], {
+      propose: async (runCtx: RunContext) => {
+        for (let i = 0; i < 10; i += 1) {
+          runCtx.log(`minute ${i}`);
+          await vi.advanceTimersByTimeAsync(60_000);
+        }
+        return [];
+      },
+    });
+    await runAgent(agent, coordinator() as never, fakeContext({ db }));
+    await vi.advanceTimersByTimeAsync(50);
+  }
+
+  it("does not read the board back on every trail write", async () => {
+    // This is the property that killed a real run. writeStatus read the map
+    // before every write, so each trail line and each heartbeat cost TWO
+    // subrequests. Over ten minutes that was about forty, and the invocation
+    // hit Cloudflare's per-invocation subrequest ceiling right after composing
+    // its brief, losing the approvals it was about to queue. Trail writes now
+    // reuse the map this run already holds; only the writes that bracket a run
+    // read it back, so whatever else touched the map is still merged.
+    vi.useFakeTimers();
+    try {
+      const { db, calls, board } = countingDb();
+      await longRun(db);
+      // Three bracketing writes read the board. Ten minutes of trail must not.
+      expect(calls.reads).toBeLessThanOrEqual(4);
+      // The lines still arrive; this buys round trips back, not visibility.
+      expect(board()["content"]?.thoughts?.length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a burst of lines down to a handful of writes", async () => {
+    // Coalescing plus a floor between writes: fifty lines in a tight loop are
+    // one flush, not fifty.
+    const { db, calls } = countingDb();
+    const agent = agentThatProposes([], {
+      propose: async (runCtx: RunContext) => {
+        for (let i = 0; i < 50; i += 1) runCtx.log(`line ${i}`);
+        return [];
+      },
+    });
+    await runAgent(agent, coordinator() as never, fakeContext({ db }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(calls.writes).toBeLessThanOrEqual(6);
+  });
+});

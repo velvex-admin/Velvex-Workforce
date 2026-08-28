@@ -306,6 +306,29 @@ outright.
   cadence and live thought, so its box centre sits well below the dot and lines
   drawn to it visibly miss.
 
+- **A Worker has a subrequest budget per invocation, and the status board can
+  eat it.** `writeStatus()` reads the whole map before writing it back, so every
+  status update costs **two** subrequests. Bracketing a run with three of those
+  is nothing; doing it on every log line and every heartbeat is not. A ten-minute
+  intelligence run spent roughly forty subrequests on the trail alone and died on
+  `Too many subrequests by single Worker invocation` **one second after
+  composing its brief** — the brief was filed and the four candidates and the top
+  move it was about to queue were lost. Trail writes now reuse the map the run
+  already holds (one subrequest, not two), are throttled by `TRAIL_MIN_GAP_MS`,
+  and `HEARTBEAT_MS` is 120s. Only the three bracketing writes still read, so
+  anything else that touched the map is merged before the run signs off. The
+  first test written for this passed on the broken code, because fifty log lines
+  in a tight loop coalesce anyway: the real cost is spread over minutes, so the
+  test drives ten simulated minutes on fake timers and asserts on **reads**.
+
+- **`spendCapUsd` bounds when a request may start, not what a run totals.**
+  `assertWithinBudget()` runs before each request, so a run sitting at $0.75
+  under a $1.25 cap will happily start a call that costs $0.64 and finish at
+  $1.39. That is the measured number, not a hypothetical. The overshoot is
+  bounded by the price of one maximal call, which is why `maxTokens` on the
+  expensive passes is part of the ceiling rather than separate from it. Do not
+  describe the cap as a hard limit.
+
 - **A killed Worker cannot write its own ending, so a status row lies.** A run
   terminated mid-flight leaves `runtime.agent_status` reading `running` forever,
   and the dashboard pulsed an amber "thinking" ring on Competitive Intelligence

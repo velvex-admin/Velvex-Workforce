@@ -134,20 +134,32 @@ const OBSERVE_ONLY_TYPES = new Set([
 ]);
 const MAX_THOUGHTS = 12;
 /** How often a running agent proves it is still alive. */
-const HEARTBEAT_MS = 60_000;
+const HEARTBEAT_MS = 120_000;
+/** Floor between two trail writes, however chatty the agent gets. */
+const TRAIL_MIN_GAP_MS = 15_000;
 
 /**
  * Writes the running agent's status board so the dashboard can show what it is
  * doing right now. Errors are swallowed: a status write failing must never
  * take an agent's real work down with it.
+ *
+ * A Worker gets a fixed number of subrequests per invocation, and the read here
+ * costs one of them just as the write does. That is affordable for the handful
+ * of status writes around a run and it is NOT affordable for a trail: a
+ * ten-minute run with a heartbeat and a flush per log line spent roughly forty
+ * subrequests on this function alone and died on the limit after composing its
+ * brief, losing the approvals it was about to queue. So the read is optional.
+ * Pass a cached map and the call costs one subrequest instead of two.
  */
 async function writeStatus(
   agentId: string,
   patch: Partial<AgentRuntimeStatus>,
-  ctx: RunContext
-): Promise<void> {
+  ctx: RunContext,
+  cached?: AgentRuntimeStatusMap
+): Promise<AgentRuntimeStatusMap | null> {
   try {
-    const current = (await state.read<AgentRuntimeStatusMap>(ctx.db, STATE_KEYS.agentRuntime)) ?? {};
+    const current =
+      cached ?? (await state.read<AgentRuntimeStatusMap>(ctx.db, STATE_KEYS.agentRuntime)) ?? {};
     const previous = current[agentId] ?? { status: "idle", phase: "idle" };
     const next: AgentRuntimeStatus = { ...previous, ...patch };
     // Only keep the tail of thoughts.
@@ -160,8 +172,10 @@ async function writeStatus(
       salience: 1,
       tags: ["runtime"],
     });
+    return current;
   } catch {
     /* ignore */
+    return null;
   }
 }
 
@@ -228,8 +242,20 @@ export async function runAgent(
   let flushing = false;
   let flushAgain = false;
   let flushChain: Promise<void> = Promise.resolve();
+  let lastFlushAt = 0;
+  // The board as this run last left it. Held so a trail write can skip the read
+  // and cost one subrequest instead of two; the terminal writes still read, so
+  // whatever else touched the map is merged back before the run signs off.
+  let board: AgentRuntimeStatusMap | null = null;
   const flushThoughts = (): void => {
     if (flushing) {
+      flushAgain = true;
+      return;
+    }
+    // A trail line is worth a subrequest, but not every line and not on demand.
+    // Ten minutes of unthrottled flushing is what exhausted the invocation's
+    // subrequest budget and cost a run its approvals queue.
+    if (Date.now() - lastFlushAt < TRAIL_MIN_GAP_MS) {
       flushAgain = true;
       return;
     }
@@ -238,15 +264,21 @@ export async function runAgent(
       try {
         do {
           flushAgain = false;
-          await writeStatus(
+          lastFlushAt = Date.now();
+          const written = await writeStatus(
             agent.id,
             {
               thoughts: [...thoughts],
               latestThought: thoughts[thoughts.length - 1]?.text,
               heartbeatAt: new Date().toISOString(),
             },
-            ctx
+            ctx,
+            board ?? undefined
           );
+          if (written) board = written;
+          // Respect the floor between coalesced rounds too, or a chatty agent
+          // simply spins here instead of at the call site.
+          if (flushAgain && Date.now() - lastFlushAt < TRAIL_MIN_GAP_MS) break;
         } while (flushAgain);
       } finally {
         flushing = false;
@@ -269,7 +301,7 @@ export async function runAgent(
     },
   };
 
-  await writeStatus(
+  board = await writeStatus(
     agent.id,
     {
       status: "running",
