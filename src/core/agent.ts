@@ -209,6 +209,50 @@ export async function runAgent(
   // this run lands both in the caller's log AND in the status board the
   // dashboard reads. The wrapped ctx is what we hand into propose/execute.
   const thoughts: Array<{ at: string; text: string }> = [];
+
+  // The trail has to reach the board WHILE the agent is working, not after.
+  // Collecting lines into an array and only writing them around propose() made
+  // the trail live for agents that finish in seconds and useless for the one
+  // agent that does not: Competitive Intelligence spends its whole run inside
+  // propose(), so the board sat on "started" for ten minutes and the dashboard
+  // could not distinguish that from a hang.
+  //
+  // Three properties this needs, and none of them are optional. It cannot be
+  // awaited, because ctx.log is synchronous and called from inside the agent's
+  // own work. Two writes must not interleave, because writeStatus reads the
+  // whole status map and writes it back, so an older read landing after a newer
+  // write silently reverts it. And a chatty agent must not buy one round trip
+  // per line, so a flush already in flight sets a flag rather than queueing.
+  let flushing = false;
+  let flushAgain = false;
+  let flushChain: Promise<void> = Promise.resolve();
+  const flushThoughts = (): void => {
+    if (flushing) {
+      flushAgain = true;
+      return;
+    }
+    flushing = true;
+    flushChain = (async () => {
+      try {
+        do {
+          flushAgain = false;
+          await writeStatus(
+            agent.id,
+            {
+              thoughts: [...thoughts],
+              latestThought: thoughts[thoughts.length - 1]?.text,
+            },
+            ctx
+          );
+        } while (flushAgain);
+      } finally {
+        flushing = false;
+      }
+    })();
+  };
+  /** Let an in-flight trail write finish before a status write that outranks it. */
+  const settleThoughts = (): Promise<void> => flushChain.then(undefined, () => {});
+
   const originalLog = ctx.log;
   const runCtx: RunContext = {
     ...ctx,
@@ -218,6 +262,7 @@ export async function runAgent(
       // Keep the memory footprint bounded; the last few are all we need.
       if (thoughts.length > MAX_THOUGHTS) thoughts.shift();
       originalLog(message, detail);
+      flushThoughts();
     },
   };
 
@@ -258,6 +303,7 @@ export async function runAgent(
       runCtx
     );
     settleSpend();
+    await settleThoughts();
     await writeStatus(
       agent.id,
       {
@@ -278,6 +324,7 @@ export async function runAgent(
   }
 
   result.proposed = actions.length;
+  await settleThoughts();
   await writeStatus(
     agent.id,
     {
@@ -361,6 +408,7 @@ export async function runAgent(
 
   settleSpend();
 
+  await settleThoughts();
   await writeStatus(
     agent.id,
     {

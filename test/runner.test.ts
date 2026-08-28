@@ -166,3 +166,78 @@ describe("the roster", () => {
     expect(marketingAnalyticsAgent.approvalRules).toHaveLength(0);
   });
 });
+
+describe("the live thought trail", () => {
+  /** A memory table just real enough for state.read/state.write. */
+  function fakeDb() {
+    const rows = new Map<string, unknown>();
+    return {
+      db: {
+        async readMemory({ keys }: { keys: string[] }) {
+          const key = keys[0] ?? "";
+          return rows.has(key) ? [{ detail: { value: rows.get(key) } }] : [];
+        },
+        async writeMemory({ key, detail }: { key: string; detail: Record<string, unknown> }) {
+          rows.set(key, detail["value"]);
+        },
+      } as unknown as RunContext["db"],
+      board: () =>
+        (rows.get("runtime.agent_status") ?? {}) as Record<
+          string,
+          { latestThought?: string; thoughts?: Array<{ text: string }> }
+        >,
+    };
+  }
+
+  it("puts a line on the board while propose is still running", async () => {
+    // The bug this exists for: ctx.log used to push into an array that was only
+    // written around propose(), never inside it. Every agent that finishes in
+    // seconds looked live; Competitive Intelligence, whose entire run happens
+    // inside propose(), sat on "started" for ten minutes and a watcher could
+    // not tell that apart from a hang.
+    const { db, board } = fakeDb();
+    let boardMidRun: Record<string, { latestThought?: string }> = {};
+
+    const agent = agentThatProposes([], {
+      propose: async (runCtx: RunContext) => {
+        runCtx.log("halfway through the long bit");
+        // Yield so the fire-and-forget flush can land, the way real awaited
+        // work inside propose() would.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        // Deep copy: the board is stored by reference and keeps being mutated,
+        // so holding the live object would just show the final state.
+        boardMidRun = JSON.parse(JSON.stringify(board()));
+        return [];
+      },
+    });
+
+    await runAgent(agent, coordinator() as never, fakeContext({ db }));
+
+    expect(boardMidRun["content"]?.latestThought).toBe("halfway through the long bit");
+  });
+
+  it("does not let a trail write revert the status that follows it", async () => {
+    // writeStatus reads the whole map and writes it back, so a trail flush that
+    // started before the final write and finished after it would restore the
+    // running state over the finished one.
+    const { db, board } = fakeDb();
+
+    const agent = agentThatProposes([], {
+      propose: async (runCtx: RunContext) => {
+        for (let i = 0; i < 8; i += 1) runCtx.log(`line ${i}`);
+        return [];
+      },
+    });
+
+    await runAgent(agent, coordinator() as never, fakeContext({ db }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const entry = board()["content"];
+    // The runner logs its own closing line, so that is legitimately last. What
+    // must not happen is the finished status being reverted to running, or the
+    // trail losing the lines a late flush was carrying.
+    expect((entry as { status?: string }).status).toBe("idle");
+    expect(entry?.thoughts?.map((t) => t.text)).toContain("line 7");
+  });
+});
+

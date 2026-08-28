@@ -220,7 +220,16 @@ workflow. The owner asked for this shape explicitly.
 
 **Live thought trails:** the runner wraps `ctx.log` and writes a status board to
 memory at `runtime.agent_status` — status, phase, latest thought, and a rolling
-trail of the last 12 lines. A running agent shows an amber pulsing ring and its
+trail of the last 12 lines. Each wrapped log flushes the board itself; it does
+not just append to an array that gets written when the agent finishes. That was
+the original shape and it made the trail live only for agents that finish in
+seconds: Competitive Intelligence spends its entire run inside `propose()`, so
+the board sat on "started" for ten minutes and a watcher could not tell that
+apart from a hang. The flush is fire-and-forget because `ctx.log` is
+synchronous, coalesced so a chatty agent does not buy a round trip per line, and
+serialised because `writeStatus()` reads the whole status map and writes it
+back — an older read landing after a newer write silently reverts it, which is
+why the three terminal writes await `settleThoughts()` first. A running agent shows an amber pulsing ring and its
 phase; the panel shows a live spinner and the trail. When idle, the panel shows
 the previous run's trail. The page polls every 3s while anything is running,
 60s otherwise.
