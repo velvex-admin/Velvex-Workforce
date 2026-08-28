@@ -333,20 +333,32 @@ outright.
   `server_tool_use` block and resumes on its own, and the word would become part
   of the conversation.
 
-- **An agent run is not a web request, and holding one open gives you a 524.**
-  `POST /api/run/:agentId` used to run the agent and then respond. The
-  intelligence agent fetches a dozen pages and makes three model calls, one with
-  server-side search that can be resumed several times, so it comfortably passes
-  Cloudflare's ~100 second edge timeout. The caller gets **524 A Timeout
-  Occurred**, and the Worker carries on running and carries on billing: the run
-  may well finish and file its brief, minutes after whoever pressed the button
-  concluded it had failed. Check `/api/intel/briefs` before assuming a 524 run
-  produced nothing. The route now hands the work to `execCtx.waitUntil()` and
-  returns **202** immediately; progress is watched through `/api/runtime`, which
-  is the status board the runner already writes and the dashboard already polls.
-  Scheduled (cron) runs were never affected — they have a far longer allowance
-  than an HTTP request, which is why the weekly tick could succeed while the
-  manual button timed out.
+- **An agent run is not a web request, and there were three wrong answers before
+  the right one.** `POST /api/run/:agentId` originally ran the agent and then
+  responded. The intelligence agent fetches a dozen pages and makes three model
+  calls, so it comfortably passes Cloudflare's ~100 second edge timeout: the
+  caller got **524 A Timeout Occurred** while the Worker carried on running and
+  carried on billing.
+
+  The obvious fix — hand the work to `execCtx.waitUntil()` and return **202** —
+  is wrong, and wrong in a way that looks right. **`waitUntil()` extends a
+  Worker for at most thirty seconds past the response.** Every other agent here
+  finishes in under ten, so they all passed. Competitive Intelligence was killed
+  half a minute in, mid research call, and left a status board reading
+  "Competitive Intelligence started" that is indistinguishable from an agent
+  still thinking. It sat like that for twenty minutes while we watched it.
+
+  What actually has room, from Cloudflare's limits table: a **cron trigger gets
+  15 minutes** of wall clock, and an **HTTP-triggered Worker has no duration
+  limit at all while it is streaming a response body to a connected client**.
+  So the run now lives inside its own response. `runStream()` in
+  `src/routes/api.ts` wraps the work in a `ReadableStream`, every `ctx.log` line
+  is written to the caller as it happens, and a **heartbeat every 15 seconds**
+  covers the quiet stretches — a research pass thinks for minutes without
+  logging, and a connection carrying nothing is exactly what the edge cuts. The
+  trade is that the run belongs to the connection: hang up and it dies. That is
+  why the dashboard's `followRun()` holds the reader open rather than firing and
+  forgetting, and why letting go of it kills the agent mid-run.
 
 - **Resuming a paused server-tool turn re-sends everything, at full price.**
   This cost real money before it was found: a research pass paused, and each

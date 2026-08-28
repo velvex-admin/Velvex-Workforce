@@ -1289,36 +1289,55 @@ async function decide(id, decision) {
 }
 
 /**
- * Firing an agent starts it; it does not wait for it.
+ * Firing an agent holds its stream open for as long as it runs.
  *
- * The API returns as soon as the work is handed off, because a run can take
- * minutes and holding the request open past the edge timeout is what produced a
- * 524 while the Worker kept spending. Progress arrives through the status board
- * instead, so the only thing to do here is start polling quickly enough to see
- * the agent light up.
+ * The run happens inside the response now, because a Worker only survives past
+ * thirty seconds while it is streaming to a connected client. So this reader is
+ * not a nicety: let go of it and the agent is killed mid-run. It is read but
+ * not awaited, so the canvas stays usable while a ten minute agent works.
  */
 async function runAgent(id) {
   disableAll(true);
   try {
-    const r = await api('/run/' + id, { method: 'POST' });
-    toast(r.error ? ('Error: ' + r.error) : 'Started ' + id + ', watch the trail', r.error ? 'error' : '');
+    const res = await fetch(BASE + '/api/run/' + id, { method: 'POST' });
+    toast('Started ' + id + ', watch the trail');
     await loadAll();
     openAgent(id);
-    // The status board is written a moment after the response returns, so one
-    // immediate reload would show the agent still idle and drop back to the
-    // slow poll. Look again shortly.
-    setTimeout(async () => { await loadAll(); if (SELECTED === id) openAgent(id); }, 2000);
+    followRun(res, id);
   } finally { disableAll(false); }
 }
 
 async function runTick(cadence) {
   disableAll(true);
   try {
-    const r = await api('/run?cadence=' + cadence, { method: 'POST' });
-    toast(r.error ? ('Error: ' + r.error) : (\`Started the \${cadence} agents\`), r.error ? 'error' : '');
+    const res = await fetch(BASE + '/api/run?cadence=' + cadence, { method: 'POST' });
+    toast('Started the ' + cadence + ' agents');
     await loadAll();
-    setTimeout(loadAll, 2000);
+    followRun(res, null);
   } finally { disableAll(false); }
+}
+
+/**
+ * Stay attached to a run and refresh the board every time it says something.
+ *
+ * Each chunk is a log line or a heartbeat, so this reloads roughly as often as
+ * the agent has news, and at least every fifteen seconds.
+ */
+async function followRun(res, id) {
+  if (!res.body) return;
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      await loadAll();
+      if (id && SELECTED === id) openAgent(id);
+    }
+  } catch (err) {
+    toast('Lost the connection' + (id ? ' to ' + id : '') + ', so the run stopped', 'error');
+  }
+  await loadAll();
+  if (id && SELECTED === id) openAgent(id);
 }
 
 async function setSchedule(id, cadence) {

@@ -56,6 +56,8 @@ export function buildContext(
     trigger: RunContext["trigger"];
     input?: Record<string, unknown>;
     logs?: string[];
+    /** Called with every line as it is logged, so a caller can stream it out. */
+    onLog?: (line: string) => void;
   }
 ): RunContext {
   const db = new Supabase(env);
@@ -82,9 +84,80 @@ export function buildContext(
     log: (message, detail) => {
       const line = detail ? `${message} ${JSON.stringify(detail)}` : message;
       options.logs?.push(line);
+      options.onLog?.(line);
       console.log(line);
     },
   };
+}
+
+/**
+ * A run, delivered as the response body it lives inside.
+ *
+ * `begin` is handed a `send` and returns the summary line's payload. Everything
+ * it writes reaches the caller as it happens, and the stream stays open until
+ * the work settles, which is the point: a Worker survives past thirty seconds
+ * only while it is streaming to a connected client.
+ *
+ * The heartbeat is load-bearing rather than cosmetic. A research pass can think
+ * for minutes without logging anything, and a connection carrying nothing is
+ * exactly what the edge cuts at around a hundred seconds.
+ */
+export function runStream(
+  begin: (send: (line: string) => void) => Promise<string>,
+  heartbeatMs = 15_000
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let open = true;
+
+  const stopBeating = (): void => {
+    if (heartbeat !== undefined) clearInterval(heartbeat);
+    heartbeat = undefined;
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (line: string): void => {
+        if (!open) return;
+        try {
+          controller.enqueue(encoder.encode(`${line}\n`));
+        } catch {
+          // The client hung up between the check and the write.
+          open = false;
+        }
+      };
+
+      const startedAt = Date.now();
+      heartbeat = setInterval(() => {
+        send(`... ${Math.round((Date.now() - startedAt) / 1000)}s`);
+      }, heartbeatMs);
+
+      void begin(send)
+        .then((summary) => {
+          send(`done ${summary}`);
+        })
+        .catch((err: unknown) => {
+          // A failed run still has to end the stream. Left hanging, the caller
+          // waits on a Worker that has stopped working.
+          send(`failed: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .then(() => {
+          stopBeating();
+          open = false;
+          try {
+            controller.close();
+          } catch {
+            /* already closed by a cancelled client */
+          }
+        });
+    },
+    cancel() {
+      // The client hung up. Stop the heartbeat rather than let it tick forever
+      // against a stream nobody is reading.
+      stopBeating();
+      open = false;
+    },
+  });
 }
 
 export async function handleApi(
@@ -207,56 +280,50 @@ export async function handleApi(
 
   // POST /api/run  or  POST /api/run/:agentId
   //
-  // Starts the work and returns immediately. It does NOT wait for the run to
-  // finish, and that is the whole point of this route's shape.
+  // The run happens INSIDE this response, and the response is a stream.
   //
-  // An agent run is not a web request. The intelligence agent alone fetches a
-  // dozen pages and then makes three model calls, one of them with server-side
-  // search that can be resumed several times. Held inside the HTTP request that
-  // comfortably exceeds Cloudflare's edge timeout, and the caller gets a 524
-  // while the Worker carries on running and carries on billing. That happened,
-  // twice, and the second time it cost real money for a result nobody ever saw.
+  // Three shapes got here. Holding the run in an ordinary request meant the
+  // caller got a 524 at the edge after ~100 seconds while the Worker carried on
+  // spending. Handing it to waitUntil() and returning 202 fixed the caller and
+  // broke the run: waitUntil extends a Worker for at most THIRTY SECONDS past
+  // the response, which is ample for every agent here except the only one that
+  // needed it. Competitive Intelligence was killed half a minute in, mid
+  // research call, leaving a status board reading "started" that was
+  // indistinguishable from an agent still thinking.
   //
-  // So the work is handed to waitUntil, which keeps the Worker alive past the
-  // response, and progress is watched through the status board the runner
-  // already writes: /api/runtime, which is what the dashboard polls. Waiting on
-  // a socket was never how you were meant to watch a run.
+  // An HTTP-triggered Worker has no duration limit at all while it is streaming
+  // a response body to a connected client. So the work lives inside the stream:
+  // the Worker stays alive because it is still writing, and the edge never
+  // times out because bytes keep moving. Same reason the model calls stream,
+  // one layer out.
+  //
+  // The cost of this shape is that the run belongs to the connection. Hang up
+  // and it dies. That is the honest trade for a run that can take ten minutes,
+  // and it is why every line is echoed to the caller as it happens rather than
+  // being something to go and poll for.
   if (segments[0] === "run" && request.method === "POST") {
-    const logs: string[] = [];
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const ctx = buildContext(env, { trigger: "manual", input: body, logs });
     const agentId = segments[1];
     const cadence = (url.searchParams.get("cadence") ?? "hourly") as "hourly" | "daily" | "weekly";
 
-    const work = agentId
-      ? runOne(agentId as AgentId, ctx).then(
-          (result) => console.log(`vx03 manual ${agentId}: ${JSON.stringify(result)}`),
-          (err) => console.error(`vx03 manual ${agentId} failed`, err)
-        )
-      : runDue(cadence, ctx).then(
-          (results) => console.log(`vx03 manual ${cadence}: ${results.length} agent(s)`),
-          (err) => console.error(`vx03 manual ${cadence} failed`, err)
-        );
-
-    if (execCtx) {
-      execCtx.waitUntil(work);
-    } else {
-      // No execution context (a direct call in a test). Awaiting is correct
-      // there, and there is no edge timeout in front of it.
-      await work;
-    }
-
-    return json(
+    return new Response(
+      runStream(async (send) => {
+        const ctx = buildContext(env, { trigger: "manual", input: body, onLog: send });
+        send(`run ${ctx.runId} started: ${agentId ?? `${cadence} tick`}`);
+        return agentId
+          ? JSON.stringify(await runOne(agentId as AgentId, ctx))
+          : JSON.stringify({ agents: (await runDue(cadence, ctx)).length });
+      }),
       {
-        runId: ctx.runId,
-        started: true,
-        ...(agentId ? { agent: agentId } : { cadence }),
-        note:
-          "Started in the background. Watch it on the dashboard, or poll " +
-          "/api/runtime for the live status and thought trail. This response " +
-          "does not mean the run finished.",
-      },
-      202
+        status: 200,
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+          // Ask anything in the middle not to buffer, so a line written now is
+          // a line read now. Buffering would reintroduce the silence this fixes.
+          "x-accel-buffering": "no",
+        },
+      }
     );
   }
 
