@@ -784,9 +784,20 @@ failed, it verified one provider of five from search snippets alone, and still
 reported "nothing moved" — honestly noting in its own words that four checks
 could not be completed. A false "nothing moved" is the one failure this gate must
 not have, because it looks exactly like the gate working. `recheckUrls()` now
-hands the scan the watchlist URLs and the previous brief's `sources`, capped at
-`MAX_RECHECK_URLS` (10), with the owner's own accepted sources first; the fetch
-budget is 4, not 2.
+hands the scan real URLs, capped at `MAX_RECHECK_URLS` (10), and the fetch budget
+is 4 rather than 2.
+
+The second half of that lesson cost another run. Given the URLs, the scan spent
+all four fetches on the **watchlist** pages and hit `server tool use limit
+exceeded` before reaching the four providers that actually needed a look. The
+watchlist is fetched by the run itself, with no model and no budget, and
+`describeChanges()` hands the scan each page's state plus the exact sentences
+that appeared or vanished — so offering those pages as fetch targets buys a worse
+copy of something already in the prompt and spends the budget needed for
+everything else. `recheckUrls()` therefore **excludes** anything already watched,
+leaving the right list: pages the last brief relied on that nobody is watching
+yet. The prompt also states the fetch budget as a number, because "a small fetch
+budget" is not something a model can count against.
 
 **Memory has to subtract, or it costs more every cycle.** Carrying every open
 question forward is what took research from $0.66 to $1.18 in one cycle, and it

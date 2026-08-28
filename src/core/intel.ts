@@ -316,35 +316,39 @@ export const SCAN_SCHEMA: Record<string, unknown> = {
 export const MAX_RECHECK_URLS = 10;
 
 /**
- * The pages the scan may re-read, newest evidence first.
+ * The pages the scan may spend its fetch budget on.
  *
- * This exists because of a measured failure rather than a hunch. The scan is
- * given web_fetch, and web_fetch will only retrieve a URL that is already
- * present in the conversation. The first scan was handed the last brief's
- * headline, which names companies in prose, so it had no valid target, every
- * fetch call failed, and it fell back to search alone: it verified one provider
- * of five and reported "nothing moved" for the rest. A gate that cannot look is
- * a gate that under-reports movement, and a false "nothing moved" is the one
- * failure this design must not have.
+ * Two measured failures shaped this. The scan is given web_fetch, which will
+ * only retrieve a URL already present in the conversation; handed the last
+ * brief's headline, which names companies in prose, it had no valid target and
+ * every call failed. Given the URLs, it then spent all four fetches on the
+ * WATCHLIST pages and ran out before reaching anything else, reporting "server
+ * tool use limit exceeded" against the four providers that actually needed a
+ * look.
  *
- * Watchlist URLs come first because those are the owner's own accepted sources.
+ * So the watchlist is deliberately excluded. Those pages are fetched by the run
+ * itself, with no model and no budget, and `describeChanges` hands the scan each
+ * one's state plus the exact sentences that appeared or vanished. Asking the
+ * model to fetch them again buys a worse version of something already in the
+ * prompt, at the cost of the budget needed for everything else.
+ *
+ * What is left is the right list: pages the last brief relied on that nobody is
+ * watching yet.
  */
 export function recheckUrls(
   watched: readonly IntelSource[],
   previous: readonly BriefSource[] | undefined
 ): string[] {
   const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (url: string | undefined): void => {
-    const clean = (url ?? "").trim();
-    if (!clean || !/^https?:\/\//i.test(clean)) return;
+  const seen = new Set(watched.map((source) => normaliseUrl(source.url)));
+  for (const source of previous ?? []) {
+    const clean = (source.url ?? "").trim();
+    if (!clean || !/^https?:\/\//i.test(clean)) continue;
     const key = normaliseUrl(clean);
-    if (seen.has(key)) return;
+    if (seen.has(key)) continue;
     seen.add(key);
     out.push(clean);
-  };
-  for (const source of watched) push(source.url);
-  for (const source of previous ?? []) push(source.url);
+  }
   return out.slice(0, MAX_RECHECK_URLS);
 }
 

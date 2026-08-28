@@ -564,8 +564,8 @@ describe("Competitive Intelligence Agent", () => {
     // this is the difference between a scan that checks and one that assumes.
     let scanUser = "";
 
-    await runWith(
-      memoryStub({
+    const withPreviousBrief = {
+      ...memoryStub({
         "intel.watchlist": {
           updatedAt: "2026-08-01T00:00:00Z",
           sources: [
@@ -578,6 +578,18 @@ describe("Competitive Intelligence Agent", () => {
           ],
         },
       }),
+      listIntelBriefs: async () => [{ brief_date: "2026-07-01", headline: "prior" }],
+      getIntelBrief: async () => ({
+        document: {
+          headline: "prior",
+          watchNext: [],
+          sources: [{ url: "https://unwatched.example/pricing" }],
+        },
+      }),
+    };
+
+    await runWith(
+      withPreviousBrief,
       async (args) => {
         const pass = passOf(args);
         if (pass === "scan") {
@@ -595,8 +607,19 @@ describe("Competitive Intelligence Agent", () => {
       }
     );
 
-    expect(scanUser).toContain("https://rival.example/pricing");
-    expect(scanUser).toContain("Pages worth re-reading");
+    // A page the last brief used and nobody is watching IS a fetch target.
+    expect(scanUser).toContain("https://unwatched.example/pricing");
+    expect(scanUser).toContain("You may fetch at most");
+    // The watchlist page reaches the scan through the diff, which the run
+    // computed without a model. Offering it as a fetch target too is what
+    // exhausted the budget before the unwatched pages were reached.
+    expect(scanUser).toContain("Rival");
+    // Bound the slice to that block: the watchlist URL legitimately appears
+    // further down, in the diff, which is exactly where it should come from.
+    const start = scanUser.indexOf("Pages worth re-reading");
+    const end = scanUser.indexOf("\n\n", start);
+    const recheckBlock = scanUser.slice(start, end === -1 ? undefined : end);
+    expect(recheckBlock).not.toContain("https://rival.example/pricing");
   });
 
   it("keeps the snapshots it fetched even when the cycle is quiet", async () => {

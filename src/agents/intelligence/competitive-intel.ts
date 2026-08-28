@@ -87,6 +87,13 @@ const MODEL = MODELS.reasoning;
 const MAX_CARRIED_QUESTIONS = 3;
 
 /**
+ * Pages the scan may fetch itself. The watchlist does not come out of this:
+ * those are fetched by the run with no model involved, so the budget is for
+ * everything else the last brief relied on.
+ */
+const SCAN_MAX_FETCHES = 4;
+
+/**
  * Per-run ceilings on web access. Searches are billed at $10 per 1,000 on top
  * of the tokens their results consume, so this is a budget as much as a limit:
  * at a weekly cadence these caps put the search line of the bill under $0.50 a
@@ -244,6 +251,7 @@ function scanPrompt(args: {
   changes: SourceChange[];
   position: PositionStatement | null;
   recheck: string[];
+  fetchBudget: number;
 }): string {
   const parts: string[] = [];
 
@@ -268,6 +276,15 @@ function scanPrompt(args: {
     parts.push(
       `Already settled. Do not spend this pass re-establishing any of these; only report one if it has CHANGED:\n` +
         args.settled.map((line) => `- ${line}`).join("\n")
+    );
+  }
+
+  if (args.recheck.length) {
+    parts.push(
+      `You may fetch at most ${args.fetchBudget} pages this cycle. Going past that returns ` +
+        `"server tool use limit exceeded" and you lose the checks you had not made yet, so ` +
+        `choose before you spend. The watchlist pages below have already been fetched and ` +
+        `compared for you without using any of your budget; do not fetch those again.`
     );
   }
 
@@ -883,6 +900,7 @@ export const competitiveIntelAgent: AgentDefinition = {
           changes,
           position,
           recheck: recheckUrls(watchlist.sources, previousDocument?.sources),
+          fetchBudget: SCAN_MAX_FETCHES,
         }),
         // The balanced model, not the reasoning one. This pass matches what it
         // reads against what it was told is settled; it does not judge what any
@@ -896,7 +914,7 @@ export const competitiveIntelAgent: AgentDefinition = {
         // five, which is not enough for "nothing moved" to mean anything. On
         // the balanced model four pages at 6000 tokens is a few cents, against
         // a research pass that costs a dollar.
-        web: { maxSearches: 3, maxFetches: 4, maxContentTokens: 6000 },
+        web: { maxSearches: 3, maxFetches: SCAN_MAX_FETCHES, maxContentTokens: 6000 },
       });
 
       const verdict = scan.parsed;

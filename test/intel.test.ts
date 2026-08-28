@@ -666,13 +666,34 @@ describe("the pages the scan is allowed to re-read", () => {
     expect(urls.every((url) => /^https?:\/\//.test(url))).toBe(true);
   });
 
-  it("puts the owner's own accepted sources first", () => {
-    expect(recheckUrls(watched, previous)[0]).toBe("https://rival.example/pricing");
+  it("leaves out the watchlist, which the run has already fetched itself", () => {
+    // The second measured failure. Watchlist pages come back with a real diff
+    // computed without a model and without a budget, so offering them here made
+    // the scan spend all four fetches re-reading what was already in its prompt
+    // and hit "server tool use limit exceeded" before reaching anything else.
+    expect(recheckUrls(watched, previous)).not.toContain("https://rival.example/pricing");
+  });
+
+  it("drops a previous source that has since been accepted onto the watchlist", () => {
+    const nowWatched = [
+      {
+        id: "ftoi",
+        label: "FTOI",
+        url: "https://forthetechofit.com/book-a-diagnostic",
+        kind: "competitor" as const,
+      },
+    ];
+    expect(recheckUrls(nowWatched, previous)).toEqual([
+      "https://valuebuildersystem.com/eight-drivers",
+    ]);
   });
 
   it("does not list the same page twice under two spellings", () => {
-    const dupes = [{ url: "https://WWW.Rival.example/pricing/" }];
-    expect(recheckUrls(watched, dupes)).toHaveLength(1);
+    const dupes = [
+      { url: "https://forthetechofit.com/book-a-diagnostic" },
+      { url: "https://WWW.ForTheTechOfIt.com/book-a-diagnostic/" },
+    ];
+    expect(recheckUrls([], dupes)).toHaveLength(1);
   });
 
   it("drops anything that is not a fetchable URL", () => {
@@ -686,6 +707,6 @@ describe("the pages the scan is allowed to re-read", () => {
   });
 
   it("copes with a brief that recorded no sources", () => {
-    expect(recheckUrls(watched, undefined)).toEqual(["https://rival.example/pricing"]);
+    expect(recheckUrls(watched, undefined)).toEqual([]);
   });
 });
