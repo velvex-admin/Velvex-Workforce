@@ -597,7 +597,12 @@ export const competitiveIntelAgent: AgentDefinition = {
   // in this system to buy real depth, and a wrong read here is expensive in a
   // way that is not obvious for months. See docs/MODEL-CHOICES.md.
   model: MODEL,
-  effort: "max",
+  // Measured, not guessed. At effort "max" the composing pass took 5m32s and
+  // $0.64 on its own, which put a $1.25-capped run at $1.39 and left the weekly
+  // cron no room for anything else. "high" is the same model reading the same
+  // notes; what it buys back is a clock and a budget the rest of the system can
+  // live inside. Raise it again only with a measurement, not a hunch.
+  effort: "high",
   cadence: "weekly",
   observeOnly: true,
   approvedChannels: ["internal"],

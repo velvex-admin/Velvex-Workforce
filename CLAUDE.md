@@ -111,7 +111,7 @@ routine/needs-approval line real rather than a comment.
 | Ops-Health | executive | *none* | — | hourly |
 | Site-Integrity | executive | *none* | — | hourly |
 | Growth-Strategy | executive | Opus 5 | max | weekly |
-| Competitive Intelligence | **intelligence** | Opus 5 | high → max | weekly |
+| Competitive Intelligence | **intelligence** | Opus 5 | high | weekly |
 | Chief-of-Staff | orchestration | Opus 5 | high | daily |
 
 ### Why the models differ
@@ -178,7 +178,22 @@ The owner has no Facebook page. The agent returns `[]` on every tick until
 |---|---|
 | `0 * * * *` | hourly, on the hour |
 | `0 7 * * *` | 07:00 UTC daily |
-| `0 8 * * 1` | 08:00 UTC Mondays |
+| `0 8 * * 1` | 08:00 UTC Mondays — weekly, **intelligence only** |
+| `0 9 * * 1` | 09:00 UTC Mondays — weekly, **everything else** |
+
+**The weekly cadence runs on two ticks, and that is not cosmetic.** A cron
+invocation gets 15 minutes of wall clock for *everything it runs*, and `runDue()`
+is a sequential loop. Competitive Intelligence measured **10m03s**, which left
+Growth-Strategy under five minutes — and it would not have failed loudly, because
+a killed agent leaves a `running` status row rather than an error. So
+`runDue(cadence, ctx, filter)` takes a `BatchFilter`, and `scheduled()` routes
+`0 8 * * 1` to `{ only: ["intelligence"] }` and `0 9 * * 1` to
+`{ except: ["intelligence"] }`. Intelligence still goes first, so Growth-Strategy
+reads the brief written for it an hour earlier. `test/weekly-split.test.ts`
+asserts the two ticks are a **partition** of the weekly agents — drop one and it
+silently never runs again, overlap and it runs twice and bills twice — and that
+the cron strings in `wrangler.toml` still match the literals the handler matches
+on, since nothing about that drift fails at build time.
 
 **Cadence** is per agent — which tick wakes it. This is what the hourly/daily/
 weekly label on a dashboard node means.
@@ -305,6 +320,12 @@ outright.
   to `dotCentre()`, not `nodeCentre()` — a `.node` is the dot plus its label,
   cadence and live thought, so its box centre sits well below the dot and lines
   drawn to it visibly miss.
+
+- **The composing pass runs at effort `high`, and that was measured.** At `max`
+  it took **5m32s and $0.64 on its own**, which put a $1.25-capped run at $1.39
+  and left no room in a 15-minute cron window for anything else. The full run at
+  `max` was 10m03s: 4s watchlist, 4m00s research, 23s discovery, 5m32s compose.
+  Raise it again only against a new measurement.
 
 - **A Worker has a subrequest budget per invocation, and the status board can
   eat it.** `writeStatus()` reads the whole map before writing it back, so every

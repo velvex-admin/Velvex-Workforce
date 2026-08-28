@@ -61,8 +61,14 @@ INTEL_WEB_RESEARCH_ENABLED = "true"
 # Pro, as the architecture doc anticipates.
 # ---------------------------------------------------------------------------
 [triggers]
+# A cron invocation gets 15 minutes of wall clock for EVERYTHING it runs, and
+# the agent loop is sequential. Competitive Intelligence measured 10m03s on its
+# own, so the weekly cadence is split across two Monday ticks rather than being
+# asked to fit in one. Intelligence goes first; Growth-Strategy reads the newest
+# brief an hour later, which is the order the two were designed in.
 crons = [
   "0 * * * *",   # hourly agent tick — each agent runs if its own cadence is due
   "0 7 * * *",   # 07:00 UTC — Chief-of-Staff daily roll-up
-  "0 8 * * 1"    # Monday 08:00 UTC — executive weekly review
+  "0 8 * * 1",   # Monday 08:00 UTC — weekly: intelligence only
+  "0 9 * * 1"    # Monday 09:00 UTC — weekly: everything else (Growth-Strategy)
 ]

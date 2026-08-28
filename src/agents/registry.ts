@@ -3,7 +3,7 @@
 
 import type { AgentDefinition, RunContext } from "../core/agent.js";
 import { runAgent, type AgentRunResult } from "../core/agent.js";
-import type { AgentId } from "../core/types.js";
+import type { AgentId, AgentBatch } from "../core/types.js";
 import { STATE_KEYS, state, type AgentScheduleMap } from "../core/state.js";
 import type { Supabase } from "../lib/supabase.js";
 import { chiefOfStaff, chiefOfStaffAgent } from "./orchestration/chief-of-staff.js";
@@ -89,13 +89,44 @@ export function agentsDue(cadence: "hourly" | "daily" | "weekly", _now: Date): A
   return agentsDueWith(cadence, {});
 }
 
+/**
+ * Which slice of a cadence a tick is responsible for.
+ *
+ * A cron invocation gets fifteen minutes of wall clock for everything it runs,
+ * and this loop is sequential. Competitive Intelligence measured 10m03s on its
+ * own, which leaves Growth-Strategy — Opus, and the other agent in this system
+ * that thinks hard — under five minutes before the whole invocation is killed.
+ * The second one would die silently, because a killed agent leaves a "running"
+ * row rather than an error. So the weekly cadence is split across two ticks
+ * rather than being asked to fit in one.
+ */
+export interface BatchFilter {
+  /** Only these batches. */
+  only?: AgentBatch[];
+  /** Everything except these batches. */
+  except?: AgentBatch[];
+}
+
+/** Narrow a list of due agents to the slice one tick owns. */
+export function applyBatchFilter(
+  agents: AgentDefinition[],
+  filter: BatchFilter = {}
+): AgentDefinition[] {
+  return agents.filter((agent) => {
+    if (filter.only && !filter.only.includes(agent.batch)) return false;
+    if (filter.except && filter.except.includes(agent.batch)) return false;
+    return true;
+  });
+}
+
 export async function runDue(
   cadence: "hourly" | "daily" | "weekly",
-  ctx: RunContext
+  ctx: RunContext,
+  filter: BatchFilter = {}
 ): Promise<AgentRunResult[]> {
   const overrides = await readSchedules(ctx.db).catch(() => ({}));
   const results: AgentRunResult[] = [];
-  for (const agent of agentsDueWith(cadence, overrides)) {
+  for (const agent of applyBatchFilter(agentsDueWith(cadence, overrides), filter)) {
     ctx.log(`running ${agent.id}`);
     results.push(await runAgent(agent, chiefOfStaff, ctx));
   }

@@ -26,7 +26,7 @@ import { readiness } from "./env.js";
 import { handleApi, buildContext, json } from "./routes/api.js";
 import { handleIntegration } from "./routes/integrations.js";
 import { dashboardHtml } from "./ui/dashboard.js";
-import { runDue } from "./agents/registry.js";
+import { runDue, type BatchFilter } from "./agents/registry.js";
 
 /** Constant-time string comparison. */
 function secretEquals(a: string, b: string): boolean {
@@ -143,14 +143,33 @@ export default {
       return;
     }
 
+    // Two Monday ticks, not one. A cron invocation has fifteen minutes of wall
+    // clock for everything it runs and the agent loop is sequential, so putting
+    // Competitive Intelligence (measured 10m03s) in front of Growth-Strategy
+    // (Opus, effort high) meant the second one would be killed part way with no
+    // error to show for it. Intelligence at 08:00, everything else at 09:00, so
+    // Growth-Strategy still reads the brief that was written for it.
+    const WEEKLY_INTEL = "0 8 * * 1";
+    const WEEKLY_REST = "0 9 * * 1";
+
     const cadence =
-      event.cron === "0 8 * * 1" ? "weekly" : event.cron === "0 7 * * *" ? "daily" : "hourly";
+      event.cron === WEEKLY_INTEL || event.cron === WEEKLY_REST
+        ? "weekly"
+        : event.cron === "0 7 * * *"
+          ? "daily"
+          : "hourly";
+    const filter: BatchFilter =
+      event.cron === WEEKLY_INTEL
+        ? { only: ["intelligence"] }
+        : event.cron === WEEKLY_REST
+          ? { except: ["intelligence"] }
+          : {};
 
     const logs: string[] = [];
     const ctx = buildContext(env, { trigger: "cron", logs });
 
     try {
-      const results = await runDue(cadence, ctx);
+      const results = await runDue(cadence, ctx, filter);
       const totals = results.reduce(
         (sum, result) => ({
           executed: sum.executed + result.executed,
