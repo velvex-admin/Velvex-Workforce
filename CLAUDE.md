@@ -349,6 +349,23 @@ outright.
   tenth. `test/spend-ceiling.test.ts` does that arithmetic against the real
   pricing table so the number cannot quietly drift.
 
+- **A long model call must be streamed, or the edge kills it at ~100 seconds.**
+  This is the outbound twin of the 524 above and it is a separate bug from it.
+  `api.anthropic.com` sits behind Cloudflare too, so a non-streaming request —
+  which holds one connection open carrying nothing until the whole answer is
+  ready — is cut with **524 after the model has done the work and billed for
+  it**. The intelligence agent's research pass, at effort `high` with
+  server-side search and a 32000 token budget, passes that limit routinely; the
+  recorded failure reads `Claude call failed on claude-opus-5: 524 error code:
+  524`. Backgrounding the run with `waitUntil()` does not help, because the leg
+  that dies is the outbound one. `complete()` now sends every request through
+  `messages.stream(...).finalMessage()`, which returns the identical `Message`
+  and keeps bytes moving so nothing idles out. The current API guidance is to
+  stream any request with long input, long output or a high `max_tokens` for
+  exactly this reason. `test/spend-ceiling.test.ts` stubs `messages.create` as a
+  throw, so reintroducing the non-streaming form fails four tests — a typecheck
+  would not notice, since both forms take the same parameters.
+
 - **`max_tokens` includes thinking on this generation, and running out of it
   truncates structured output mid-JSON.** The parse then fails with "expected
   JSON matching the schema", which blames the model and hides the cause, and the

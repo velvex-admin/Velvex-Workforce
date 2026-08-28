@@ -414,10 +414,22 @@ export class Claude {
 
       for (let attempt = 0; ; attempt += 1) {
         this.assertWithinBudget();
-        response = (await this.client.messages.create({
-          ...request,
-          messages,
-        } as unknown as Anthropic.MessageCreateParamsNonStreaming)) as CurrentMessage;
+        // Streamed, always, and not so anyone can watch it arrive.
+        //
+        // A non-streaming request holds one connection open with nothing
+        // travelling on it until the entire answer is ready, and
+        // api.anthropic.com sits behind the same roughly hundred second edge
+        // timeout everything else in this system does. A research pass at
+        // effort high, carrying server-side search and a 32000 token budget,
+        // passes that comfortably. The connection was then cut with a 524
+        // AFTER the model had done the work and billed for it, which is the
+        // shape of a failure that costs money and produces nothing. Streaming
+        // keeps bytes moving, so the connection never sits idle long enough to
+        // be reaped. finalMessage() returns the same complete Message the
+        // non-streaming call returned, so nothing downstream changes.
+        response = (await this.client.messages
+          .stream({ ...request, messages } as unknown as Anthropic.MessageStreamParams)
+          .finalMessage()) as CurrentMessage;
 
         if (response.stop_reason === "refusal") {
           throw new ModelError(

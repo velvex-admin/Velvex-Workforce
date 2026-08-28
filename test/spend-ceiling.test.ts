@@ -94,6 +94,43 @@ describe("the ceiling", () => {
   });
 });
 
+describe("how a request is sent", () => {
+  it("streams, because a long non-streaming call dies at the edge", async () => {
+    // The failure this prevents: a research pass at effort high with server
+    // tools and a 32000 token budget takes longer to answer than the ~100
+    // second edge timeout in front of the API. Non-streaming, that connection
+    // carries nothing until the end, so it is cut with a 524 and the run fails
+    // having already been billed. Streaming keeps bytes moving.
+    const claude = new Claude({
+      ANTHROPIC_API_KEY: "test-key",
+      SUPABASE_URL: "https://example.supabase.co",
+    } as unknown as Env);
+
+    let streamed = false;
+    (claude as unknown as { client: unknown }).client = {
+      messages: {
+        create: async () => {
+          throw new Error("this call must not be made");
+        },
+        stream: () => {
+          streamed = true;
+          return {
+            finalMessage: async () => ({
+              stop_reason: "end_turn",
+              content: [{ type: "text", text: "ok" }],
+              usage: { input_tokens: 10, output_tokens: 10 },
+            }),
+          };
+        },
+      },
+    };
+
+    const result = await claude.complete({ system: "s", user: "u", model: MODELS.reasoning });
+    expect(streamed).toBe(true);
+    expect(result.text).toBe("ok");
+  });
+});
+
 describe("the ceiling stopping a runaway loop", () => {
   /** A Claude whose transport is replaced, so nothing leaves the process. */
   function stubbed(turnCostTokens: number, pauses: number) {
@@ -105,15 +142,26 @@ describe("the ceiling stopping a runaway loop", () => {
     let calls = 0;
     (claude as unknown as { client: unknown }).client = {
       messages: {
+        // Every model call must go out streamed. A non-streaming request holds
+        // an idle connection open until the whole answer is ready and gets cut
+        // at the edge with a 524, after the model has done the work and billed
+        // for it. Stubbing create() as a throw is what keeps that from being
+        // reintroduced quietly: the type is identical either way, so a
+        // typecheck would not notice.
         create: async () => {
-          calls += 1;
-          return {
-            // Keep pausing, which is exactly the shape that ran up the bill.
-            stop_reason: calls <= pauses ? "pause_turn" : "end_turn",
-            content: [{ type: "text", text: "chunk " }],
-            usage: { input_tokens: turnCostTokens, output_tokens: 100 },
-          };
+          throw new Error("model calls must be streamed, not created");
         },
+        stream: () => ({
+          finalMessage: async () => {
+            calls += 1;
+            return {
+              // Keep pausing, which is exactly the shape that ran up the bill.
+              stop_reason: calls <= pauses ? "pause_turn" : "end_turn",
+              content: [{ type: "text", text: "chunk " }],
+              usage: { input_tokens: turnCostTokens, output_tokens: 100 },
+            };
+          },
+        }),
       },
     };
 
