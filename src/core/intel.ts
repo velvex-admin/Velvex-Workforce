@@ -364,13 +364,37 @@ export function mergeSettled(existing: string[], addition: string[]): string[] {
   for (const item of [...addition, ...existing]) {
     const line = item.trim();
     if (!line) continue;
-    const key = line.toLowerCase();
-    if (seen.has(key)) continue;
+    const key = settledKey(line);
+    if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(line);
     if (out.length >= MAX_SETTLED) break;
   }
   return out;
+}
+
+/**
+ * The identity of a settled finding, for de-duplication.
+ *
+ * An exact-string match is not enough, and that showed up on the second real
+ * run: the same fact about the same company arrived twice, once as "credited
+ * toward delivery" and once as "credited toward the delivery engagement", and
+ * both were stored. The model rephrases the same finding every cycle, so
+ * comparing whole strings lets the list fill with variants of one fact — the
+ * additive-memory problem this list exists to avoid, wearing a different hat.
+ *
+ * So: lowercase, strip everything that is not a letter or digit, and compare
+ * the opening run of it. Two lines that begin with the same company and the
+ * same claim collapse to one; two genuinely different findings do not, because
+ * they diverge long before this many characters.
+ */
+const SETTLED_KEY_CHARS = 48;
+
+function settledKey(line: string): string {
+  return line
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .slice(0, SETTLED_KEY_CHARS);
 }
 
 // ---------------------------------------------------------------------------

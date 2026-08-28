@@ -232,6 +232,8 @@ If somethingMoved is true, put the specific things worth researching properly in
 
 Put into settledNow anything you checked and found unchanged, phrased so a later cycle can skip it: "Lumena still publishes no price", "Value Builder score is still free". This list is how these runs get cheaper over time, so it is worth filling in properly even on a cycle where nothing moved.
 
+Two rules about settledNow, and they matter because this list is read back to you every cycle. Each entry must be about a provider, a price or the category. Never write an entry about this system: how many sources are on the watchlist, which tool calls succeeded, what you were or were not able to fetch. Those belong in "why", they go stale immediately, and a stale one will tell a later cycle something false about its own setup. And write each finding the same way every time you report it, leading with the company: rephrasing the same fact fills the list with variants of one thing.
+
 Never invent a company, a price or a claim. If you did not see it, it did not happen.`;
 
 function scanPrompt(args: {
@@ -920,6 +922,22 @@ export const competitiveIntelAgent: AgentDefinition = {
       // the only thing outstanding is candidates to rule on — which came from a
       // compiled list and cost nothing to produce. Hand those over and stop.
       if (verdict && !verdict.somethingMoved && movedCount === 0) {
+        // Snapshot before returning, or the fetch this cycle paid for is thrown
+        // away and every source reports "first_seen" again next time. The
+        // watchlist diff is the only first-hand evidence a brief ever carries,
+        // and on a quiet cycle it is the ONLY thing the run produced worth
+        // keeping. The two older exits already did this; adding a third exit
+        // without it silently disabled week-on-week comparison entirely.
+        if (Object.keys(snapshots).length > 0) {
+          await state.write(
+            ctx.db,
+            STATE_KEYS.intelSnapshots,
+            snapshots,
+            `${Object.keys(snapshots).length} watched sources snapshotted`,
+            { scope: "competitive_intel", agent: "competitive_intel", salience: 3, tags: ["intel"] }
+          );
+        }
+
         const kept = seedPending.map(candidateAction);
         // The note is what the owner actually reads on a quiet cycle, so it has
         // to say something even when the model returns the field empty.

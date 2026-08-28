@@ -599,6 +599,79 @@ describe("Competitive Intelligence Agent", () => {
     expect(scanUser).toContain("Pages worth re-reading");
   });
 
+  it("keeps the snapshots it fetched even when the cycle is quiet", async () => {
+    // The bug this exists for: the scan gate added a third way out of the run,
+    // and it returned without persisting the snapshots the fetch had just paid
+    // for. Every source then reports "first_seen" again next cycle, so the
+    // week-on-week diff — the only first-hand evidence a brief ever carries —
+    // silently never works.
+    const writes: Array<{ key: string; value: unknown }> = [];
+    const db = {
+      readMemory: async (opts: { keys?: string[] }) => {
+        const key = opts?.keys?.[0];
+        if (key === "intel.watchlist") {
+          return [
+            {
+              key,
+              content: "",
+              detail: {
+                value: {
+                  updatedAt: "2026-08-01T00:00:00Z",
+                  sources: [
+                    {
+                      id: "rival",
+                      label: "Rival",
+                      url: "https://rival.example/pricing",
+                      kind: "competitor",
+                    },
+                  ],
+                },
+              },
+            },
+          ];
+        }
+        return [];
+      },
+      writeMemory: async (row: { key: string; detail: { value: unknown } }) => {
+        writes.push({ key: row.key, value: row.detail.value });
+        return row;
+      },
+      intelReady: async () => ({ ok: true }),
+      listIntelBriefs: async () => [],
+      getIntelBrief: async () => null,
+      listReports: async () => [],
+      listApprovals: async () => [],
+    };
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("<html><body><p>Rival sells a diagnostic for $1,000.</p></body></html>", {
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+
+    try {
+      await runWith(db, async (args) => {
+        if (passOf(args) === "scan") {
+          return {
+            text: "{}",
+            parsed: { somethingMoved: false, why: "quiet", leads: [], settledNow: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        return research;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    const snapshotWrite = writes.find((w) => w.key === "intel.source_snapshots");
+    expect(snapshotWrite).toBeDefined();
+    expect(Object.keys(snapshotWrite!.value as Record<string, unknown>)).toContain("rival");
+  });
+
   it("still runs the expensive passes when the scan finds movement", async () => {
     // The gate has to open as well as close, or the agent quietly stops working
     // and looks like it is saving money.

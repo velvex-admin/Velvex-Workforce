@@ -757,6 +757,26 @@ hardening; buyer vocabulary moving; anything that dates the last brief's central
 claim; a watched source that changed. Explicitly not: blog posts, rebrands,
 funding with no product change, general AI news.
 
+**A new way out of a run has to persist what the run already paid for.** The
+scan gate added a third exit and it returned without writing
+`intel.source_snapshots`, so four pages were fetched, reduced to text, and
+discarded — and every source would have reported `first_seen` again the next
+cycle, meaning the week-on-week diff, the only first-hand evidence a brief
+carries, would silently never have worked. The two older exits both wrote
+snapshots; nothing made the third one. `test/agent-rules.test.ts` now stubs
+`globalThis.fetch` and asserts the snapshot write happens on a quiet cycle.
+
+**The settled list de-duplicates on a normalised prefix, not the whole string.**
+On the second real run the same fact about the same company was stored twice,
+once as "credited toward delivery" and once as "credited toward the delivery
+engagement". The model rephrases a finding every cycle, so exact-string matching
+lets one fact occupy the list several times — the additive-memory problem the
+list exists to prevent. `settledKey()` lowercases, strips to letters and digits
+and compares the first 48 characters. The scan prompt also forbids entries about
+the agent's own configuration: two of the first seven said "No watchlist is
+configured", which was true when written and false a run later, and it is read
+back to the scan as fact every cycle.
+
 **A scan that cannot fetch is a scan that assumes.** `web_fetch` will only
 retrieve a URL already present in the conversation. The first scan was handed the
 last brief's *headline*, which names companies in prose, so every fetch call

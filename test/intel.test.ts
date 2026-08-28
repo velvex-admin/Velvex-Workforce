@@ -623,6 +623,25 @@ describe("settled findings, the memory that subtracts", () => {
     expect(merged).toEqual(["lumena publishes no price"]);
   });
 
+  it("collapses the same fact reworded, which is how it actually arrives", () => {
+    // Both of these came back on the second real run and both were stored. The
+    // model rephrases the same finding every cycle, so an exact-string match
+    // lets one fact occupy the list several times over.
+    const a =
+      "Let's Level Up (letslevelup.com.au) still sells the $2,500 AUD founder-led diagnostic " +
+      "credited toward delivery if the client proceeds";
+    const b =
+      "Let's Level Up (letslevelup.com.au) still sells the $2,500 AUD founder-led diagnostic " +
+      "credited toward the delivery engagement";
+    expect(mergeSettled([a], [b])).toHaveLength(1);
+  });
+
+  it("still keeps two genuinely different findings apart", () => {
+    const a = "Lumena Global publishes no price for the operational readiness assessment";
+    const b = "For The TECH Of It still sells the $1,497 diagnostic on 7-10 business days";
+    expect(mergeSettled([a], [b])).toHaveLength(2);
+  });
+
   it("drops empty lines rather than storing them", () => {
     expect(mergeSettled([], ["", "   ", "real"])).toEqual(["real"]);
   });
