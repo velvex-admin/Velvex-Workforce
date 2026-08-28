@@ -111,7 +111,7 @@ routine/needs-approval line real rather than a comment.
 | Ops-Health | executive | *none* | — | hourly |
 | Site-Integrity | executive | *none* | — | hourly |
 | Growth-Strategy | executive | Opus 5 | max | weekly |
-| Competitive Intelligence | **intelligence** | Opus 5 | high | weekly |
+| Competitive Intelligence | **intelligence** | Sonnet 5 scan → Opus 5 | high | monthly |
 | Chief-of-Staff | orchestration | Opus 5 | high | daily |
 
 ### Why the models differ
@@ -178,7 +178,8 @@ The owner has no Facebook page. The agent returns `[]` on every tick until
 |---|---|
 | `0 * * * *` | hourly, on the hour |
 | `0 7 * * *` | 07:00 UTC daily |
-| `0 8 * * 1` | 08:00 UTC Mondays — weekly, **intelligence only** |
+| `0 8 1 * *` | 08:00 UTC on the 1st — **monthly**, where intelligence now runs |
+| `0 8 * * 1` | 08:00 UTC Mondays — weekly, **intelligence only** if set back to weekly |
 | `0 9 * * 1` | 09:00 UTC Mondays — weekly, **everything else** |
 
 **The weekly cadence runs on two ticks, and that is not cosmetic.** A cron
@@ -730,6 +731,47 @@ highest signal first. They are not a watchlist: nothing there is fetched until
 it is accepted. Order matters, because the batch drains a few a week: the one
 real competitor is first, then the pages where category language hardens, then
 buyer vocabulary.
+
+### The cheap pass comes first, and that is the whole cost argument
+
+Four stages became five, and the new one is stage 0.
+
+The original order was research (dollars) then triage (pennies), which meant the
+question *was this cycle worth a brief* was answered **after** the money was
+spent. Skipping at that point saved the composing pass and nothing else. Two
+measured runs settled it:
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Research | 4m00s, $0.6601 | 6m02s, **$1.1838** |
+| Carried questions | 0 | 6 |
+| Outcome | brief filed, approvals lost to a subrequest failure | **refused the composing pass, no brief, $1.3132** |
+
+So the **scan** runs first: Sonnet 5 at effort `low`, three searches, a schema
+and no deep reading. It answers one question — has anything moved since the last
+brief that would change what it said — and on a quiet cycle the run ends there,
+in cents, having never started the research pass. `SCAN_SYSTEM` carries the
+definition of what counts: a price, packaging, turnaround or guarantee that
+changed; a new entrant selling a diagnostic that *ends*; category language
+hardening; buyer vocabulary moving; anything that dates the last brief's central
+claim; a watched source that changed. Explicitly not: blog posts, rebrands,
+funding with no product change, general AI news.
+
+**Memory has to subtract, or it costs more every cycle.** Carrying every open
+question forward is what took research from $0.66 to $1.18 in one cycle, and it
+grows on its own because each brief adds more. Two bounds now: at most
+`MAX_CARRIED_QUESTIONS` (3) open threads are carried, and the scan maintains
+`intel.settled` — things checked and found unchanged, capped at `MAX_SETTLED`
+(12), de-duplicated case-insensitively — which the next scan is told to skip.
+Each cycle should have *less* to look at, not more.
+
+**A run stopped for budget still hands over the cheap half.** The composing pass
+is the one that gets refused, and when it is, `BudgetExceededError` is caught and
+the candidates discovery already produced are returned with an observation
+explaining why there is no brief. Losing them was the actual failure in run 2:
+full price, nothing delivered, and candidates are not part of a brief anyway —
+they are a list of sources to rule on, and ruling on them is what unblocks the
+agent.
 
 ### How one run works
 

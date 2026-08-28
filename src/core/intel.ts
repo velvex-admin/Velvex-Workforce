@@ -274,6 +274,70 @@ export const DISCOVERY_SCHEMA: Record<string, unknown> = {
 };
 
 // ---------------------------------------------------------------------------
+// The scan: the cheap pass that decides whether the expensive one is worth it.
+//
+// The order of the passes used to be research (dollars) then triage (pennies),
+// which meant the decision "was this cycle worth a brief" was taken AFTER the
+// money was spent. Skipping at that point saved the composing pass and nothing
+// else. This pass runs first, on the balanced model with a handful of searches,
+// and answers one question: has anything moved since the last brief that would
+// change what it said. Most cycles the answer is no and the run ends in cents.
+//
+// It also carries the only kind of memory that makes a run cheaper rather than
+// dearer. Carrying open questions forward is additive and grew the research pass
+// by 79% in one cycle. "Settled" is subtractive: things established and not
+// worth re-establishing, so each cycle has less to look at rather than more.
+// ---------------------------------------------------------------------------
+
+export interface ScanResult {
+  /** Did anything move that would change the last brief's conclusions? */
+  somethingMoved: boolean;
+  /** One sentence, in the scan's own words, for the owner to read. */
+  why: string;
+  /** Specific things worth researching properly, if anything moved. */
+  leads: string[];
+  /** Checked and unchanged. Carried forward so the next scan can skip them. */
+  settledNow: string[];
+}
+
+export const SCAN_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["somethingMoved", "why", "leads", "settledNow"],
+  properties: {
+    somethingMoved: { type: "boolean" },
+    why: { type: "string" },
+    leads: { type: "array", items: { type: "string" } },
+    settledNow: { type: "array", items: { type: "string" } },
+  },
+};
+
+/** How many settled findings are carried. Bounded, or it stops being subtractive. */
+export const MAX_SETTLED = 12;
+
+/**
+ * Merge this cycle's settled findings into the standing list, newest first.
+ *
+ * De-duplicated case-insensitively, because the model will phrase the same
+ * settled fact differently each cycle and an unbounded list of near-duplicates
+ * is the additive-memory problem wearing a different hat.
+ */
+export function mergeSettled(existing: string[], addition: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of [...addition, ...existing]) {
+    const line = item.trim();
+    if (!line) continue;
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(line);
+    if (out.length >= MAX_SETTLED) break;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // The brief itself.
 // ---------------------------------------------------------------------------
 

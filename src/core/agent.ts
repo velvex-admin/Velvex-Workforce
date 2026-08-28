@@ -23,7 +23,15 @@ import type {
 import { evaluate } from "./autonomy.js";
 import { STATE_KEYS, state, type AgentRuntimeStatus, type AgentRuntimeStatusMap } from "./state.js";
 
-export type Cadence = "hourly" | "daily" | "weekly" | "manual" | "external";
+/**
+ * Cadences a cron tick can be responsible for.
+ *
+ * "monthly" exists because a category with few competitors does not move weekly.
+ * A brief written every week about a market that shifts quarterly is how a
+ * library stops being read, and it is paid for either way.
+ */
+export type RunCadence = "hourly" | "daily" | "weekly" | "monthly";
+export type Cadence = RunCadence | "manual" | "external";
 
 export interface RunContext {
   env: Env;

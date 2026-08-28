@@ -1,7 +1,7 @@
 // The roster, and the two things that operate on it: running agents on a tick,
 // and carrying out an approval you have granted.
 
-import type { AgentDefinition, RunContext } from "../core/agent.js";
+import type { AgentDefinition, RunContext, RunCadence } from "../core/agent.js";
 import { runAgent, type AgentRunResult } from "../core/agent.js";
 import type { AgentId, AgentBatch } from "../core/types.js";
 import { STATE_KEYS, state, type AgentScheduleMap } from "../core/state.js";
@@ -67,7 +67,7 @@ export async function readSchedules(db: Supabase): Promise<AgentScheduleMap> {
  * over the agent's built-in cadence.
  */
 export function agentsDueWith(
-  cadence: "hourly" | "daily" | "weekly",
+  cadence: RunCadence,
   overrides: AgentScheduleMap
 ): AgentDefinition[] {
   return AGENTS.filter((agent) => {
@@ -85,7 +85,7 @@ export function agentsDueWith(
 }
 
 /** Legacy signature. Kept for tests that do not need overrides. */
-export function agentsDue(cadence: "hourly" | "daily" | "weekly", _now: Date): AgentDefinition[] {
+export function agentsDue(cadence: RunCadence, _now: Date): AgentDefinition[] {
   return agentsDueWith(cadence, {});
 }
 
@@ -120,7 +120,7 @@ export function applyBatchFilter(
 }
 
 export async function runDue(
-  cadence: "hourly" | "daily" | "weekly",
+  cadence: RunCadence,
   ctx: RunContext,
   filter: BatchFilter = {}
 ): Promise<AgentRunResult[]> {

@@ -48,6 +48,12 @@ export const STATE_KEYS = {
    * is fetched until it appears here as accepted.
    */
   intelCandidates: "intel.candidate_verdicts",
+  /**
+   * Things the scan has checked and found settled, so later cycles can skip
+   * them. Subtractive memory: it exists to make each run cheaper than the last,
+   * which is the opposite of what carrying open questions forward did.
+   */
+  intelSettled: "intel.settled",
 } as const;
 
 /**
@@ -56,7 +62,7 @@ export const STATE_KEYS = {
  * (including "paused", which stops the agent from firing on any tick).
  */
 export interface AgentScheduleOverride {
-  cadence: "hourly" | "daily" | "weekly" | "paused";
+  cadence: "hourly" | "daily" | "weekly" | "monthly" | "paused";
   updatedAt: string;
   note?: string;
 }

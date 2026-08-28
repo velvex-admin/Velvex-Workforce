@@ -946,7 +946,7 @@ async function openAgent(id) {
   const effCadence = schedule ? schedule.cadence : agent.cadence;
   const rt = RUNTIME[id];
 
-  const cadenceOptions = ['hourly', 'daily', 'weekly', 'paused'];
+  const cadenceOptions = ['hourly', 'daily', 'weekly', 'monthly', 'paused'];
   const cadenceButtons = cadenceOptions.map(c =>
     \`<button onclick="setSchedule('\${id}', '\${c}')" \${effCadence === c ? 'class="selected"' : ''}>\${c}</button>\`
   ).join('');

@@ -69,6 +69,7 @@ INTEL_WEB_RESEARCH_ENABLED = "true"
 crons = [
   "0 * * * *",   # hourly agent tick — each agent runs if its own cadence is due
   "0 7 * * *",   # 07:00 UTC — Chief-of-Staff daily roll-up
-  "0 8 * * 1",   # Monday 08:00 UTC — weekly: intelligence only
+  "0 8 1 * *",   # 1st of the month 08:00 UTC — monthly agents (intelligence)
+  "0 8 * * 1",   # Monday 08:00 UTC — weekly: intelligence only, if set back to weekly
   "0 9 * * 1"    # Monday 09:00 UTC — weekly: everything else (Growth-Strategy)
 ]

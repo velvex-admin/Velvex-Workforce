@@ -38,6 +38,8 @@ import {
   type IntelSource,
   type PositionStatement,
   type SourceSnapshot,
+  mergeSettled,
+  MAX_SETTLED,
 } from "../src/core/intel.js";
 import { topMove } from "../src/agents/intelligence/competitive-intel.js";
 
@@ -598,5 +600,28 @@ describe("the discovery schema", () => {
     expect(item.required).toContain("evidence");
     expect(item.required).toContain("standard");
     expect(item.required).toContain("url");
+  });
+});
+
+describe("settled findings, the memory that subtracts", () => {
+  it("puts this cycle's findings in front of the older ones", () => {
+    expect(mergeSettled(["old one"], ["new one"])).toEqual(["new one", "old one"]);
+  });
+
+  it("does not grow without bound", () => {
+    // The whole point. Carrying open questions forward was additive and took
+    // the research pass from $0.6601 to $1.1838 in one cycle. A settled list
+    // that grew the same way would reintroduce the problem it exists to fix.
+    const many = Array.from({ length: 40 }, (_, i) => `finding ${i}`);
+    expect(mergeSettled([], many)).toHaveLength(MAX_SETTLED);
+  });
+
+  it("does not keep the same finding twice, however it is phrased", () => {
+    const merged = mergeSettled(["Lumena publishes no price"], ["lumena publishes no price  "]);
+    expect(merged).toEqual(["lumena publishes no price"]);
+  });
+
+  it("drops empty lines rather than storing them", () => {
+    expect(mergeSettled([], ["", "   ", "real"])).toEqual(["real"]);
   });
 });

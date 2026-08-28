@@ -80,7 +80,16 @@ describe("the ceiling", () => {
     // times. It is the only agent in the system with that shape.
     const intel = AGENTS.find((agent) => agent.id === "competitive_intel");
     expect(intel?.spendCapUsd).toBeGreaterThan(0);
-    expect(intel?.spendCapUsd).toBeLessThan(3);
+    expect(intel?.spendCapUsd).toBeLessThanOrEqual(5);
+  });
+
+  it("sits well clear of a measured run, not just above it", () => {
+    // Set at $1.25 it did the worst thing a ceiling can do: a run paid $1.3132
+    // for research and discovery and was then refused the composing pass, so it
+    // cost full price and produced no brief. Measured runs land at $1.31-$1.39,
+    // so the ceiling is for a runaway, not for an ordinary month.
+    const intel = AGENTS.find((agent) => agent.id === "competitive_intel");
+    expect(intel?.spendCapUsd).toBeGreaterThan(1.5);
   });
 
   it("carries what was spent and what the limit was", () => {

@@ -29,13 +29,24 @@ describe("the two Monday ticks", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("puts the intelligence agent on its own tick", () => {
-    expect(intelTick.map((a) => a.id)).toEqual(["competitive_intel"]);
-  });
-
-  it("leaves Growth-Strategy on the other one", () => {
+  it("leaves Growth-Strategy on the 09:00 tick", () => {
     expect(restTick.map((a) => a.id)).toContain("growth_strategy");
     expect(restTick.map((a) => a.id)).not.toContain("competitive_intel");
+  });
+
+  it("still catches intelligence on its own tick if it is set back to weekly", () => {
+    // The cadence is overridable from the dashboard. If it goes back to weekly
+    // it must land on the 08:00 tick, not join Growth-Strategy at 09:00 and
+    // reintroduce the squeeze the split exists to prevent.
+    const overridden = agentsDueWith("weekly", {
+      competitive_intel: { cadence: "weekly", updatedAt: "2026-08-28T00:00:00Z" },
+    });
+    expect(
+      applyBatchFilter(overridden, { only: ["intelligence"] }).map((a) => a.id)
+    ).toEqual(["competitive_intel"]);
+    expect(
+      applyBatchFilter(overridden, { except: ["intelligence"] }).map((a) => a.id)
+    ).not.toContain("competitive_intel");
   });
 
   it("does not disturb the other cadences", () => {
@@ -71,5 +82,35 @@ describe("what the composing pass is allowed to spend", () => {
     // this again should follow a measurement, not a hunch.
     const intel = AGENTS.find((a) => a.id === "competitive_intel");
     expect(intel?.effort).toBe("high");
+  });
+});
+
+describe("the monthly tick", () => {
+  // The category has few competitors and moves quarterly at most, so a weekly
+  // brief was paying full price to report that nothing changed.
+  const monthly = agentsDueWith("monthly", {});
+
+  it("is where the intelligence agent runs by default", () => {
+    expect(monthly.map((a) => a.id)).toContain("competitive_intel");
+    const intel = AGENTS.find((a) => a.id === "competitive_intel");
+    expect(intel?.cadence).toBe("monthly");
+  });
+
+  it("runs every monthly agent, because a filter here would hide a future one", () => {
+    // The weekly ticks are filtered by batch; this one deliberately is not.
+    // Filtering it to "intelligence" is exactly how a monthly agent added later
+    // would silently never run.
+    expect(applyBatchFilter(monthly, {}).map((a) => a.id).sort()).toEqual(
+      monthly.map((a) => a.id).sort()
+    );
+    expect(index).toContain('const MONTHLY = "0 8 1 * *"');
+    expect(toml).toContain('"0 8 1 * *"');
+  });
+
+  it("does not also fire on a weekly tick", () => {
+    // Belt and braces on the partition: a monthly agent must not be picked up
+    // by either Monday tick, or it runs four times a month and bills for it.
+    const ids = [...intelTick, ...restTick].map((a) => a.id);
+    expect(ids).not.toContain("competitive_intel");
   });
 });

@@ -39,6 +39,7 @@
 // brief that is genuinely first-hand, which is why it is gathered first and put
 // in front of the model rather than left for it to reconstruct.
 
+import { BudgetExceededError } from "../../lib/claude.js";
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 
@@ -74,9 +75,15 @@ import {
   type SourceChange,
   type SourceSnapshot,
   type SourceSnapshotMap,
+  SCAN_SCHEMA,
+  mergeSettled,
+  type ScanResult,
 } from "../../core/intel.js";
 
 const MODEL = MODELS.reasoning;
+
+/** How many of the last brief's open threads are carried into the next run. */
+const MAX_CARRIED_QUESTIONS = 3;
 
 /**
  * Per-run ceilings on web access. Searches are billed at $10 per 1,000 on top
@@ -200,6 +207,71 @@ function describeChanges(changes: SourceChange[]): string {
 // ---------------------------------------------------------------------------
 // Pass 1: research.
 // ---------------------------------------------------------------------------
+
+const SCAN_SYSTEM = `You are the competitive intelligence scout for Velvex. This is a cheap pass and it has one job: decide whether the expensive pass is worth running this cycle.
+
+You are not writing a brief. You are answering one question. Since the last brief was written, has anything moved that would change what it said?
+
+What counts as movement, and this list is the whole of it:
+
+1. A provider in this category changed price, packaging, turnaround or guarantee. A number that used to be one thing and is now another.
+2. A new entrant is selling a bounded, paid diagnostic that ends, rather than a diagnostic that exists to sell delivery work.
+3. The category's language moved. A scoring tool that starts saying "structural", "dependency", "load bearing" or "survives scale" has told you something a year before it could deliver it.
+4. Buyer-side vocabulary moved. What founders, operators or capital allocators call this kind of assessment when they ask for it.
+5. Something contradicts or dates the central claim of the last brief. If the last brief said a position was vacant and somebody has taken it, that is the most important thing you can find.
+6. A watched source changed its language, where a diff is given to you below.
+
+What does NOT count, however interesting: blog posts, marketing refreshes, rebrands, funding rounds with no product change, conference talks, hiring, general AI industry news, and anything already listed as settled below.
+
+Rules.
+
+Say somethingMoved false unless you can name the specific thing that moved and where you saw it. "The category is evolving" is not movement. A cycle where nothing moved is the normal case for this category and reporting that honestly is worth more than manufacturing a finding, because a brief every cycle regardless of what happened is how a library stops being read.
+
+If somethingMoved is true, put the specific things worth researching properly into leads. Each lead should name a company, a page or a phrase, not a topic. The expensive pass will read them; do not try to do its job here.
+
+Put into settledNow anything you checked and found unchanged, phrased so a later cycle can skip it: "Lumena still publishes no price", "Value Builder score is still free". This list is how these runs get cheaper over time, so it is worth filling in properly even on a cycle where nothing moved.
+
+Never invent a company, a price or a claim. If you did not see it, it did not happen.`;
+
+function scanPrompt(args: {
+  previousBriefDate: string | null;
+  previousHeadline: string | null;
+  carriedQuestions: string[];
+  settled: string[];
+  changes: SourceChange[];
+  position: PositionStatement | null;
+}): string {
+  const parts: string[] = [];
+
+  parts.push(
+    args.previousBriefDate
+      ? `The last brief was written on ${args.previousBriefDate}. You are deciding whether anything has moved since then.`
+      : "There is no previous brief. Treat this as a first look at the category."
+  );
+
+  if (args.previousHeadline) {
+    parts.push(`What the last brief concluded:\n${args.previousHeadline}`);
+  }
+
+  if (args.carriedQuestions.length) {
+    parts.push(
+      `Open threads the last brief said it would check (at most three are carried, deliberately):\n` +
+        args.carriedQuestions.map((q) => `- ${q}`).join("\n")
+    );
+  }
+
+  if (args.settled.length) {
+    parts.push(
+      `Already settled. Do not spend this pass re-establishing any of these; only report one if it has CHANGED:\n` +
+        args.settled.map((line) => `- ${line}`).join("\n")
+    );
+  }
+
+  parts.push(describeChanges(args.changes));
+  parts.push(positionContext(args.position));
+
+  return parts.join("\n\n");
+}
 
 const RESEARCH_SYSTEM = `You are the competitive intelligence researcher for Velvex.
 
@@ -603,17 +675,28 @@ export const competitiveIntelAgent: AgentDefinition = {
   // notes; what it buys back is a clock and a budget the rest of the system can
   // live inside. Raise it again only with a measurement, not a hunch.
   effort: "high",
-  cadence: "weekly",
+  // Monthly, not weekly. The owner's read is that this category has few real
+  // competitors and moves quarterly at most, so a weekly brief was paying full
+  // price to say nothing changed. Overridable from the dashboard: set it back to
+  // weekly and it lands on its own Monday tick.
+  cadence: "monthly",
   observeOnly: true,
   approvedChannels: ["internal"],
   /**
-   * The most one weekly run may cost. Three passes on Opus with web access,
-   * and one of them can be resumed several times, so this is the one agent in
-   * the system that can run away. A normal run lands well under this; hitting
-   * it means something is wrong and the run stops rather than finding out how
-   * expensive wrong gets.
+   * The most one run may cost.
+   *
+   * Raised from $1.25 after a measured run stopped here having paid for the
+   * research and produced nothing: research alone came to $1.1838, discovery
+   * took it to $1.3132, and the composing pass was refused. Full price, no
+   * brief, which is the worst outcome a ceiling can produce.
+   *
+   * $4.50 is deliberately well clear of a normal run rather than just above it.
+   * Measured runs land at $1.31 to $1.39; at a monthly cadence the ceiling is
+   * there to stop a runaway, not to shape an ordinary month. Note it bounds
+   * when a request may START, so the true worst case is this plus the price of
+   * one maximal call.
    */
-  spendCapUsd: 1.25,
+  spendCapUsd: 4.5,
 
   routineRules: [
     {
@@ -745,7 +828,13 @@ export const competitiveIntelAgent: AgentDefinition = {
           | IntelBrief
           | undefined)
       : undefined;
-    const carriedQuestions = previousDocument?.watchNext ?? [];
+    // Bounded, and bounded for a measured reason. Carrying every open thread
+    // forward took the research pass from $0.6601 to $1.1838 between two runs —
+    // six carried questions, 79% more spend — and it grows every cycle, because
+    // each brief adds more. Memory that only accumulates makes a run more
+    // expensive every time it runs. Three is what fits in a prompt without
+    // becoming the prompt.
+    const carriedQuestions = (previousDocument?.watchNext ?? []).slice(0, MAX_CARRIED_QUESTIONS);
 
     // What the strategist has been weighing, so intelligence answers live
     // questions rather than arriving beside them. This is the loop the owner's
@@ -756,9 +845,93 @@ export const competitiveIntelAgent: AgentDefinition = {
       .catch(() => []);
     const liveStrategyQuestions = strategyReports.map((row) => row.summary).filter(Boolean);
 
+    // --- pass 0: the scan -------------------------------------------------
+    //
+    // Cheap, and first. It decides whether the expensive pass runs at all. The
+    // old order asked "was this cycle worth a brief" only after the research
+    // pass had been paid for, which meant a quiet cycle still cost a dollar.
+    const settled = (await state.read<string[]>(ctx.db, STATE_KEYS.intelSettled)) ?? [];
+    const movedCount = changes.filter((change) => change.state === "changed").length;
+    const seedPending = selectCandidates([], ledger, watchlist.sources, ctx.now);
+
+    let leads: string[] = [];
+    if (webResearch) {
+      const scan = await ctx.claude.complete<ScanResult>({
+        system: SCAN_SYSTEM,
+        user: scanPrompt({
+          previousBriefDate: previous?.brief_date ?? null,
+          previousHeadline: previousDocument?.headline ?? previous?.headline ?? null,
+          carriedQuestions,
+          settled,
+          changes,
+          position,
+        }),
+        // The balanced model, not the reasoning one. This pass matches what it
+        // reads against what it was told is settled; it does not judge what any
+        // of it means. Paying reasoning prices for that is how the cheap pass
+        // stops being cheap.
+        model: MODELS.balanced,
+        effort: "low",
+        maxTokens: 8000,
+        schema: SCAN_SCHEMA,
+        web: { maxSearches: 3, maxFetches: 2, maxContentTokens: 6000 },
+      });
+
+      const verdict = scan.parsed;
+      leads = verdict?.leads ?? [];
+
+      if (verdict?.settledNow?.length) {
+        await state.write(
+          ctx.db,
+          STATE_KEYS.intelSettled,
+          mergeSettled(settled, verdict.settledNow),
+          `${verdict.settledNow.length} finding(s) settled this cycle`,
+          { scope: "competitive_intel", agent: "competitive_intel", salience: 3, tags: ["intel"] }
+        );
+      }
+
+      ctx.log(
+        `competitive_intel: scan says ${verdict?.somethingMoved ? "something moved" : "nothing moved"}, ` +
+          `${leads.length} lead(s), ${verdict?.settledNow?.length ?? 0} settled ` +
+          `($${scan.costUsd.toFixed(4)})`
+      );
+
+      // The cheap month. Nothing moved, nothing on the watchlist shifted, and
+      // the only thing outstanding is candidates to rule on — which came from a
+      // compiled list and cost nothing to produce. Hand those over and stop.
+      if (verdict && !verdict.somethingMoved && movedCount === 0) {
+        const kept = seedPending.map(candidateAction);
+        // The note is what the owner actually reads on a quiet cycle, so it has
+        // to say something even when the model returns the field empty.
+        const why = verdict.why?.trim() || "Nothing in the category moved this cycle.";
+        ctx.log(
+          `competitive_intel: quiet cycle, no research. ${why} ` +
+            `(${kept.length} candidate(s), $${scan.costUsd.toFixed(4)})`
+        );
+        return [
+          ...kept,
+          {
+            type: "observation",
+            summary: `Quiet cycle: ${why}`,
+            payload: {
+              quiet: true,
+              scannedOnly: true,
+              costUsd: scan.costUsd,
+              settledCount: mergeSettled(settled, verdict.settledNow ?? []).length,
+            },
+            rationale:
+              "The scan found nothing that would change the last brief, so the research and " +
+              "composing passes were not run. A brief every cycle regardless of what happened " +
+              "is how a library stops being read, and it is paid for either way.",
+            dedupeKey: `intel:quiet:${day}`,
+          },
+        ];
+      }
+    }
+
     ctx.log(
       `competitive_intel: researching (web ${webResearch ? "on" : "off"}, ` +
-        `${carriedQuestions.length} carried question(s), ` +
+        `${carriedQuestions.length} carried question(s), ${leads.length} lead(s), ` +
         `${position ? `${position.answers.length} answered` : "no position statement"})`
     );
 
@@ -819,7 +992,7 @@ export const competitiveIntelAgent: AgentDefinition = {
 
     const found = discovery.parsed?.candidates ?? [];
     const proposals = selectCandidates(found, ledger, watchlist.sources, ctx.now);
-    const movedCount = changes.filter((change) => change.state === "changed").length;
+    // movedCount is computed once, before the scan, and reused here.
 
     ctx.log(
       `competitive_intel: discovery found ${found.length} candidate(s), ` +
@@ -866,25 +1039,62 @@ export const competitiveIntelAgent: AgentDefinition = {
     }
 
     // --- pass 3: compose --------------------------------------------------
-    const composed = await ctx.claude.complete<ComposedBrief>({
-      system: COMPOSE_SYSTEM,
-      user: composePrompt({
-        research: research.text,
-        changes,
-        webResearch,
-        truncated: research.truncated,
-        consulted: research.sources.map((source) => source.url),
-        position,
-      }),
-      model: MODEL,
-      effort: competitiveIntelAgent.effort,
-      // Effort "max" thinks hard, and that thinking comes out of the same
-      // budget as the JSON. Too small a number here does not shorten the brief,
-      // it truncates it mid-object and the parse fails after the tokens are
-      // already paid for.
-      maxTokens: 32000,
-      schema: BRIEF_SCHEMA,
-    });
+    // The composing pass is the one that can be refused for budget, and when it
+    // is, everything cheap that came before it must not go down with it.
+    //
+    // That is not hypothetical. A measured run spent $1.3132 on research and
+    // discovery, was refused the composing pass by the ceiling, threw, and lost
+    // the four candidates discovery had already worked out. Full price, nothing
+    // delivered, and the candidates were not even part of the brief: they are a
+    // list of sources to rule on, and ruling on them is what unblocks the agent.
+    let composed: Awaited<ReturnType<typeof ctx.claude.complete<ComposedBrief>>>;
+    try {
+      composed = await ctx.claude.complete<ComposedBrief>({
+        system: COMPOSE_SYSTEM,
+        user: composePrompt({
+          research: research.text,
+          changes,
+          webResearch,
+          truncated: research.truncated,
+          consulted: research.sources.map((source) => source.url),
+          position,
+        }),
+        model: MODEL,
+        effort: competitiveIntelAgent.effort,
+        // Thinking comes out of the same budget as the JSON on this model. Too
+        // small a number here does not shorten the brief, it truncates it
+        // mid-object and the parse fails after the tokens are already paid for.
+        maxTokens: 32000,
+        schema: BRIEF_SCHEMA,
+      });
+    } catch (err) {
+      if (!(err instanceof BudgetExceededError)) throw err;
+      ctx.log(
+        `competitive_intel: no brief, the ceiling stopped the composing pass ` +
+          `($${err.spentUsd.toFixed(4)} of $${err.capUsd.toFixed(2)}). ` +
+          `Keeping ${candidateActions.length} candidate(s).`
+      );
+      return [
+        ...candidateActions,
+        {
+          type: "observation",
+          summary: "The composing pass was stopped by the spend ceiling, so there is no brief",
+          payload: {
+            spentUsd: err.spentUsd,
+            capUsd: err.capUsd,
+            researchUsd: research.costUsd,
+            candidatesKept: candidateActions.length,
+            note:
+              "Research and discovery completed and were paid for. The brief was not written. " +
+              "The candidates below came out of the cheap half and are still worth ruling on.",
+          },
+          rationale:
+            "A run that is stopped for budget after the expensive half should still hand over " +
+            "the cheap half, rather than paying full price and delivering nothing.",
+          dedupeKey: `intel:capped:${day}`,
+        },
+      ];
+    }
 
     if (!composed.parsed) {
       throw new Error("The composing pass returned no brief matching the schema.");

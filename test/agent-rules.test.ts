@@ -2,6 +2,7 @@
 // trusted as documentation.
 
 import { describe, expect, it } from "vitest";
+import { BudgetExceededError } from "../src/lib/claude.js";
 import { evaluate } from "../src/core/autonomy.js";
 import type { AgentDefinition } from "../src/core/agent.js";
 import type { ProposedAction } from "../src/core/types.js";
@@ -441,21 +442,47 @@ describe("Competitive Intelligence Agent", () => {
 
   const research = { text: "Checked the usual pages.", costUsd: 0.1, sources: [], searchesUsed: 3, truncated: false };
 
-  it("writes no brief on a week where nothing moved", async () => {
-    // The point of the triage pass. A brief filed every week regardless of what
-    // happened is how a library stops meaning anything, so a quiet week costs
-    // one cheap pass and the expensive composing pass never runs.
+  /** Which pass a stubbed call is, told apart by the schema it was given. */
+  const passOf = (args: { schema?: unknown }): "research" | "scan" | "other" => {
+    if (!args.schema) return "research";
+    const props = ((args.schema as { properties?: Record<string, unknown> }).properties ?? {}) as
+      Record<string, unknown>;
+    return "somethingMoved" in props ? "scan" : "other";
+  };
+
+  it("does not pay for research on a cycle where nothing moved", async () => {
+    // This is the whole cost argument. The scan is cheap and runs FIRST, so a
+    // quiet cycle ends before the research pass — which measured $1.18 on its
+    // own — is ever started. The old order ran research first and only then
+    // asked whether the cycle was worth a brief, which saved the composing pass
+    // and nothing else.
     const logs: string[] = [];
-    let schemaCalls = 0;
+    const calls = { research: 0, scan: 0, other: 0 };
 
     const result = await runWith(
       memoryStub({ "intel.candidate_verdicts": allSeedsRuled() }),
       async (args) => {
-        if (!args.schema) return research;
-        schemaCalls += 1;
+        const pass = passOf(args);
+        calls[pass] += 1;
+        if (pass === "research") return research;
+        if (pass === "scan") {
+          return {
+            text: "{}",
+            parsed: {
+              somethingMoved: false,
+              why: "No provider changed its claims.",
+              leads: [],
+              settledNow: ["Lumena still publishes no price"],
+            },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
         return {
           text: "{}",
-          parsed: { anythingMaterial: false, quietNote: "No provider changed its claims.", candidates: [] },
+          parsed: { anythingMaterial: false, quietNote: "unused", candidates: [] },
           costUsd: 0.02,
           sources: [],
           searchesUsed: 0,
@@ -465,13 +492,116 @@ describe("Competitive Intelligence Agent", () => {
       logs
     );
 
-    // Exactly one schema'd call: discovery. The composing pass never ran.
-    expect(schemaCalls).toBe(1);
+    expect(calls.scan).toBe(1);
+    // The two expensive passes never started.
+    expect(calls.research).toBe(0);
+    expect(calls.other).toBe(0);
+
     expect(result).toHaveLength(1);
     expect(result[0]!.type).toBe("observation");
     expect(result[0]!.payload["quiet"]).toBe(true);
+    expect(result[0]!.payload["scannedOnly"]).toBe(true);
     expect(result[0]!.summary).toContain("No provider changed its claims");
-    expect(logs.join(" ")).toContain("quiet week, no brief");
+    expect(logs.join(" ")).toContain("quiet cycle, no research");
+  });
+
+  it("hands over the candidates when the ceiling stops the composing pass", async () => {
+    // A measured run spent $1.3132 on research and discovery, was refused the
+    // composing pass by the ceiling, threw, and lost the four candidates
+    // discovery had already produced. Full price, nothing delivered. Candidates
+    // are not part of the brief: they are a list of sources to rule on, and
+    // ruling on them is what unblocks the agent.
+    const logs: string[] = [];
+
+    const result = await runWith(
+      memoryStub({}),
+      async (args) => {
+        const pass = passOf(args);
+        if (pass === "research") return research;
+        if (pass === "scan") {
+          return {
+            text: "{}",
+            parsed: { somethingMoved: true, why: "moved", leads: [], settledNow: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        const props = ((args.schema as { properties?: Record<string, unknown> }).properties ??
+          {}) as Record<string, unknown>;
+        // Discovery answers; the composing pass is refused for budget.
+        if ("anythingMaterial" in props) {
+          return {
+            text: "{}",
+            parsed: { anythingMaterial: true, quietNote: "", candidates: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 0,
+            truncated: false,
+          };
+        }
+        throw new BudgetExceededError(1.3132, 1.25);
+      },
+      logs
+    );
+
+    // Candidates are recommendations carrying a watch_candidate payload.
+    const candidates = result.filter(
+      (action) => action.type === "recommendation" && action.payload["kind"] === "watch_candidate"
+    );
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(result.map((action) => action.type)).toContain("observation");
+
+    const note = result.find((action) => action.type === "observation");
+    expect(note?.summary).toContain("spend ceiling");
+    expect(note?.payload["spentUsd"]).toBe(1.3132);
+    expect(logs.join(" ")).toContain("the ceiling stopped the composing pass");
+  });
+
+  it("still runs the expensive passes when the scan finds movement", async () => {
+    // The gate has to open as well as close, or the agent quietly stops working
+    // and looks like it is saving money.
+    const logs: string[] = [];
+    const calls = { research: 0, scan: 0, other: 0 };
+
+    await runWith(
+      memoryStub({ "intel.candidate_verdicts": allSeedsRuled() }),
+      async (args) => {
+        const pass = passOf(args);
+        calls[pass] += 1;
+        if (pass === "research") return research;
+        if (pass === "scan") {
+          return {
+            text: "{}",
+            parsed: {
+              somethingMoved: true,
+              why: "Lumena published a price.",
+              leads: ["lumenaglobal.com pricing page"],
+              settledNow: [],
+            },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 2,
+            truncated: false,
+          };
+        }
+        return {
+          text: "{}",
+          parsed: { anythingMaterial: false, quietNote: "quiet", candidates: [] },
+          costUsd: 0.02,
+          sources: [],
+          searchesUsed: 0,
+          truncated: false,
+        };
+      },
+      logs
+    );
+
+    expect(calls.scan).toBe(1);
+    expect(calls.research).toBe(1);
+    expect(logs.join(" ")).toContain("scan says something moved");
+    expect(logs.join(" ")).toContain("1 lead(s)");
   });
 
   it("puts candidates to the owner rather than watching them itself", async () => {

@@ -6,7 +6,7 @@ import { readiness } from "../env.js";
 import { Supabase } from "../lib/supabase.js";
 import { Claude } from "../lib/claude.js";
 import { createJudge, unavailableJudge } from "../lib/judge.js";
-import type { RunContext } from "../core/agent.js";
+import type { RunContext, RunCadence } from "../core/agent.js";
 import type { AgentId } from "../core/types.js";
 import {
   AGENTS,
@@ -304,7 +304,7 @@ export async function handleApi(
   if (segments[0] === "run" && request.method === "POST") {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const agentId = segments[1];
-    const cadence = (url.searchParams.get("cadence") ?? "hourly") as "hourly" | "daily" | "weekly";
+    const cadence = (url.searchParams.get("cadence") ?? "hourly") as RunCadence;
 
     return new Response(
       runStream(async (send) => {
@@ -338,7 +338,7 @@ export async function handleApi(
   // GET /api/schedules
   //   returns { [agentId]: {cadence, updatedAt, note} } for the dashboard.
   // PUT /api/schedules/:agentId  { cadence, note? }
-  //   valid cadences: "hourly" | "daily" | "weekly" | "paused" | "default"
+  //   valid cadences: "hourly" | "daily" | "weekly" | "monthly" | "paused" | "default"
   //   "default" clears the override so the built-in cadence applies again.
   if (segments[0] === "schedules") {
     const db = new Supabase(env);
@@ -357,7 +357,7 @@ export async function handleApi(
         note?: string;
       };
       const cadence = body.cadence;
-      const valid = ["hourly", "daily", "weekly", "paused", "default"];
+      const valid = ["hourly", "daily", "weekly", "monthly", "paused", "default"];
       if (!cadence || !valid.includes(cadence)) {
         return json({ error: `cadence must be one of ${valid.join(", ")}` }, 400);
       }
