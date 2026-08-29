@@ -26,7 +26,7 @@ if (!url) {
   console.error(
     "DATABASE_URL is not set.\n\n" +
       "Get it from the Supabase dashboard -> Connect -> Connection string (URI),\n" +
-      "or paste db/migrations/0001_orchestration_layer.sql into the SQL editor instead."
+      "or paste the files in db/migrations/ into the SQL editor instead, in name order."
   );
   process.exit(1);
 }
@@ -59,15 +59,23 @@ try {
     console.log("ok");
   }
 
+  // The tables each migration is responsible for. Named here rather than
+  // counted, so a missing one is reported by name instead of as "expected 4".
+  const EXPECTED = ["intel_briefs", "memory", "pending_approvals", "reports"];
+
   const { rows } = await client.query(
     `select table_name from information_schema.tables
       where table_schema = 'public'
-        and table_name in ('reports','memory','pending_approvals')
-      order by table_name`
+        and table_name = any($1)
+      order by table_name`,
+    [EXPECTED]
   );
-  console.log(`\ntables present: ${rows.map((r) => r.table_name).join(", ") || "(none)"}`);
-  if (rows.length !== 3) {
-    console.error("Expected all three tables. Check the output above.");
+  const present = rows.map((r) => r.table_name);
+  console.log(`\ntables present: ${present.join(", ") || "(none)"}`);
+
+  const missing = EXPECTED.filter((name) => !present.includes(name));
+  if (missing.length > 0) {
+    console.error(`Missing: ${missing.join(", ")}. Check the output above.`);
     process.exitCode = 1;
   }
 } finally {

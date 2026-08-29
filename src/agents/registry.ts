@@ -1,9 +1,17 @@
 // The roster, and the two things that operate on it: running agents on a tick,
 // and carrying out an approval you have granted.
 
-import type { AgentDefinition, RunContext } from "../core/agent.js";
+import type { AgentDefinition, RunContext, RunCadence } from "../core/agent.js";
 import { runAgent, type AgentRunResult } from "../core/agent.js";
-import type { AgentId } from "../core/types.js";
+import type { AgentId, AgentBatch } from "../core/types.js";
+import {
+  overrideIsStale,
+  STATE_KEYS,
+  state,
+  type AgentScheduleMap,
+  type AgentScheduleOverride,
+} from "../core/state.js";
+import type { Supabase } from "../lib/supabase.js";
 import { chiefOfStaff, chiefOfStaffAgent } from "./orchestration/chief-of-staff.js";
 
 import { contentAgent } from "./marketing/content.js";
@@ -19,7 +27,10 @@ import { objectionFaqAgent } from "./sales/objection-faq.js";
 
 import { financeWatchAgent } from "./executive/finance-watch.js";
 import { opsHealthAgent } from "./executive/ops-health.js";
+import { siteIntegrityAgent } from "./executive/site-integrity.js";
 import { growthStrategyAgent } from "./executive/growth-strategy.js";
+
+import { competitiveIntelAgent } from "./intelligence/competitive-intel.js";
 
 export const AGENTS: AgentDefinition[] = [
   // Marketing — seven, in the order the doc lists them.
@@ -33,9 +44,14 @@ export const AGENTS: AgentDefinition[] = [
   // Sales management — two.
   leadPipelineAgent,
   objectionFaqAgent,
-  // Executive — three.
+  // Executive — four.
   financeWatchAgent,
   opsHealthAgent,
+  siteIntegrityAgent,
+  // Intelligence — one. Ordered before Growth-Strategy on purpose: both wake on
+  // the Monday tick, and Growth-Strategy reads the newest brief when it runs.
+  // Registry order is what makes that brief this week's rather than last week's.
+  competitiveIntelAgent,
   growthStrategyAgent,
   // Orchestration — one.
   chiefOfStaffAgent,
@@ -45,23 +61,110 @@ export function getAgent(id: string): AgentDefinition | undefined {
   return AGENTS.find((agent) => agent.id === id);
 }
 
-/** Which agents are due on this tick. */
-export function agentsDue(cadence: "hourly" | "daily" | "weekly", now: Date): AgentDefinition[] {
+/** Read the dashboard's schedule overrides. Absent when not yet set. */
+export async function readSchedules(db: Supabase): Promise<AgentScheduleMap> {
+  const value = await state.read<AgentScheduleMap>(db, STATE_KEYS.agentSchedules);
+  return value ?? {};
+}
+
+/**
+ * Which agents are due on this tick, honouring dashboard overrides. An override
+ * of "paused" excludes the agent from every cadence; any other override wins
+ * over the agent's built-in cadence.
+ *
+ * The override still wins even when it is stale — see overrideIsStale in
+ * core/state.ts. Deciding on an agent's behalf that somebody's pause has
+ * expired is not this function's call to make; saying loudly that one has is,
+ * and that is what staleOverrides below is for.
+ */
+export function agentsDueWith(
+  cadence: RunCadence,
+  overrides: AgentScheduleMap
+): AgentDefinition[] {
   return AGENTS.filter((agent) => {
     if (agent.externalBuild) return false;
     if (agent.cadence === "manual" || agent.cadence === "external") return false;
-    if (cadence === "hourly") return agent.cadence === "hourly";
-    if (cadence === "daily") return agent.cadence === "daily";
-    return agent.cadence === "weekly";
-  }).filter(() => now instanceof Date);
+
+    const override = overrides[agent.id];
+    if (override) {
+      if (override.cadence === "paused") return false;
+      return override.cadence === cadence;
+    }
+
+    return agent.cadence === cadence;
+  });
+}
+
+/**
+ * Overrides that were set against a cadence the agent no longer has. Each one
+ * is an old decision quietly outranking a newer one, which is invisible unless
+ * something goes looking for it. Both live pauses turned out to be this.
+ */
+export function staleOverrides(
+  overrides: AgentScheduleMap
+): Array<{ agentId: string; override: AgentScheduleOverride; builtInCadence: string }> {
+  const stale: Array<{
+    agentId: string;
+    override: AgentScheduleOverride;
+    builtInCadence: string;
+  }> = [];
+  for (const agent of AGENTS) {
+    const override = overrides[agent.id];
+    if (override && overrideIsStale(override, agent.cadence)) {
+      stale.push({ agentId: agent.id, override, builtInCadence: agent.cadence });
+    }
+  }
+  return stale;
+}
+
+/** Legacy signature. Kept for tests that do not need overrides. */
+export function agentsDue(cadence: RunCadence, _now: Date): AgentDefinition[] {
+  return agentsDueWith(cadence, {});
+}
+
+/**
+ * Which slice of a cadence a tick is responsible for.
+ *
+ * A cron invocation gets fifteen minutes of wall clock for everything it runs,
+ * and this loop is sequential. Competitive Intelligence measured 10m03s on its
+ * own, which leaves Growth-Strategy — Opus, and the other agent in this system
+ * that thinks hard — under five minutes before the whole invocation is killed.
+ * The second one would die silently, because a killed agent leaves a "running"
+ * row rather than an error. So the weekly cadence is split across two ticks
+ * rather than being asked to fit in one.
+ */
+export interface BatchFilter {
+  /** Only these batches. */
+  only?: AgentBatch[];
+  /** Everything except these batches. */
+  except?: AgentBatch[];
+}
+
+/** Narrow a list of due agents to the slice one tick owns. */
+export function applyBatchFilter(
+  agents: AgentDefinition[],
+  filter: BatchFilter = {}
+): AgentDefinition[] {
+  return agents.filter((agent) => {
+    if (filter.only && !filter.only.includes(agent.batch)) return false;
+    if (filter.except && filter.except.includes(agent.batch)) return false;
+    return true;
+  });
 }
 
 export async function runDue(
-  cadence: "hourly" | "daily" | "weekly",
-  ctx: RunContext
+  cadence: RunCadence,
+  ctx: RunContext,
+  filter: BatchFilter = {}
 ): Promise<AgentRunResult[]> {
+  const overrides = await readSchedules(ctx.db).catch(() => ({}));
+  for (const entry of staleOverrides(overrides)) {
+    ctx.log(
+      `${entry.agentId}: schedule override "${entry.override.cadence}" was set when its cadence in code was "${entry.override.builtInCadence}"; it is now "${entry.builtInCadence}". The override is still in force.`
+    );
+  }
   const results: AgentRunResult[] = [];
-  for (const agent of agentsDue(cadence, ctx.now)) {
+  for (const agent of applyBatchFilter(agentsDueWith(cadence, overrides), filter)) {
     ctx.log(`running ${agent.id}`);
     results.push(await runAgent(agent, chiefOfStaff, ctx));
   }

@@ -17,7 +17,7 @@ import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { FAQ_LIBRARY, findFaqEntry } from "../../core/config.js";
 
-import { MODELS } from "../../core/models.js";
+import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 
 const MODEL = MODELS.balanced;
@@ -157,7 +157,7 @@ export const objectionFaqAgent: AgentDefinition = {
         FAQ_LIBRARY.map((entry) => `- ${entry.question} -> ${entry.approvedAnswer}`).join("\n"),
       model: MODEL,
       effort: objectionFaqAgent.effort,
-      maxTokens: 600,
+      maxTokens: SHORT_ANSWER_MAX_TOKENS,
     });
 
     return [

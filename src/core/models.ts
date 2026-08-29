@@ -8,6 +8,25 @@
 // Per-agent assignments live on each agent definition; the reasoning behind
 // each one is in docs/MODEL-CHOICES.md.
 
+/**
+ * A budget for a call whose ANSWER is short but whose model thinks first.
+ *
+ * On this generation thinking is billed inside max_tokens, so a budget sized
+ * for the visible answer is spent before the answer begins. That is not a
+ * theory: the SEO agent asked Sonnet 5 at effort high for a 160-character meta
+ * description with max_tokens 400 and died on "Ran out of output budget", and
+ * the parse error that follows a truncation blames the model for not returning
+ * what was asked for while hiding the real cause.
+ *
+ * max_tokens is a ceiling, not a spend — raising it costs nothing unless the
+ * tokens are actually generated — so the only reason to keep one low is to cap
+ * a runaway, and none of these calls can run away.
+ *
+ * A model with no thinking (the fast tier) does not need this and should stay
+ * sized for its answer.
+ */
+export const SHORT_ANSWER_MAX_TOKENS = 2000;
+
 export const MODELS = {
   /** Judgement that is expensive to get wrong, or writing that goes out in public. */
   reasoning: "claude-opus-5",
@@ -37,6 +56,16 @@ export interface ModelCapabilities {
   /** USD per million tokens, for the cost estimate written into each report. */
   priceInPerMTok: number;
   priceOutPerMTok: number;
+  /**
+   * The server-side web tools this model accepts, by exact `type` string. The
+   * versioned names are not interchangeable: the current generation takes the
+   * 2026-02-09 pair, which filters results in a sandbox before they reach the
+   * context window, and older models only take the earlier pair. Sending the
+   * wrong one is a 400, in the same family of mistake as sending `effort` to
+   * Haiku. `null` on both means no web access for that model.
+   */
+  webSearchToolType: string | null;
+  webFetchToolType: string | null;
 }
 
 export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
@@ -46,6 +75,8 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 1_000_000,
     priceInPerMTok: 5,
     priceOutPerMTok: 25,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   },
   "claude-sonnet-5": {
     adaptiveThinking: true,
@@ -53,6 +84,8 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 1_000_000,
     priceInPerMTok: 3,
     priceOutPerMTok: 15,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   },
   "claude-haiku-4-5": {
     // Haiku 4.5 predates adaptive thinking and the effort parameter. Sending
@@ -62,8 +95,18 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 200_000,
     priceInPerMTok: 1,
     priceOutPerMTok: 5,
+    // Haiku 4.5 predates dynamic filtering, so it takes the earlier pair.
+    webSearchToolType: "web_search_20250305",
+    webFetchToolType: "web_fetch_20250910",
   },
 };
+
+/**
+ * What one web search costs, on top of the tokens the results consume.
+ * Published as $10 per 1,000 searches. Recorded per run so a research agent's
+ * bill is not just its token spend.
+ */
+export const WEB_SEARCH_USD_PER_CALL = 0.01;
 
 export function capabilitiesFor(model: string): ModelCapabilities {
   const known = MODEL_CAPABILITIES[model as ModelId];
@@ -76,6 +119,8 @@ export function capabilitiesFor(model: string): ModelCapabilities {
     contextTokens: 200_000,
     priceInPerMTok: 5,
     priceOutPerMTok: 25,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   };
 }
 

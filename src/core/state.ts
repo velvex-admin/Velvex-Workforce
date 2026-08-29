@@ -21,7 +21,122 @@ export const STATE_KEYS = {
   siteChangeQueue: "site.change_queue",
   channelPerformance: "marketing.channel_performance",
   opsStatus: "ops.pipeline_status",
+  agentSchedules: "control.agent_schedules",
+  agentRuntime: "runtime.agent_status",
+  /** The deployed site, path to content. Our copy is the source of truth. */
+  siteSource: "site.source",
+  /** What the Competitive Intelligence agent watches. Owner-supplied. */
+  intelWatchlist: "intel.watchlist",
+  /** What each watched source last said, so "it changed" is a comparison. */
+  intelSnapshots: "intel.source_snapshots",
+  /**
+   * A one-line pointer to the newest brief. The brief itself lives in
+   * intel_briefs; only the pointer goes in memory, because memory is read into
+   * other agents' prompts and a full brief there would be paid for on every
+   * tick by agents that never asked for it.
+   */
+  intelLatest: "intel.latest_brief",
+  /**
+   * The owner's standing statement of where Velvex actually stands, plus every
+   * question the agent has asked and had answered. Authoritative over anything
+   * the agent reads about Velvex on the open web.
+   */
+  intelPosition: "intel.position",
+  /**
+   * The owner's rulings on watch candidates: what was accepted onto the
+   * watchlist, what was rejected, and when a rejection stops applying. Nothing
+   * is fetched until it appears here as accepted.
+   */
+  intelCandidates: "intel.candidate_verdicts",
+  /**
+   * Things the scan has checked and found settled, so later cycles can skip
+   * them. Subtractive memory: it exists to make each run cheaper than the last,
+   * which is the opposite of what carrying open questions forward did.
+   */
+  intelSettled: "intel.settled",
+  /** The last site source verified sound. What a restore goes back to. */
+  siteLastGood: "site.source.last_good",
+  /** When automatic restores happened, so they cannot become a deploy loop. */
+  siteRestores: "site.restores",
 } as const;
+
+/**
+ * Per-agent schedule overrides set from the dashboard. When absent, the
+ * agent's built-in cadence in code applies. When present, this cadence wins
+ * (including "paused", which stops the agent from firing on any tick).
+ */
+export interface AgentScheduleOverride {
+  cadence: "hourly" | "daily" | "weekly" | "monthly" | "paused";
+  updatedAt: string;
+  note?: string;
+  /**
+   * The agent's cadence in code at the moment this override was set.
+   *
+   * An override outlives the reason it was set. Nothing clears it, no redeploy
+   * touches it, and a cadence changed in code loses to it silently — which is
+   * how Competitive Intelligence sat paused straight through the change that
+   * gave it a monthly cadence, and how the SEO agent stayed paused long after
+   * the failure that paused it was fixed. Recording the baseline is what makes
+   * that divergence visible later.
+   *
+   * Absent on overrides written before this field existed, which is why
+   * staleness is only ever reported when it is present and differs.
+   */
+  builtInCadence?: string;
+}
+
+export type AgentScheduleMap = Record<string, AgentScheduleOverride>;
+
+/**
+ * True when the code cadence has changed since the override was set, so the
+ * override is now suppressing a decision made after it. Never true for an
+ * override with no recorded baseline: not knowing is not evidence.
+ */
+export function overrideIsStale(
+  override: AgentScheduleOverride | undefined,
+  builtInCadence: string
+): boolean {
+  if (!override?.builtInCadence) return false;
+  return override.builtInCadence !== builtInCadence;
+}
+
+/**
+ * A live status board the runner updates so the dashboard can show what each
+ * agent is currently working on, rather than only what it has finished.
+ *
+ * Phases are stable strings the dashboard reads: "thinking" while the agent is
+ * proposing, "acting" while it is executing, "reporting" while writing back,
+ * "idle" once done, and "failed" if it errored.
+ */
+export interface AgentRuntimeStatus {
+  status: "running" | "idle" | "failed";
+  phase: "thinking" | "acting" | "reporting" | "idle" | "failed";
+  startedAt?: string;
+  endedAt?: string;
+  runId?: string;
+  /** The most recent log line, so the panel can show it verbatim. */
+  latestThought?: string;
+  /** Up to the last 12 log lines from this run (or the previous one, when idle). */
+  thoughts?: Array<{ at: string; text: string }>;
+  /**
+   * Proof the isolate running this agent was still alive at this moment.
+   *
+   * Without it a "running" row is indistinguishable from a run that was killed
+   * mid-flight, because a killed Worker cannot write its own epitaph. That is
+   * not hypothetical: a manual run was terminated thirty seconds in and its row
+   * read "running" for half an hour afterwards, which is exactly the state
+   * anyone watching would read as "still thinking".
+   */
+  heartbeatAt?: string;
+  /** Human-readable counts once the run has settled. */
+  proposed?: number;
+  executed?: number;
+  queued?: number;
+  failed?: number;
+  error?: string;
+}
+
+export type AgentRuntimeStatusMap = Record<string, AgentRuntimeStatus>;
 
 export interface Prospect {
   id: string;

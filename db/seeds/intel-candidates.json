@@ -1,0 +1,127 @@
+{
+  "_comment": [
+    "The first batch of watch candidates. NOT a watchlist: nothing here is fetched",
+    "until the owner has accepted it.",
+    "",
+    "The agent proposes these a few per run, highest signal first, and each one goes",
+    "to the approvals queue as its own decision. Accept and it joins intel.watchlist",
+    "and starts being snapshotted and diffed. Reject and it is suppressed for 180",
+    "days, however often the agent rediscovers it.",
+    "",
+    "Every URL was fetched on 2026-08-24 with the agent's own User-Agent and run",
+    "through its own extractText(), so each is known to return usable prose rather",
+    "than a bot block or a JavaScript shell. Three candidates that refuse us are in",
+    "_rejected below: a source that cannot be fetched is worse than no source,",
+    "because it reports 'unreachable' every week forever.",
+    "",
+    "Order is deliberate. The one real competitor first, then the pages where",
+    "category language hardens, then buyer vocabulary. If the owner only ever rules",
+    "on the first three, those are the three worth having."
+  ],
+  "candidates": [
+    {
+      "id": "lumena-operational-readiness",
+      "name": "Lumena Global — Operational Readiness Assessment",
+      "url": "https://www.lumenaglobal.com/insights/operational-readiness-assessment",
+      "suggestedKind": "competitor",
+      "whyItMightMatch": "The closest adjacent ground found, and the only one using the same rhetorical move: 'Strategy tells you where to go. An operational readiness assessment tells you whether the current version of your business can get there.' Not the same product: their seven pillars are operating-model and org design (decision rights, role clarity, cadence, handoffs), the engagement runs 2 to 4 weeks, and no price is published. Watch three things. Whether their pillars move from process toward commercial architecture, revenue mechanics, channel dependency or margin. Whether a fixed price appears. Whether the 2 to 4 week window shortens.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "bizhealth-tools-index",
+      "name": "BizHealth.ai — best business diagnostic tools index",
+      "url": "https://bizhealth.ai/resources/best-business-health-assessment-tools-small-business-owners-2026",
+      "suggestedKind": "category",
+      "whyItMightMatch": "A category-defining index page: it decides who counts as a business diagnostic tool and in what words. This is where category language hardens, and it is the single most useful page on this list for tracking how 'business health' is being defined by the people selling it. Velvex appearing on a page like this, or the criteria shifting toward structural reading, are both events.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "startupready-ai",
+      "name": "Startup Readiness Score — startupready.ai",
+      "url": "https://startupready.ai/",
+      "suggestedKind": "category",
+      "whyItMightMatch": "Free six-pillar startup assessment. Structurally the nearest analogue to the Vela node framing, at the opposite end of depth and price. Watch whether the pillars acquire dependency language, whether a paid tier appears, and whether they start claiming the output is defensible rather than indicative.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "bizhealth-home",
+      "name": "BizHealth.ai — homepage",
+      "url": "https://bizhealth.ai/",
+      "suggestedKind": "category",
+      "whyItMightMatch": "AI business health diagnostic across financial, operational, team and strategic health. Watch for the word 'architecture', for anything about load-bearing dependencies, and for whether they move from benchmarking against peers to reading one business on its own terms. Benchmarking and structural reading are different claims.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "readyscore-ai",
+      "name": "ReadyScore.ai — investor readiness score",
+      "url": "https://readyscore.ai/",
+      "suggestedKind": "category",
+      "whyItMightMatch": "Scores investor readiness across 40+ parameters. Already repositioning: as of 2026-08-24 this domain redirects to investorconnect365.com, so the standalone scoring product is being folded into a marketplace. Watch whether the score survives as its own product or becomes a funnel into introductions, which is a different business from a diagnostic.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "avantiico-readiness-pricing",
+      "name": "Avantiico — fixed-price readiness assessment",
+      "url": "https://avantiico.com/ai-consulting-services-at-a-glance/ai-readiness-assessment-services/",
+      "suggestedKind": "adjacent_tooling",
+      "whyItMightMatch": "Not a competitor by subject, but the closest published analogue to Velvex's commercial model: a bounded, fixed-price diagnostic delivered in days rather than an open-ended engagement, sold explicitly against 'eight-week multi-stream consulting'. Watch how they justify the fixed price and how they describe the boundary of the engagement. That argument is the same argument Velvex has to make.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "neotas-diligence-checklist",
+      "name": "Neotas — investment due diligence checklist",
+      "url": "https://www.neotas.com/investment-due-diligence-checklist/",
+      "suggestedKind": "buyer_language",
+      "whyItMightMatch": "The allocator side of the same conversation, and it already uses 'structural' and 'dependency'. Watch whether operational and commercial architecture rise up the checklist relative to financial diligence. If they do, the pre-raise position Velvex would occupy is being validated by the buyers themselves.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "scrolllaunch-readiness",
+      "name": "ScrollLaunch — Startup Readiness Assessment",
+      "url": "https://www.scrolllaunch.com/products/startup-readiness-score",
+      "suggestedKind": "category",
+      "whyItMightMatch": "Free six-pillar diagnostic. Watch the pillar names and whether 'diagnostic' starts being used for something structural rather than for a questionnaire. The word is being taken, and this is one of the places it is being taken from.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "finro-startup-diligence",
+      "name": "Finro — startup due diligence and fundraising readiness",
+      "url": "https://www.finrofca.com/news/startup-due-diligence",
+      "suggestedKind": "buyer_language",
+      "whyItMightMatch": "How founders are taught to prepare for diligence. This is the vocabulary a buyer arrives with, which matters more than what any competitor says: it determines whether 'structural dependency' lands as precise or as jargon.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    },
+    {
+      "id": "magistral-commercial-diligence",
+      "name": "Magistral — commercial due diligence for buyers",
+      "url": "https://magistralconsulting.com/commercial-due-diligence-for-buyers/",
+      "suggestedKind": "buyer_language",
+      "whyItMightMatch": "Commercial diligence framed for acquirers. Notably free of structural vocabulary today, which makes it a clean control: if this page starts talking about dependencies and load-bearing channels, the language has moved in the part of the market that writes cheques.",
+      "evidence": "Fetched 2026-08-24 with the agent's own User-Agent; returned usable prose.",
+      "standard": "observed"
+    }
+  ],
+  "_rejected": [
+    {
+      "url": "https://getscoremax.com/",
+      "why": "SCOREMAX. Returns 403 to our User-Agent, so it cannot be snapshotted or diffed. Worth a manual look now and then instead: it is an AI startup evaluation platform and a real category member, it just cannot be watched automatically."
+    },
+    {
+      "url": "https://helloalice.com/funding/bhs/",
+      "why": "Hello Alice Business Health Score. Returns 429. Relevant, since 'Business Health Score' is one of the exact terms being tracked, but rate limited against us."
+    },
+    {
+      "url": "https://www.score.org/resource/tool/business-health-check-tool",
+      "why": "SCORE.org Business Health Check. Returns 403."
+    }
+  ]
+}

@@ -62,6 +62,27 @@ export interface ApprovalRow {
   error?: string | null;
 }
 
+/** A filed intelligence brief. `document` is the whole IntelBrief. */
+export interface IntelBriefRow {
+  id?: string;
+  created_at?: string;
+  /** YYYY-MM-DD. Unique: one brief per cycle. */
+  brief_date: string;
+  title: string;
+  headline: string;
+  document?: Record<string, unknown>;
+  gap_count?: number;
+  move_count?: number;
+  source_count?: number;
+  sources_watched?: number;
+  sources_changed?: number;
+  web_research?: boolean;
+  searches_used?: number;
+  model?: string | null;
+  cost_usd?: number;
+  run_id?: string | null;
+}
+
 export class SupabaseError extends Error {
   constructor(
     message: string,
@@ -202,6 +223,63 @@ export class Supabase {
       { method: "PATCH", body: JSON.stringify(patch), prefer: "return=representation" }
     );
     return rows[0]!;
+  }
+
+  // --- intel_briefs --------------------------------------------------------
+
+  /**
+   * File a brief. Keyed on the date it covers, so a second run on the same day
+   * revises that day's brief instead of filing a near-duplicate next to it.
+   */
+  async upsertIntelBrief(row: IntelBriefRow): Promise<IntelBriefRow> {
+    const rows = await this.request<IntelBriefRow[]>("intel_briefs?on_conflict=brief_date", {
+      method: "POST",
+      body: JSON.stringify(row),
+      prefer: "return=representation,resolution=merge-duplicates",
+    });
+    return rows[0]!;
+  }
+
+  /**
+   * The library index. `document` is excluded on purpose: the list view shows
+   * titles and counts, and pulling every full brief to render a list is how a
+   * library page gets slow and expensive at the same time.
+   */
+  async listIntelBriefs(limit = 50): Promise<IntelBriefRow[]> {
+    const params = new URLSearchParams({
+      select:
+        "id,created_at,brief_date,title,headline,gap_count,move_count,source_count," +
+        "sources_watched,sources_changed,web_research,searches_used,model,cost_usd",
+      order: "brief_date.desc",
+      limit: String(limit),
+    });
+    return this.request<IntelBriefRow[]>(`intel_briefs?${params}`);
+  }
+
+  /** One brief, whole. Accepts either its uuid or the date it covers. */
+  async getIntelBrief(handle: string): Promise<IntelBriefRow | null> {
+    const column = /^\d{4}-\d{2}-\d{2}$/.test(handle) ? "brief_date" : "id";
+    const rows = await this.request<IntelBriefRow[]>(
+      `intel_briefs?${column}=eq.${encodeURIComponent(handle)}&select=*&limit=1`
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Whether migration 0002 has been applied.
+   *
+   * Worth a dedicated probe: without it the intelligence agent's first act on a
+   * fresh deployment is an insert that 400s, which surfaces as a failed run
+   * rather than as "the migration has not been run". The agent calls this
+   * first and stops cleanly; the dashboard shows the same answer.
+   */
+  async intelReady(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.request<unknown>("intel_briefs?select=id&limit=1");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Cheap health probe for the dashboard. */

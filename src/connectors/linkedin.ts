@@ -35,6 +35,64 @@ export interface LinkedInQueueItem {
   status: "queued" | "collected" | "published";
   publishedRef?: string;
   publishedAt?: string;
+  /**
+   * Stable identity of the work this item carries — a content draft id, an
+   * inbound message id. Two items with the same key are the same piece of
+   * work, however many times it was handed over. Optional because rows written
+   * before this field existed do not have one; those fall back to their text.
+   */
+  sourceKey?: string;
+}
+
+/**
+ * What makes an item this item rather than another. The caller-supplied key is
+ * preferred: it is exact, and it survives the copy being re-drafted. Text is
+ * the fallback for rows queued before keys existed.
+ */
+export function queueIdentity(item: Pick<LinkedInQueueItem, "text" | "sourceKey">): string {
+  if (item.sourceKey) return `key:${item.sourceKey}`;
+  return `text:${item.text.replace(/\s+/g, " ").trim().toLowerCase()}`;
+}
+
+/**
+ * Collapse repeats of the same work.
+ *
+ * This queue filled with one post repeated on every hourly tick. The
+ * strategist published into it, the handover was reported as
+ * `blocked_inactive` because the partner is not wired up yet, and nothing
+ * downstream recorded that the draft had been handed over — so the next tick
+ * found the same ready draft and the same unconsumed slot and did it again.
+ * The strategist side is fixed in channel-agent.ts; this is the second line of
+ * defence, and the thing that heals a queue already full of repeats.
+ *
+ * Only `queued` rows are ever dropped. A collected or published row is what
+ * the partner actually took, so it stays whatever else is in the group.
+ */
+export function dedupeQueue(items: LinkedInQueueItem[]): LinkedInQueueItem[] {
+  const groups = new Map<string, LinkedInQueueItem[]>();
+  for (const item of items) {
+    const identity = queueIdentity(item);
+    const group = groups.get(identity);
+    if (group) group.push(item);
+    else groups.set(identity, [item]);
+  }
+
+  const keep = new Set<string>();
+  for (const group of groups.values()) {
+    const advanced = group.filter((item) => item.status !== "queued");
+    if (advanced.length > 0) {
+      // The partner has this one. Every still-queued copy is a repeat of work
+      // already taken.
+      for (const item of advanced) keep.add(item.id);
+      continue;
+    }
+    // All queued: keep the original, which is the oldest. The array is
+    // newest-first, so that is the last one.
+    const oldest = group.reduce((a, b) => (a.createdAt <= b.createdAt ? a : b));
+    keep.add(oldest.id);
+  }
+
+  return items.filter((item) => keep.has(item.id));
 }
 
 export function linkedInStatus(env: Env): ConnectorStatus {
@@ -69,6 +127,34 @@ async function readQueue(db: Supabase): Promise<LinkedInQueueItem[]> {
   return Array.isArray(items) ? (items as LinkedInQueueItem[]) : [];
 }
 
+/**
+ * Read the queue and repair it in the same breath. Nothing that reads this
+ * queue wants to see the same post four times, and a repeat that is only
+ * hidden at the point of display is still sitting in the table waiting to be
+ * collected. Writes back only when something was actually removed.
+ */
+async function readQueueHealed(
+  db: Supabase
+): Promise<{ items: LinkedInQueueItem[]; removed: number }> {
+  const raw = await readQueue(db);
+  const items = dedupeQueue(raw);
+  const removed = raw.length - items.length;
+  if (removed > 0) await writeQueue(db, items);
+  return { items, removed };
+}
+
+/** Maintenance: collapse repeats already sitting in the queue. */
+export async function compactQueue(
+  db: Supabase
+): Promise<{ removed: number; remaining: number; waiting: number }> {
+  const { items, removed } = await readQueueHealed(db);
+  return {
+    removed,
+    remaining: items.length,
+    waiting: items.filter((item) => item.status === "queued").length,
+  };
+}
+
 async function writeQueue(db: Supabase, items: LinkedInQueueItem[]): Promise<void> {
   await db.writeMemory({
     key: QUEUE_KEY,
@@ -82,26 +168,38 @@ async function writeQueue(db: Supabase, items: LinkedInQueueItem[]): Promise<voi
   });
 }
 
-/** Called when a draft is cleared to go out on LinkedIn. */
+/**
+ * Called when a draft is cleared to go out on LinkedIn.
+ *
+ * Handing over the same work twice is not an error worth failing on, but it
+ * must not produce two rows: the partner would publish the post twice. So a
+ * second handover of something already in the queue returns the row that is
+ * already there and writes nothing.
+ */
 export async function enqueueForPartner(
   db: Supabase,
   item: Omit<LinkedInQueueItem, "id" | "createdAt" | "status">
-): Promise<LinkedInQueueItem> {
+): Promise<{ item: LinkedInQueueItem; duplicate: boolean }> {
+  const { items } = await readQueueHealed(db);
+
+  const identity = queueIdentity(item);
+  const existing = items.find((row) => queueIdentity(row) === identity);
+  if (existing) return { item: existing, duplicate: true };
+
   const queued: LinkedInQueueItem = {
     ...item,
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     status: "queued",
   };
-  const items = await readQueue(db);
   items.unshift(queued);
   await writeQueue(db, items.slice(0, 200));
-  return queued;
+  return { item: queued, duplicate: false };
 }
 
 /** The partner agent collecting its work. Marks what it takes. */
 export async function collectQueue(db: Supabase, markCollected = true): Promise<LinkedInQueueItem[]> {
-  const items = await readQueue(db);
+  const { items } = await readQueueHealed(db);
   const waiting = items.filter((item) => item.status === "queued");
   if (markCollected && waiting.length > 0) {
     const collectedIds = new Set(waiting.map((item) => item.id));

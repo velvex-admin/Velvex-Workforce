@@ -36,29 +36,54 @@ export const BUSINESS = {
 
   engine: {
     name: "Veĺa",
-    version: "v0.1",
-    /** The six nodes the site names on the diagnostic interface. */
-    nodes: [
-      "Structural Architecture",
-      "Revenue Mechanics",
-      "Channel Dependency",
-      "Operational Capacity",
-      "Pressure Point Matrix",
-      "Continuity Risk",
+    version: "v1.0",
+    /**
+     * The seven engines of the Velvex Diagnostic Language, which is the
+     * qualitative structural reading.
+     *
+     * These replaced six differently-named "nodes" and a v0.1 label that this
+     * file carried for months. The old set was faithfully copied from the site,
+     * and the site was behind the product: the engine had moved to v1.0 and to
+     * these seven while every writing agent was still being handed the old
+     * vocabulary in its system prompt. Copy written from a superseded model of
+     * your own product is the quiet kind of wrong — it reads fine and
+     * contradicts the page it points at.
+     */
+    engines: [
+      "Value Engine",
+      "Demand Engine",
+      "Delivery Engine",
+      "Trust Engine",
+      "Cashflow Structure",
+      "Adaptation Capacity",
+      "Exposure Surface",
     ],
-    /** The three trajectories every engagement is analysed across. */
-    trajectories: [
-      "Structural Architecture Mapping",
-      "Systemic Integrity Calibration",
-      "Vulnerability and Pressure Point Isolation",
+    /** The six dimensions of the Velvex Scoring Logic, weighted by AHP. */
+    dimensions: [
+      "Market Position",
+      "Offer Structure",
+      "Customer Acquisition",
+      "Conversion Systems",
+      "Operations",
+      "Growth Leverage",
+    ],
+    /**
+     * The stages an engagement passes through. The old "three trajectories" are
+     * gone from the site and from the product; this is what replaced them.
+     */
+    stages: [
+      "VEF Eligibility Review — industry legitimacy, operational integrity, representation and marketing",
+      "VDL structural reading across the seven engines",
+      "VSL survivability scoring across the six dimensions, resolving to the Final Velvex Score",
+      "VHM health state, the band the score resolves into",
     ],
   },
 
   deliverable:
     "A single Executive Ledger: a version-controlled operational health assessment carrying " +
-    "the Final Velvex Score, the structural reading across all seven systems, a " +
-    "six-dimension scoring breakdown, ranked pressure points and three prioritised " +
-    "recommendations. It is paired with a five-minute executive audio briefing.",
+    "the Final Velvex Score, the structural reading across all seven engines, the " +
+    "six-dimension scoring breakdown, the health state, ranked pressure points and three " +
+    "prioritised recommendations. It is paired with a five-minute executive audio briefing.",
 
   /**
    * Introductory price for the first 10 clients: $149 per engagement. After
@@ -97,8 +122,8 @@ Who it is for: ${BUSINESS.audience}
 
 What a client receives: ${BUSINESS.deliverable}
 
-Price: $${BUSINESS.priceUsd} per engagement. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
+Price: an introductory rate of $${BUSINESS.introPriceUsd} per engagement, for the first ${BUSINESS.introSeats} clients only, after which pricing returns to the standing $${BUSINESS.priceUsd}. Never state one of those two figures without the other, and offer to confirm whether intro seats remain rather than committing either way. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
 
-The diagnostic engine is called ${BUSINESS.engine.name}. ${BUSINESS.evidenceStandard}
+The diagnostic engine is called ${BUSINESS.engine.name}, currently ${BUSINESS.engine.version}. Its structural reading names seven engines: ${BUSINESS.engine.engines.join(", ")}. Its scoring names six dimensions: ${BUSINESS.engine.dimensions.join(", ")}. Use those names and no others; earlier material describing six "nodes" or a v0.1 engine is superseded. ${BUSINESS.evidenceStandard}
 
 Never state a price, a timeline, a score or a guarantee that differs from the above. If something is not stated here, do not invent it: say it will be confirmed properly instead.`;

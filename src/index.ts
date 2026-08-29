@@ -26,7 +26,8 @@ import { readiness } from "./env.js";
 import { handleApi, buildContext, json } from "./routes/api.js";
 import { handleIntegration } from "./routes/integrations.js";
 import { dashboardHtml } from "./ui/dashboard.js";
-import { runDue } from "./agents/registry.js";
+import { runDue, type BatchFilter } from "./agents/registry.js";
+import type { RunCadence } from "./core/agent.js";
 
 /** Constant-time string comparison. */
 function secretEquals(a: string, b: string): boolean {
@@ -68,7 +69,7 @@ function authorize(url: URL, env: Env): Authorized | null {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     // The LinkedIn partner reaches its endpoints with a bearer token rather
@@ -114,7 +115,7 @@ export default {
 
     if (rest.startsWith("/api/")) {
       try {
-        return await handleApi(request, env, rest.slice("/api/".length));
+        return await handleApi(request, env, rest.slice("/api/".length), execCtx);
       } catch (err) {
         console.error(err);
         return json(
@@ -143,14 +144,43 @@ export default {
       return;
     }
 
-    const cadence =
-      event.cron === "0 8 * * 1" ? "weekly" : event.cron === "0 7 * * *" ? "daily" : "hourly";
+    // Two Monday ticks, not one. A cron invocation has fifteen minutes of wall
+    // clock for everything it runs and the agent loop is sequential, so putting
+    // Competitive Intelligence (measured 10m03s) in front of Growth-Strategy
+    // (Opus, effort high) meant the second one would be killed part way with no
+    // error to show for it. Intelligence at 08:00, everything else at 09:00, so
+    // Growth-Strategy still reads the brief that was written for it.
+    const MONTHLY = "0 8 1 * *";
+    const WEEKLY_INTEL = "0 8 * * 1";
+    const WEEKLY_REST = "0 9 * * 1";
+
+    const cadence: RunCadence =
+      event.cron === MONTHLY
+        ? "monthly"
+        : event.cron === WEEKLY_INTEL || event.cron === WEEKLY_REST
+          ? "weekly"
+          : event.cron === "0 7 * * *"
+            ? "daily"
+            : "hourly";
+
+    // The weekly split stays even though intelligence is monthly by default,
+    // because the cadence is overridable from the dashboard. Set it back to
+    // weekly and it lands on its own 08:00 tick rather than sharing the 09:00
+    // one with Growth-Strategy and reintroducing the fifteen-minute squeeze.
+    // The monthly tick takes no filter: filtering it to one batch is how a
+    // monthly agent added later would silently never run.
+    const filter: BatchFilter =
+      event.cron === WEEKLY_INTEL
+        ? { only: ["intelligence"] }
+        : event.cron === WEEKLY_REST
+          ? { except: ["intelligence"] }
+          : {};
 
     const logs: string[] = [];
     const ctx = buildContext(env, { trigger: "cron", logs });
 
     try {
-      const results = await runDue(cadence, ctx);
+      const results = await runDue(cadence, ctx, filter);
       const totals = results.reduce(
         (sum, result) => ({
           executed: sum.executed + result.executed,

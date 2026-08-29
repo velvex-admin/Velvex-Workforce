@@ -64,7 +64,7 @@ export interface ChannelStrategistSpec {
   audienceLine: string;
   /**
    * A predicate that decides whether this strategist is active for this run.
-   * Facebook uses `flag(env.FACEBOOK_ENABLED`; LinkedIn always active because
+   * Facebook uses `flag(env.FACEBOOK_ENABLED)`; LinkedIn always active because
    * the owner asked for it; X active because posting is a first-class goal.
    */
   active: (env: Env) => boolean;
@@ -82,7 +82,7 @@ const REASONING_MODEL = MODELS.reasoning;
 // Rough spend ceiling per platform per day, in ready drafts.
 const TARGET_READY_PER_CHANNEL = 3;
 
-const DRAFT_SCHEMA = {
+export const DRAFT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["draft", "growth_ideas"],
@@ -99,8 +99,10 @@ const DRAFT_SCHEMA = {
       },
     },
     growth_ideas: {
+      // No maxItems here: the API rejects array length constraints in a
+      // structured-output schema. The cap is stated in the prompt and enforced
+      // in code below, where we slice before proposing.
       type: "array",
-      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
@@ -139,13 +141,21 @@ function isApprovedFormat(value: unknown): value is ContentFormat {
  * if the reports table is empty; the model is told plainly when there is no
  * history yet, rather than filling the gap with invented pattern.
  */
-async function readChannelHistory(
+export async function readChannelHistory(
   channel: Channel,
   ctx: RunContext
 ): Promise<{ recentPosts: string[]; lastPublishedAt: number | null }> {
   const reports = await ctx.db.listReports({ limit: 200 });
+  // Attempts that failed are not posts. Counting them made a failure set the
+  // minimum-gap clock, so one refusal from the platform silently suppressed
+  // publishing for the next 30 hours, and the next attempt after that reset it
+  // again. It also fed copy nobody ever saw back to the model as "what you
+  // recently posted", which is exactly the history it is told not to repeat.
   const own = reports.filter(
-    (row) => row.channel === channel && row.action_type === "publish_post"
+    (row) =>
+      row.channel === channel &&
+      row.action_type === "publish_post" &&
+      row.outcome === "executed"
   );
 
   const recentPosts = own.slice(0, 12).map((row) => {
@@ -392,7 +402,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         }
       }
 
-      // --- drafting pass ---------------------------------------------------
+      // --- drafting pass --------------------------------------------------
       // Only draft when the shelf for this channel is short. That caps spend
       // even on a busy schedule.
       if (ready.length >= TARGET_READY_PER_CHANNEL) {
@@ -451,7 +461,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         dedupeKey: `draft:${spec.id}:${result.draft.pillar}:${result.draft.format}:${ctx.now.toISOString().slice(0, 10)}`,
       });
 
-      for (const idea of result.growth_ideas) {
+      for (const idea of (result.growth_ideas ?? []).slice(0, 3)) {
         proposals.push({
           type: "campaign_direction",
           summary: `${spec.channel} growth idea: ${idea.title}`,
@@ -541,41 +551,64 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         // We do not post to LinkedIn ourselves. The strategist drafts, the
         // outside partner agent collects and publishes. If the partner is not
         // wired up yet, the draft still lands in the queue and waits.
-        if (!flag(ctx.env.LINKEDIN_INTEGRATION_ENABLED) || !ctx.env.LINKEDIN_PARTNER_TOKEN) {
-          const queued = await enqueueForPartner(ctx.db, {
-            text,
-            approvalRef: action.approvedContentRef,
-            pillar: String(action.payload["pillar"] ?? ""),
-            format: String(action.payload["format"] ?? ""),
-          });
-          return {
-            outcome: "blocked_inactive",
-            externalRef: queued.id,
-            detail: {
-              note: "LinkedIn draft queued. It publishes as soon as the partner integration is switched on.",
-              draftId,
-              waitingOn: ["LINKEDIN_INTEGRATION_ENABLED", "LINKEDIN_PARTNER_TOKEN"],
-            },
-          };
-        }
-        const queued = await enqueueForPartner(ctx.db, {
+        //
+        // Handing the draft over IS this channel's publish step, whether or not
+        // the partner is switched on yet, so the bookkeeping is the same on
+        // both sides of that branch: stamp the draft as handed over, consume
+        // the slot that called for it. Only the outcome differs, because only
+        // one of the two has actually reached LinkedIn.
+        //
+        // Doing it on one side only is what filled the queue with a single post
+        // repeated hourly. The partner is not wired up, so every run took the
+        // early return: the draft was never stamped, so the next run found the
+        // same ready draft; the slot was never consumed, so it was still due;
+        // and the handover reports `blocked_inactive`, which readChannelHistory
+        // does not count, so the minimum-gap check never engaged either. Three
+        // guards, all bypassed by the same early return.
+        const live =
+          flag(ctx.env.LINKEDIN_INTEGRATION_ENABLED) && Boolean(ctx.env.LINKEDIN_PARTNER_TOKEN);
+
+        const { item: queued, duplicate } = await enqueueForPartner(ctx.db, {
           text,
           approvalRef: action.approvedContentRef,
           pillar: String(action.payload["pillar"] ?? ""),
           format: String(action.payload["format"] ?? ""),
+          // The draft id, so a second handover of the same draft is recognised
+          // as the same work even if the copy was touched in between.
+          sourceKey: draftId || undefined,
         });
+
         await stampPublished(queued.id);
         const usedSlot = action.payload["scheduledSlot"];
         if (typeof usedSlot === "string") {
           const currentPlan = await ensureWeeklyPlan(ctx.db, spec.schedule, ctx.now);
           await markSlotConsumed(ctx.db, spec.schedule, usedSlot, currentPlan);
         }
+
+        if (!live) {
+          return {
+            outcome: "blocked_inactive",
+            externalRef: queued.id,
+            detail: {
+              note: duplicate
+                ? "This draft was already waiting in the LinkedIn queue, so nothing was added. It publishes as soon as the partner integration is switched on."
+                : "LinkedIn draft queued. It publishes as soon as the partner integration is switched on.",
+              draftId,
+              duplicate,
+              waitingOn: ["LINKEDIN_INTEGRATION_ENABLED", "LINKEDIN_PARTNER_TOKEN"],
+            },
+          };
+        }
+
         return {
           outcome: "executed",
           externalRef: queued.id,
           detail: {
-            note: "Queued for the LinkedIn partner agent to publish.",
+            note: duplicate
+              ? "Already waiting in the LinkedIn partner queue; nothing was added."
+              : "Queued for the LinkedIn partner agent to publish.",
             draftId,
+            duplicate,
           },
         };
       }

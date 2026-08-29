@@ -17,7 +17,7 @@ import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { FINANCE_GUARDRAIL } from "../../core/config.js";
 import { state, type FinanceSnapshot } from "../../core/state.js";
 
-import { MODELS } from "../../core/models.js";
+import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 
 const MODEL = MODELS.balanced;
@@ -139,7 +139,7 @@ export const financeWatchAgent: AgentDefinition = {
       user: figures,
       model: MODEL,
       effort: financeWatchAgent.effort,
-      maxTokens: 700,
+      maxTokens: SHORT_ANSWER_MAX_TOKENS,
     });
 
     proposals.push({

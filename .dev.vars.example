@@ -1,0 +1,36 @@
+# Copy to .dev.vars for local `wrangler dev`. .dev.vars is gitignored — never
+# commit real values. In production these are Worker secrets, set with
+# `wrangler secret put <NAME>` (see DEPLOY.md).
+
+# --- Required for the app to serve anything ------------------------------
+# The unguessable path segment. Every route lives under /x/<APP_PATH_SECRET>/.
+# Generate with: openssl rand -hex 24
+APP_PATH_SECRET=
+
+# --- Required for agents to think ----------------------------------------
+ANTHROPIC_API_KEY=
+
+# --- Required for agents to remember -------------------------------------
+SUPABASE_SERVICE_ROLE_KEY=
+
+# --- Inactive until you supply them --------------------------------------
+# Facebook: agent logic and publishing code are built and tested. The connector
+# refuses to fire until both of these are set AND FACEBOOK_ENABLED="true".
+FACEBOOK_PAGE_ID=
+FACEBOOK_PAGE_ACCESS_TOKEN=
+
+# X / Twitter: same — full logic built, connector inactive until these are set
+# AND X_ENABLED="true".
+X_API_KEY=
+X_API_SECRET=
+X_ACCESS_TOKEN=
+X_ACCESS_TOKEN_SECRET=
+
+# LinkedIn: not an agent we build. This is the shared secret the external
+# company's agent presents when it calls our integration point.
+LINKEDIN_PARTNER_TOKEN=
+
+# Ops-Health monitoring of the operations pipeline. Deliberately unset: no
+# Phase 0 credentials are wired into this project.
+OPS_PIPELINE_STATUS_URL=
+OPS_PIPELINE_STATUS_TOKEN=

@@ -17,6 +17,7 @@ import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 
 import { MODELS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
+import { STATE_KEYS, state } from "../../core/state.js";
 
 const MODEL = MODELS.reasoning;
 
@@ -24,11 +25,13 @@ const SYSTEM = `You are the growth strategist for Velvex. You are the only place
 
 ${BUSINESS_CONTEXT}
 
-You are given the last two weeks of agent reports and the standing notes. Propose at most three strategy shifts. For each one:
+You are given the last two weeks of agent reports, the standing notes, and the newest competitive intelligence brief if there is one. Propose at most three strategy shifts. For each one:
 
 - Name the shift in a sentence.
 - Say what in the data made you propose it. Quote the actual figure. If the data is too thin to support a shift, say that instead of proposing one.
 - Say what you would expect to change, and by when.
+
+Where a shift is prompted by the intelligence brief rather than by our own numbers, say so, and say which of the two you would trust more if they disagreed. Category movement and our own performance are different kinds of evidence.
 
 Nothing you propose happens without the owner approving it, so be direct rather than hedged. No em dashes. No filler.`;
 
@@ -66,6 +69,17 @@ export const growthStrategyAgent: AgentDefinition = {
     const sales = await ctx.db.listReports({ batch: "sales_management", limit: 80 });
     const memory = await ctx.db.readMemory({ minSalience: 6, limit: 30 });
 
+    // The newest intelligence brief, as a pointer rather than the document: the
+    // whole brief is in intel_briefs and reading it here would put several pages
+    // of category research into a prompt that is about our own numbers. The
+    // headline and the gaps are what a strategist needs to know it exists.
+    const intel = await state
+      .read<{ briefDate: string; title: string; headline: string; gaps: string[] }>(
+        ctx.db,
+        STATE_KEYS.intelLatest
+      )
+      .catch(() => null);
+
     const window = [...marketing, ...sales].filter((row) => (row.created_at ?? "") >= since);
 
     if (window.length === 0) {
@@ -85,12 +99,17 @@ export const growthStrategyAgent: AgentDefinition = {
       .map((row) => `- [${row.agent_id}] ${row.summary} (${row.outcome})`)
       .join("\n");
     const notes = memory.map((row) => `- ${row.key}: ${row.content}`).join("\n");
+    const category = intel
+      ? `Newest competitive intelligence brief (${intel.briefDate}): ${intel.title}\n${intel.headline}\n` +
+        `Positioning gaps it named:\n${(intel.gaps ?? []).map((gap) => `- ${gap}`).join("\n") || "- (none)"}`
+      : "(no competitive intelligence brief has been filed yet)";
 
     const analysis = await ctx.claude.complete({
       system: SYSTEM,
       user:
         `Marketing and sales activity, last 14 days (${window.length} entries):\n${activity}\n\n` +
-        `Standing notes and figures:\n${notes || "(none)"}`,
+        `Standing notes and figures:\n${notes || "(none)"}\n\n` +
+        `Category read:\n${category}`,
       model: MODEL,
       effort: growthStrategyAgent.effort,
       maxTokens: 4000,
@@ -104,6 +123,7 @@ export const growthStrategyAgent: AgentDefinition = {
           analysis: analysis.text,
           reportsConsidered: window.length,
           windowDays: 14,
+          intelBriefDate: intel?.briefDate ?? null,
         },
         rationale: `Read across ${marketing.length} marketing and ${sales.length} sales reports together.`,
         dedupeKey: `growth:${ctx.now.toISOString().slice(0, 10)}`,
@@ -114,7 +134,7 @@ export const growthStrategyAgent: AgentDefinition = {
   /**
    * Only ever reached after you approve the recommendation, and even then all
    * it does is record it: acting on a strategy shift is work for the agents
-   * that own those channels.
+   * that own those channels, under their own rules.
    */
   async execute(action: ProposedAction, ctx: RunContext): Promise<ExecutionResult> {
     await ctx.db.writeMemory({
