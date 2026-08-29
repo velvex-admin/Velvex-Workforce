@@ -35,17 +35,44 @@ import {
 import { deploySite } from "../../connectors/netlify.js";
 
 /** Read every stored path from the live site, tolerating individual failures. */
+/**
+ * How long one page is given to answer.
+ *
+ * `fetch()` with no signal waits as long as the other end holds the connection,
+ * and this loop is sequential inside an hourly agent. One page that never
+ * answers therefore stops the whole integrity check — and it stops it in the
+ * worst possible way, because the agent that hangs is the one that would have
+ * reported the problem. It leaves a `running` status row, files nothing, and,
+ * since the restore point is only promoted after this loop returns, quietly
+ * stops arming the net that everything else here depends on.
+ *
+ * Observed on 2026-08-29: the 20:00 run logged "5 stored paths, 0 problem(s)"
+ * at 20:00:56 and then produced nothing — no heartbeat, no findings, no
+ * promotion — while `site.source.last_good` stayed frozen at its 15:17 copy.
+ *
+ * Ten seconds is generous for a static page on a CDN. A page slower than that
+ * is a fact about the site worth recording, not a reason to stop looking at the
+ * other four.
+ */
+const SERVED_FETCH_TIMEOUT_MS = 10_000;
+
 async function fetchServed(paths: string[]): Promise<ServedPage[]> {
   const served: ServedPage[] = [];
 
   for (const path of paths) {
     try {
-      const res = await fetch(`${BUSINESS.site}${path}`, { method: "GET" });
+      const res = await fetch(`${BUSINESS.site}${path}`, {
+        method: "GET",
+        signal: AbortSignal.timeout(SERVED_FETCH_TIMEOUT_MS),
+      });
       const body = await res.text();
       served.push({ path, ok: res.ok, status: res.status, bytes: body.length });
     } catch {
       // A network error is not evidence the page is broken, so it is reported
-      // as unreachable rather than silently dropped.
+      // as unreachable rather than silently dropped. A timeout arrives here too,
+      // and is deliberately not distinguished: both mean "we could not see this
+      // page", which is what the caller acts on. Status 0 is our side failing,
+      // and assessDamage() already refuses to treat it as damage.
       served.push({ path, ok: false, status: 0, bytes: 0 });
     }
   }

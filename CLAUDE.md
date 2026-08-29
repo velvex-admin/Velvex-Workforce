@@ -546,6 +546,21 @@ outright.
   Anything reading `.content` has to check which it got; indexing the error
   object yields nothing and hides the failure.
 
+- **A `fetch()` with no signal is not a slow call, it is a call that may never
+  return.** `fetchServed()` in Site-Integrity reaches the live site for every
+  stored path, sequentially, hourly, and had no timeout. One page that never
+  answers stopped the whole integrity check — and stopped it in the worst way,
+  because the agent that hangs is the one that would have reported the problem:
+  a `running` status row, no findings filed, and no restore point promoted,
+  since promotion happens after that loop returns. Auto-restore therefore stops
+  arming without anything anywhere saying so. Seen on 2026-08-29: the 20:00 run
+  logged "5 stored paths, 0 problem(s)" at 20:00:56 and produced nothing for the
+  next half hour while `site.source.last_good` stayed frozen at its 15:17 copy.
+  Every outbound `fetch` in an agent needs `AbortSignal.timeout(...)`; the one
+  here is 10s per page. The test asserts on **which URLs were asked for**, not
+  on which findings came back — the latter cannot tell "carried on" apart from
+  "stopped at the first failure".
+
 - **A queue with no idempotency, fed by an hourly agent, fills up.** The
   LinkedIn partner queue reached 132 items, 131 of them the same post, and the
   partner would have published every copy. One early return caused it: handing
@@ -754,7 +769,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 421 tests
+npx vitest run            # 424 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1196,6 +1211,7 @@ anything below.
 | Agent | Override | Why |
 |---|---|---|
 | `seo_site` | *(cleared 17:44)* | The watched run has been done. See the closed thread below. |
+| — | — | *All three fixes deployed 20:32 UTC, version f1140e90.* |
 | `competitive_intel` | *(cleared 17:44)* | The pause was overriding the monthly cadence. |
 | `site_integrity` | *(cleared earlier)* | Back on hourly, so auto-restore stays armed. |
 | `finance_watch` | **paused** | Set 2026-08-27. Reason not recorded. Ask before clearing. |
@@ -1254,35 +1270,48 @@ One thing to expect rather than worry about: that restore point is now behind
 the two meta descriptions. Site-Integrity promotes a new one on its next clean
 hourly pass, which is how the mechanism is meant to work.
 
-### Thread 3 — the LinkedIn partner queue: diagnosed and fixed, NOT yet live
+### CLOSED — the LinkedIn partner queue
 
-Measured 17:39 UTC: **132 items, all `queued`, two distinct texts, one of them
-repeated 131 times.**
+Measured 17:39 UTC: 132 items, two distinct texts, one repeated 131 times. It
+kept growing until the deploy — the compaction at 20:32 UTC removed **133
+repeats and kept 2**, one of each distinct post, which is the intended
+behaviour: a repeat is dropped, a genuine post is not.
 
-The question the previous note left open — *why the same approved draft is
-re-queued each tick rather than being recognised as already queued* — is
+The question the earlier note left open — *why the same approved draft is
+re-queued each tick rather than being recognised as already queued* — was
 answered, and it was not the connector. It was one early return in
-`channel-agent.ts`. See the new trap in section 10 for the mechanism. Both ends
-are fixed on this branch and **neither fix is deployed yet**.
+`channel-agent.ts`. See the trap in section 10 for the mechanism. Both ends are
+fixed and deployed. The queue is now idempotent on a `sourceKey`, and
+`readQueueHealed` collapses repeats on any read, so this cannot silently rebuild.
 
-Nothing can collect that queue while the partner integration is off, so the 131
-repeats are inert rather than urgent — but they are 131 duplicate publishes
-waiting for the day it is switched on.
+Worth knowing for next time: the queue is stored as `detail.items` while
+`/api/state/<key>` writes `detail.value`, so it could **not** be repaired
+through the state route — doing so would have read back as an empty queue and
+taken the real posts with it. It needed the deploy.
 
-**It cannot be repaired through the API.** The queue is stored as
-`detail.items`, while `/api/state/<key>` writes `detail.value`, so writing it
-that way would read back as an empty queue and take the one real post with it.
-It needs the deploy, after which `POST /api/linkedin/queue/compact` collapses
-it — and `readQueueHealed` heals it on the next read anyway.
+### OPEN — Site-Integrity's hourly check can hang, and did
 
-After deploying, run:
+`fetchServed()` had no timeout on its outbound `fetch`. The 20:00 UTC run on
+2026-08-29 logged "5 stored paths, 0 problem(s) in the source itself" at
+20:00:56 and then produced nothing at all for the next half hour: no heartbeat,
+no findings, no restore-point promotion. `site.source.last_good` was still
+holding its 15:17 copy at 20:33, five hourly ticks later, which is how the
+symptom shows up — the restore point silently stops advancing.
 
-```
-node scripts/post-deploy-check.mjs https://velvex-vx03.a99339744.workers.dev <APP_PATH_SECRET>
-```
+`AbortSignal.timeout(10_000)` per page is fixed in code and **is deployed**.
+What is *not* established:
 
-which re-checks the site source and the restore point, compacts the queue, and
-prints the overrides with any stale ones flagged.
+- whether every hourly run since 15:17 hung the same way, or only that one.
+  Site-Integrity files no reports on a healthy pass, so an absence of reports is
+  the same shape as a hang. The runtime board holds only the newest run.
+- what the pages were doing. A timeout now records the page as unreachable at
+  status 0, so the next occurrence leaves evidence rather than silence.
+
+**How to tell it is healthy again:** `site.source.last_good.savedAt` should
+advance within an hour of any clean pass. If it is still 2026-08-29T15:17 an
+hour after the deploy, the hang was not the only cause and the next thing to
+look at is `isPromotable()` and the `page_unreachable` findings that block
+promotion, not the fetch.
 
 ### Thread 4 — leftovers
 
