@@ -492,6 +492,21 @@ outright.
   `max` needs a budget sized for the thinking AND the answer: the intelligence
   agent's passes use 32000, not 12000.
 
+- **A budget sized for the answer is spent before the answer starts, and this
+  hit five agents, not one.** Thinking is billed inside `max_tokens`, so the SEO
+  agent asking Sonnet 5 at effort `high` for a 160-character meta description
+  with `max_tokens: 400` failed outright the first time it had real work. The
+  same shape was in objection-faq (600), finance-watch (700), analytics (800)
+  and social-engagement (600 at effort **xhigh**, which had produced nothing for
+  six days). `SHORT_ANSWER_MAX_TOKENS` in `src/core/models.ts` is the shared
+  budget for a short answer from a thinking model; `max_tokens` is a ceiling
+  rather than a spend, so raising it costs nothing unless the tokens are
+  generated. `test/token-budgets.test.ts` scans the real sources and fails on
+  any budget under 1500, resolving named constants as well as literals — the
+  first version only checked literals and passed happily on the bug it was
+  written for. A small budget is exempt only where the model does no thinking,
+  by name, and the test asserts alt text really is on the fast tier.
+
 - **Nothing was counting money between requests.** `AgentDefinition.spendCapUsd`
   is a per-run ceiling the runner applies before `propose()` and lifts on the
   way out, and `Claude` checks it before every request including every
@@ -1056,8 +1071,13 @@ works from the watchlist alone and says so in the brief's limitations.
 Everything else in this file is durable. This section is not: it is the state of
 one unfinished piece of work, and should be removed when it is finished.
 
-**The SEO agent is PAUSED.** It is set to `paused` in `control.agent_schedules`,
-so no cron tick wakes it. That was deliberate: it published a whole-page
+**The SEO agent was NOT actually paused, whatever this section used to say.**
+The live override in `control.agent_schedules` read `weekly`, set 2026-08-22, so
+it has been firing unattended on the Monday 09:00 tick the whole time. No damage
+was done — its runs proposed nothing, because every one of them died on the
+`max_tokens: 400` bug above — but the safety decision recorded here was not in
+force. Check the live value with `GET /api/schedules` rather than trusting this
+file; a note in a document is not a setting. That was deliberate: it published a whole-page
 replacement over `/proof-of-concept.html` on its first real run — see the
 empty-anchor failure in section 10a — and the pause stopped the daily tick from
 repeating it. **Do not resume it on a schedule until the run below has been

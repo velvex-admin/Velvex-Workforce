@@ -20,7 +20,7 @@ import { xConnector } from "../../connectors/x.js";
 import { readMetrics as readLinkedInMetrics } from "../../connectors/linkedin.js";
 import { ConnectorInactiveError, type ChannelMetrics } from "../../connectors/types.js";
 
-import { MODELS } from "../../core/models.js";
+import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 
 const MODEL = MODELS.balanced;
@@ -150,7 +150,7 @@ export const marketingAnalyticsAgent: AgentDefinition = {
       user: `Window: last ${WINDOW_DAYS} days.\n\n${table}\n\nWhat does this say about where signups are coming from?`,
       model: MODEL,
       effort: marketingAnalyticsAgent.effort,
-      maxTokens: 800,
+      maxTokens: SHORT_ANSWER_MAX_TOKENS,
     });
 
     return [

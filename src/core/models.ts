@@ -8,6 +8,25 @@
 // Per-agent assignments live on each agent definition; the reasoning behind
 // each one is in docs/MODEL-CHOICES.md.
 
+/**
+ * A budget for a call whose ANSWER is short but whose model thinks first.
+ *
+ * On this generation thinking is billed inside max_tokens, so a budget sized
+ * for the visible answer is spent before the answer begins. That is not a
+ * theory: the SEO agent asked Sonnet 5 at effort high for a 160-character meta
+ * description with max_tokens 400 and died on "Ran out of output budget", and
+ * the parse error that follows a truncation blames the model for not returning
+ * what was asked for while hiding the real cause.
+ *
+ * max_tokens is a ceiling, not a spend — raising it costs nothing unless the
+ * tokens are actually generated — so the only reason to keep one low is to cap
+ * a runaway, and none of these calls can run away.
+ *
+ * A model with no thinking (the fast tier) does not need this and should stay
+ * sized for its answer.
+ */
+export const SHORT_ANSWER_MAX_TOKENS = 2000;
+
 export const MODELS = {
   /** Judgement that is expensive to get wrong, or writing that goes out in public. */
   reasoning: "claude-opus-5",

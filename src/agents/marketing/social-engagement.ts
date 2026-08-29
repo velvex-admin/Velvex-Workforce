@@ -33,7 +33,7 @@ import {
   type Connector,
   type InboundMessage,
 } from "../../connectors/types.js";
-import { MODELS } from "../../core/models.js";
+import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 
 const MODEL = MODELS.reasoning;
@@ -278,7 +278,7 @@ export const socialEngagementAgent: AgentDefinition = {
           `Their message:\n"""\n${candidate.message.text}\n"""\n\nWrite the reply.`,
         model: MODEL,
         effort: socialEngagementAgent.effort,
-        maxTokens: 600,
+        maxTokens: SHORT_ANSWER_MAX_TOKENS,
       });
 
       let text = softenTells(draft.text.trim());
