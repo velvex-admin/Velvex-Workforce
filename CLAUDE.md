@@ -621,6 +621,40 @@ The fix, once, in the ChromeOS **Files** app: right-click **Downloads** →
 copies it to `~/`. Either works; they are different paths, so say which one you
 mean.
 
+**A failed transfer does not stop the commands after it, and the next one is a
+deploy.** This is the transfer trap, and it is worse than losing the bundle. The
+usual paste is a straight-line sequence: fetch, md5, `git fetch`, `git checkout`,
+test, `wrangler deploy`. When the fetch fails, `>` has already created an empty
+file, so `git fetch` errors on it — and then `git checkout <branch>` succeeds,
+putting the tree at **origin's** state, which is whatever the last successful push
+left there. Push has been 403 since the start, so origin is *months* behind. The
+tests then pass, because an old tree has an old suite and a smaller number is not
+an error, and `wrangler deploy` ships it. That is how nineteen commits came off
+the live Worker in one paste while every line looked like it worked.
+
+Two tells, and neither is the md5:
+
+- The **test count**. It is the cheapest version check in this repo. 175 is the
+  pre-session tree; the current number is in section 12. A count that dropped is
+  a reverted checkout, not a passing suite.
+- The **cron lines wrangler prints on deploy**. Five is current; three is the old
+  `wrangler.toml`. Those come from the file being deployed, so they describe what
+  actually went live rather than what you meant to send.
+
+So gate the destructive half on the md5 rather than trusting the eye, and never
+put `git checkout` and `wrangler deploy` in the same unconditional paste as a
+`curl`:
+
+```
+[ "$(md5sum < /tmp/x.bundle | cut -d' ' -f1)" = "<expected>" ] \
+  && echo "BUNDLE OK" || echo "STOP — do not continue"
+```
+
+Recovery is not the scattered per-fix branches from earlier transfers: bundle the
+whole gap in one artifact (`git bundle create x.bundle <origin-sha>..HEAD`), fetch
+it to `FETCH_HEAD` and `git merge --ff-only`, which also avoids git refusing to
+fetch into the branch that is currently checked out.
+
 A verified transfer then looks like this, and note that Chrome may put the file
 in a subfolder, so find it rather than assuming the path:
 
@@ -661,7 +695,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 292 tests
+npx vitest run            # 384 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
