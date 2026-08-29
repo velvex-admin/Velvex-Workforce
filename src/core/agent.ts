@@ -139,6 +139,13 @@ const OBSERVE_ONLY_TYPES = new Set([
   "memory_write",
   "pipeline_flag",
   "intel_brief",
+  // A restore is on this list and it is worth being precise about why, because
+  // it is the only entry that touches the outside world. The guarantee this
+  // flag makes is narrower than "never writes": it is "never writes anything
+  // NEW". A restore publishes bytes that were already checked and found sound,
+  // and its payload is not model-generated — no agent on this list can author
+  // a page. Site-Integrity is the only agent that may propose one, by rule.
+  "site_restore",
 ]);
 const MAX_THOUGHTS = 12;
 /** How often a running agent proves it is still alive. */

@@ -46,6 +46,15 @@ export type ActionType =
   | "campaign_type"
   | "paid_promotion"
   | "site_edit"
+  /**
+   * Putting the site back to a copy that was already verified.
+   *
+   * Deliberately not a "site_edit". An edit authors something new and is
+   * vetoed for this agent; a restore re-publishes bytes that were checked and
+   * found sound, which is the one site write that is safer done immediately
+   * than done after somebody wakes up.
+   */
+  | "site_restore"
   | "reply_public"
   | "reply_dm"
   | "faq_answer"

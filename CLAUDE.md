@@ -321,6 +321,26 @@ outright.
   `intel.position` rather than against the site alone: the position statement is
   the thing that outranks both.
 
+- **Site-Integrity can now put the site back on its own, and the dangerous half
+  of that is the false positive.** Telling the owner their site is ruined is
+  worth nothing at 3am, so `assessDamage()` decides deterministically and the
+  agent restores `site.source.last_good` without waiting for approval. The rule
+  is **damage, never difference**: a rewritten, retitled or restructured page is
+  the owner changing their own site and must never be reverted — an agent that
+  undid a redesign would destroy more than the failure it guards against. Damage
+  is a page collapsed below `MIN_CREDIBLE_HTML` when the verified copy was a real
+  page, a page that lost over half its body, a page that stopped being a complete
+  HTML document, or a live page returning an error. HTTP status 0 is *our* network
+  failing and is explicitly not damage. The restore writes `site.source` **before**
+  deploying, or the next SEO run republishes what was just undone; it is capped at
+  `MAX_RESTORES_PER_DAY` (2), because a restore that does not hold turns into an
+  hourly deploy loop; and the restore point is promoted on **no critical
+  findings**, not on a clean bill of health, since Netlify injects ~546 bytes into
+  every served page and requiring zero findings would leave the net unarmed
+  forever. `site_restore` is a distinct action type from `site_edit` precisely so
+  the veto can keep refusing the second while allowing the first, and
+  `observeOnly` now means "never writes anything NEW" rather than "never writes".
+
 - **`/faq` is a pricing page.** Protected from unattended SEO edits.
 - **Every wire on the dashboard was invisible, and had been from the start.**
   `.canvas-inner` holds only absolutely positioned children, so it collapsed to

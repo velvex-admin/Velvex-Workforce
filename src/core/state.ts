@@ -54,6 +54,10 @@ export const STATE_KEYS = {
    * which is the opposite of what carrying open questions forward did.
    */
   intelSettled: "intel.settled",
+  /** The last site source verified sound. What a restore goes back to. */
+  siteLastGood: "site.source.last_good",
+  /** When automatic restores happened, so they cannot become a deploy loop. */
+  siteRestores: "site.restores",
 } as const;
 
 /**
