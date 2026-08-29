@@ -309,6 +309,18 @@ outright.
 - **The em-dash question.** The architecture doc bans them; the live site uses
   them. Implemented as `allowEmDash` in `src/core/voice.ts`, currently `false`
   per the doc. Flip the toggle, do not scatter exceptions.
+- **`src/core/business.ts` is copied from the site, and the site can be behind
+  the product.** For months it carried `v0.1` and six "nodes" (Structural
+  Architecture, Revenue Mechanics, Channel Dependency, Operational Capacity,
+  Pressure Point Matrix, Continuity Risk) because that is what the homepage said.
+  The engine had moved to **v1.0** and to VDL's **seven engines**, and
+  `BUSINESS_CONTEXT` goes into the system prompt of every agent that writes
+  anything — so the whole system was describing a superseded model of its own
+  product in copy that reads fine and contradicts the page it links to. When the
+  site changes, change this file, and check it against
+  `intel.position` rather than against the site alone: the position statement is
+  the thing that outranks both.
+
 - **`/faq` is a pricing page.** Protected from unattended SEO edits.
 - **Every wire on the dashboard was invisible, and had been from the start.**
   `.canvas-inner` holds only absolutely positioned children, so it collapsed to
@@ -350,6 +362,21 @@ outright.
   bounded by the price of one maximal call, which is why `maxTokens` on the
   expensive passes is part of the ceiling rather than separate from it. Do not
   describe the cap as a hard limit.
+
+- **`writeStatus()` swallows its own errors, so a lost terminal write is a
+  permanent lie, and only another run can clear it.** Swallowing is correct — a
+  status write must never take an agent's real work down with it — but the cost
+  showed up in production: `finance_watch` claimed to be running for three days,
+  and `marketing_analytics` sat `running` beside a Chief-of-Staff row from the
+  **same runId** that had finished, which proves the agent completed and only its
+  ending went missing. The agent that owns a row is not running, so it can never
+  correct itself. `reconcileStale()` therefore sweeps the board on every fresh
+  read, closing any `running` row whose runId differs from the current run and
+  whose last sign of life is older than `IMPOSSIBLE_RUN_MS` (30 min). That bound
+  is the platform's, not a guess: a cron invocation is capped at 15 minutes, so
+  nothing older can still be alive. Related: `startedAt` used to be `ctx.now`,
+  which is fixed for a whole tick, so every agent in a tick reported the same
+  start time and "how long has this been running" was unreadable.
 
 - **A killed Worker cannot write its own ending, so a status row lies.** A run
   terminated mid-flight leaves `runtime.agent_status` reading `running` forever,

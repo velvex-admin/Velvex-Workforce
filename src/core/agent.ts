@@ -166,8 +166,17 @@ async function writeStatus(
   cached?: AgentRuntimeStatusMap
 ): Promise<AgentRuntimeStatusMap | null> {
   try {
-    const current =
-      cached ?? (await state.read<AgentRuntimeStatusMap>(ctx.db, STATE_KEYS.agentRuntime)) ?? {};
+    const fresh = cached ?? (await state.read<AgentRuntimeStatusMap>(ctx.db, STATE_KEYS.agentRuntime));
+    const current = fresh ?? {};
+
+    // Only on a read. A trail write reuses a map this run already swept, and
+    // sweeping it again would cost nothing and prove nothing.
+    if (!cached) {
+      const closed = reconcileStale(current, ctx.runId, Date.now());
+      if (closed > 0) {
+        ctx.log(`runtime: closed ${closed} stale status row(s) left by a run that never ended`);
+      }
+    }
     const previous = current[agentId] ?? { status: "idle", phase: "idle" };
     const next: AgentRuntimeStatus = { ...previous, ...patch };
     // Only keep the tail of thoughts.
@@ -185,6 +194,50 @@ async function writeStatus(
     /* ignore */
     return null;
   }
+}
+
+/**
+ * How long a row may claim to be running before it is provably lying.
+ *
+ * A cron invocation is capped at fifteen minutes of wall clock by the platform,
+ * so nothing started by an earlier invocation can still be running half an hour
+ * later. This is not a guess about slowness; it is an upper bound.
+ */
+const IMPOSSIBLE_RUN_MS = 30 * 60 * 1000;
+
+/**
+ * Close out rows left claiming to be running by a run that is gone.
+ *
+ * writeStatus swallows its own errors, deliberately: a status write must never
+ * take an agent's real work down with it. The cost is that a LOST terminal
+ * write leaves a permanent lie. Three rows were found in exactly that state —
+ * finance_watch had been "running" for three days, and marketing_analytics was
+ * mid-tick alongside a Chief-of-Staff row that had finished, which proves the
+ * agent itself completed and only its ending went missing.
+ *
+ * Nothing else was ever going to fix those: the agent that owns the row is not
+ * running, so it cannot correct itself. So every run sweeps the board on its way
+ * in, using the one fact that makes it safe — a different runId plus an age no
+ * invocation is allowed to reach.
+ */
+function reconcileStale(board: AgentRuntimeStatusMap, runId: string, now: number): number {
+  let closed = 0;
+  for (const [id, row] of Object.entries(board)) {
+    if (!row || row.status !== "running" || row.runId === runId) continue;
+    const seen = Date.parse(row.heartbeatAt ?? row.startedAt ?? "");
+    if (!Number.isFinite(seen) || now - seen < IMPOSSIBLE_RUN_MS) continue;
+    board[id] = {
+      ...row,
+      status: "failed",
+      phase: "failed",
+      endedAt: new Date(now).toISOString(),
+      error:
+        row.error ??
+        "This run stopped reporting and never recorded an ending. Closed by a later run.",
+    };
+    closed += 1;
+  }
+  return closed;
 }
 
 /**
@@ -296,6 +349,7 @@ export async function runAgent(
   /** Let an in-flight trail write finish before a status write that outranks it. */
   const settleThoughts = (): Promise<void> => flushChain.then(undefined, () => {});
 
+
   const originalLog = ctx.log;
   const runCtx: RunContext = {
     ...ctx,
@@ -314,7 +368,11 @@ export async function runAgent(
     {
       status: "running",
       phase: "thinking",
-      startedAt: ctx.now.toISOString(),
+      // The agent's own start, not the tick's. ctx.now is fixed for a whole
+      // cron invocation, so using it made every agent in a tick report the same
+      // startedAt and made "how long has this been running" unreadable.
+      startedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
       endedAt: undefined,
       runId: ctx.runId,
       latestThought: `${agent.name} started`,

@@ -322,3 +322,88 @@ describe("what the trail costs an invocation", () => {
     expect(calls.writes).toBeLessThanOrEqual(6);
   });
 });
+
+describe("rows left behind by a run that never ended", () => {
+  function seededDb(seed: Record<string, unknown>) {
+    const rows = new Map<string, unknown>(Object.entries(seed));
+    return {
+      db: {
+        async readMemory({ keys }: { keys: string[] }) {
+          const key = keys[0] ?? "";
+          return rows.has(key) ? [{ detail: { value: rows.get(key) } }] : [];
+        },
+        async writeMemory({ key, detail }: { key: string; detail: Record<string, unknown> }) {
+          rows.set(key, detail["value"]);
+        },
+      } as unknown as RunContext["db"],
+      board: () =>
+        (rows.get("runtime.agent_status") ?? {}) as Record<
+          string,
+          { status?: string; phase?: string; endedAt?: string; error?: string }
+        >,
+    };
+  }
+
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+  it("closes a row that has claimed to be running for days", async () => {
+    // finance_watch was found claiming to be running since three days earlier.
+    // writeStatus swallows its own errors on purpose, so a lost terminal write
+    // leaves a permanent lie, and the agent that owns the row is not running and
+    // cannot correct it. Nothing else was ever going to fix it.
+    const { db, board } = seededDb({
+      "runtime.agent_status": {
+        finance_watch: {
+          status: "running",
+          phase: "acting",
+          runId: "an-older-run",
+          startedAt: hoursAgo(72),
+        },
+      },
+    });
+
+    await runAgent(agentThatProposes([]), coordinator() as never, fakeContext({ db }));
+
+    const row = board()["finance_watch"];
+    expect(row?.status).toBe("failed");
+    expect(row?.endedAt).toBeDefined();
+    expect(row?.error).toContain("never recorded an ending");
+  });
+
+  it("leaves a genuinely running agent alone", async () => {
+    // The bound is the platform's: a cron invocation cannot exceed fifteen
+    // minutes, so anything younger than half an hour might still be alive.
+    const { db, board } = seededDb({
+      "runtime.agent_status": {
+        social_engagement: {
+          status: "running",
+          phase: "thinking",
+          runId: "another-run",
+          startedAt: hoursAgo(0.1),
+          heartbeatAt: hoursAgo(0.02),
+        },
+      },
+    });
+
+    await runAgent(agentThatProposes([]), coordinator() as never, fakeContext({ db }));
+    expect(board()["social_engagement"]?.status).toBe("running");
+  });
+
+  it("never closes a row belonging to the run doing the sweeping", async () => {
+    // Same runId means the same invocation, which is by definition still alive.
+    const { db, board } = seededDb({
+      "runtime.agent_status": {
+        sibling: {
+          status: "running",
+          phase: "thinking",
+          runId: "run-1",
+          startedAt: hoursAgo(99),
+        },
+      },
+    });
+
+    // fakeContext uses runId "run-1".
+    await runAgent(agentThatProposes([]), coordinator() as never, fakeContext({ db }));
+    expect(board()["sibling"]?.status).toBe("running");
+  });
+});
