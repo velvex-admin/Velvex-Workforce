@@ -4,7 +4,13 @@
 import type { AgentDefinition, RunContext, RunCadence } from "../core/agent.js";
 import { runAgent, type AgentRunResult } from "../core/agent.js";
 import type { AgentId, AgentBatch } from "../core/types.js";
-import { STATE_KEYS, state, type AgentScheduleMap } from "../core/state.js";
+import {
+  overrideIsStale,
+  STATE_KEYS,
+  state,
+  type AgentScheduleMap,
+  type AgentScheduleOverride,
+} from "../core/state.js";
 import type { Supabase } from "../lib/supabase.js";
 import { chiefOfStaff, chiefOfStaffAgent } from "./orchestration/chief-of-staff.js";
 
@@ -65,6 +71,11 @@ export async function readSchedules(db: Supabase): Promise<AgentScheduleMap> {
  * Which agents are due on this tick, honouring dashboard overrides. An override
  * of "paused" excludes the agent from every cadence; any other override wins
  * over the agent's built-in cadence.
+ *
+ * The override still wins even when it is stale — see overrideIsStale in
+ * core/state.ts. Deciding on an agent's behalf that somebody's pause has
+ * expired is not this function's call to make; saying loudly that one has is,
+ * and that is what staleOverrides below is for.
  */
 export function agentsDueWith(
   cadence: RunCadence,
@@ -82,6 +93,28 @@ export function agentsDueWith(
 
     return agent.cadence === cadence;
   });
+}
+
+/**
+ * Overrides that were set against a cadence the agent no longer has. Each one
+ * is an old decision quietly outranking a newer one, which is invisible unless
+ * something goes looking for it. Both live pauses turned out to be this.
+ */
+export function staleOverrides(
+  overrides: AgentScheduleMap
+): Array<{ agentId: string; override: AgentScheduleOverride; builtInCadence: string }> {
+  const stale: Array<{
+    agentId: string;
+    override: AgentScheduleOverride;
+    builtInCadence: string;
+  }> = [];
+  for (const agent of AGENTS) {
+    const override = overrides[agent.id];
+    if (override && overrideIsStale(override, agent.cadence)) {
+      stale.push({ agentId: agent.id, override, builtInCadence: agent.cadence });
+    }
+  }
+  return stale;
 }
 
 /** Legacy signature. Kept for tests that do not need overrides. */
@@ -125,6 +158,11 @@ export async function runDue(
   filter: BatchFilter = {}
 ): Promise<AgentRunResult[]> {
   const overrides = await readSchedules(ctx.db).catch(() => ({}));
+  for (const entry of staleOverrides(overrides)) {
+    ctx.log(
+      `${entry.agentId}: schedule override "${entry.override.cadence}" was set when its cadence in code was "${entry.override.builtInCadence}"; it is now "${entry.builtInCadence}". The override is still in force.`
+    );
+  }
   const results: AgentRunResult[] = [];
   for (const agent of applyBatchFilter(agentsDueWith(cadence, overrides), filter)) {
     ctx.log(`running ${agent.id}`);

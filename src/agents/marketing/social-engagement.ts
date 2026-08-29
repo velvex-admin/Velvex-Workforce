@@ -343,9 +343,12 @@ export const socialEngagementAgent: AgentDefinition = {
     // LinkedIn has no connector on our side: the external agent posts. The
     // reply goes into the partner queue and is collected like any other item.
     if (channel === "linkedin") {
-      const queued = await enqueueForPartner(ctx.db, {
+      const { item: queued } = await enqueueForPartner(ctx.db, {
         text: reply,
         approvalRef: action.approvedContentRef,
+        // The message being answered. Two different comments can warrant the
+        // same wording, so identity here is the thread, not the text.
+        sourceKey: `reply:${messageId}`,
       });
       await markHandled(messageId);
       return {

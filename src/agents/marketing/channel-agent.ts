@@ -551,41 +551,64 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         // We do not post to LinkedIn ourselves. The strategist drafts, the
         // outside partner agent collects and publishes. If the partner is not
         // wired up yet, the draft still lands in the queue and waits.
-        if (!flag(ctx.env.LINKEDIN_INTEGRATION_ENABLED) || !ctx.env.LINKEDIN_PARTNER_TOKEN) {
-          const queued = await enqueueForPartner(ctx.db, {
-            text,
-            approvalRef: action.approvedContentRef,
-            pillar: String(action.payload["pillar"] ?? ""),
-            format: String(action.payload["format"] ?? ""),
-          });
-          return {
-            outcome: "blocked_inactive",
-            externalRef: queued.id,
-            detail: {
-              note: "LinkedIn draft queued. It publishes as soon as the partner integration is switched on.",
-              draftId,
-              waitingOn: ["LINKEDIN_INTEGRATION_ENABLED", "LINKEDIN_PARTNER_TOKEN"],
-            },
-          };
-        }
-        const queued = await enqueueForPartner(ctx.db, {
+        //
+        // Handing the draft over IS this channel's publish step, whether or not
+        // the partner is switched on yet, so the bookkeeping is the same on
+        // both sides of that branch: stamp the draft as handed over, consume
+        // the slot that called for it. Only the outcome differs, because only
+        // one of the two has actually reached LinkedIn.
+        //
+        // Doing it on one side only is what filled the queue with a single post
+        // repeated hourly. The partner is not wired up, so every run took the
+        // early return: the draft was never stamped, so the next run found the
+        // same ready draft; the slot was never consumed, so it was still due;
+        // and the handover reports `blocked_inactive`, which readChannelHistory
+        // does not count, so the minimum-gap check never engaged either. Three
+        // guards, all bypassed by the same early return.
+        const live =
+          flag(ctx.env.LINKEDIN_INTEGRATION_ENABLED) && Boolean(ctx.env.LINKEDIN_PARTNER_TOKEN);
+
+        const { item: queued, duplicate } = await enqueueForPartner(ctx.db, {
           text,
           approvalRef: action.approvedContentRef,
           pillar: String(action.payload["pillar"] ?? ""),
           format: String(action.payload["format"] ?? ""),
+          // The draft id, so a second handover of the same draft is recognised
+          // as the same work even if the copy was touched in between.
+          sourceKey: draftId || undefined,
         });
+
         await stampPublished(queued.id);
         const usedSlot = action.payload["scheduledSlot"];
         if (typeof usedSlot === "string") {
           const currentPlan = await ensureWeeklyPlan(ctx.db, spec.schedule, ctx.now);
           await markSlotConsumed(ctx.db, spec.schedule, usedSlot, currentPlan);
         }
+
+        if (!live) {
+          return {
+            outcome: "blocked_inactive",
+            externalRef: queued.id,
+            detail: {
+              note: duplicate
+                ? "This draft was already waiting in the LinkedIn queue, so nothing was added. It publishes as soon as the partner integration is switched on."
+                : "LinkedIn draft queued. It publishes as soon as the partner integration is switched on.",
+              draftId,
+              duplicate,
+              waitingOn: ["LINKEDIN_INTEGRATION_ENABLED", "LINKEDIN_PARTNER_TOKEN"],
+            },
+          };
+        }
+
         return {
           outcome: "executed",
           externalRef: queued.id,
           detail: {
-            note: "Queued for the LinkedIn partner agent to publish.",
+            note: duplicate
+              ? "Already waiting in the LinkedIn partner queue; nothing was added."
+              : "Queued for the LinkedIn partner agent to publish.",
             draftId,
+            duplicate,
           },
         };
       }

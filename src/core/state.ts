@@ -69,9 +69,36 @@ export interface AgentScheduleOverride {
   cadence: "hourly" | "daily" | "weekly" | "monthly" | "paused";
   updatedAt: string;
   note?: string;
+  /**
+   * The agent's cadence in code at the moment this override was set.
+   *
+   * An override outlives the reason it was set. Nothing clears it, no redeploy
+   * touches it, and a cadence changed in code loses to it silently — which is
+   * how Competitive Intelligence sat paused straight through the change that
+   * gave it a monthly cadence, and how the SEO agent stayed paused long after
+   * the failure that paused it was fixed. Recording the baseline is what makes
+   * that divergence visible later.
+   *
+   * Absent on overrides written before this field existed, which is why
+   * staleness is only ever reported when it is present and differs.
+   */
+  builtInCadence?: string;
 }
 
 export type AgentScheduleMap = Record<string, AgentScheduleOverride>;
+
+/**
+ * True when the code cadence has changed since the override was set, so the
+ * override is now suppressing a decision made after it. Never true for an
+ * override with no recorded baseline: not knowing is not evidence.
+ */
+export function overrideIsStale(
+  override: AgentScheduleOverride | undefined,
+  builtInCadence: string
+): boolean {
+  if (!override?.builtInCadence) return false;
+  return override.builtInCadence !== builtInCadence;
+}
 
 /**
  * A live status board the runner updates so the dashboard can show what each

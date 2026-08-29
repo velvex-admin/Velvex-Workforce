@@ -936,6 +936,20 @@ function closePanel() {
   renderAll();
 }
 
+/**
+ * An override set against a cadence the agent no longer has. It is still in
+ * force -- nothing here clears it, because clearing somebody's pause on their
+ * behalf is worse than leaving it -- but it is now overruling a decision made
+ * after it, and that is worth saying where somebody can act on it.
+ */
+function staleNote(id, agent) {
+  const s = SCHEDULES[id];
+  if (!s || !s.builtInCadence || s.builtInCadence === agent.cadence) return '';
+  return '<p class="cadence-hint" style="color:var(--amber)">This override was set when the cadence in code was <code>' +
+    esc(s.builtInCadence) + '</code>. It is now <code>' + esc(agent.cadence) +
+    '</code>, and the override still wins. Choose "default" to let the new cadence apply.</p>';
+}
+
 async function openAgent(id) {
   SELECTED = id;
   renderAll();
@@ -996,6 +1010,7 @@ async function openAgent(id) {
       <button onclick="setSchedule('\${id}', 'default')" \${!schedule ? 'class="selected"' : ''}>default</button>
     </div>
     \${schedule && schedule.cadence === 'paused' ? '<p class="cadence-hint" style="color:var(--amber)">This agent is paused: it will not fire on any cron tick.</p>' : ''}
+    \${staleNote(id, agent)}
 
     <h3>Routine (runs without asking)</h3>
     \${agent.routine.length ? agent.routine.map(r =>

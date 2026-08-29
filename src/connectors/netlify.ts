@@ -24,6 +24,7 @@ import { state, type SiteChange } from "../core/state.js";
 import { STATE_KEYS } from "../core/state.js";
 import type { Supabase } from "../lib/supabase.js";
 import type { SiteEditRequest, SiteWriteResult, SiteWriter } from "./site.js";
+import { checkStoredSource, type IntegrityFinding } from "../core/site-integrity.js";
 
 const API = "https://api.netlify.com/api/v1";
 
@@ -164,6 +165,32 @@ function applyEdit(source: SiteSource, edit: SiteEditRequest): SiteSource {
   return { ...source, [edit.path]: updated };
 }
 
+/**
+ * Everything critically wrong with a whole source map, as one line per path.
+ *
+ * applyEdit guards the substitution it is given. It cannot guard the pages it
+ * is not editing, and a Netlify digest deploy publishes all of them: one sound
+ * edit to one page is enough to carry every other page in the map live exactly
+ * as it is stored. That is how the empty-anchor incident would have spread. The
+ * source was left holding two 130-character stubs after it, every page served
+ * correctly, and the next successful edit to any page — however small, however
+ * well anchored — would have published the stubs over the real pages.
+ *
+ * So the whole map is checked before it is published, not just the part that
+ * changed.
+ */
+export function criticalFindings(source: SiteSource): IntegrityFinding[] {
+  const pages = Object.entries(source).map(([path, content]) => ({
+    path,
+    content: String(content ?? ""),
+  }));
+  return checkStoredSource(pages).filter((finding) => finding.severity === "critical");
+}
+
+function describeFindings(findings: IntegrityFinding[]): string {
+  return findings.map((finding) => `${finding.path}: ${finding.detail}`).join(" ");
+}
+
 export const netlifySiteWriter: SiteWriter = {
   name: "netlify",
 
@@ -202,7 +229,33 @@ export const netlifySiteWriter: SiteWriter = {
     }
 
     try {
+      // Nothing is published from a source that is already broken. If a page is
+      // sitting corrupt in the table, deploying now would publish it, and the
+      // edit in hand is not the thing that needs attention.
+      const existingDamage = criticalFindings(source);
+      if (existingDamage.length > 0) {
+        throw new Error(
+          `The stored site source is not deployable, so nothing was published. ` +
+            `${describeFindings(existingDamage)} ` +
+            `The Site-Integrity agent keeps a verified copy at site.source.last_good and ` +
+            `puts it back automatically; if it has not, something is re-breaking the source ` +
+            `faster than it can be restored and that needs a person.`
+        );
+      }
+
       const updated = applyEdit(source, edit);
+
+      // And nothing is published from a source this edit broke. applyEdit's own
+      // guards are about the substitution; this is about the document that
+      // comes out of it.
+      const newDamage = criticalFindings(updated);
+      if (newDamage.length > 0) {
+        throw new Error(
+          `This edit leaves the site source undeployable, so nothing was published. ` +
+            `${describeFindings(newDamage)}`
+        );
+      }
+
       const deployId = await deploySite(env, updated);
       await state.write(db, STATE_KEYS.siteSource, updated, `site source after ${edit.kind} on ${edit.path}`, {
         scope: "seo_site",

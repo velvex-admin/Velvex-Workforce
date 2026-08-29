@@ -14,9 +14,11 @@ import {
   readSchedules,
   runDue,
   runOne,
+  staleOverrides,
 } from "../agents/registry.js";
 import type { AgentRuntimeStatusMap, AgentScheduleOverride } from "../core/state.js";
 import { connectorStatuses } from "../connectors/registry.js";
+import { compactQueue } from "../connectors/linkedin.js";
 import { STATE_KEYS, state } from "../core/state.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
 import { resolveTiers } from "../core/models.js";
@@ -344,7 +346,8 @@ export async function handleApi(
     const db = new Supabase(env);
 
     if (request.method === "GET" && segments.length === 1) {
-      return json({ schedules: await readSchedules(db) });
+      const schedules = await readSchedules(db);
+      return json({ schedules, stale: staleOverrides(schedules) });
     }
 
     if (request.method === "PUT" && segments.length === 2) {
@@ -369,6 +372,9 @@ export async function handleApi(
         const override: AgentScheduleOverride = {
           cadence: cadence as AgentScheduleOverride["cadence"],
           updatedAt: new Date().toISOString(),
+          // Stamped so a later cadence change in code can be seen to have been
+          // overruled by this, rather than losing to it silently.
+          builtInCadence: agent.cadence,
           ...(body.note ? { note: body.note } : {}),
         };
         current[agentId] = override;
@@ -378,8 +384,31 @@ export async function handleApi(
         salience: 6,
         tags: ["schedule"],
       });
-      return json({ schedules: current });
+      return json({ schedules: current, stale: staleOverrides(current) });
     }
+  }
+
+  // POST /api/linkedin/queue/compact
+  //   Collapse repeats already sitting in the partner queue. The strategist no
+  //   longer creates them (see the handover in channel-agent.ts), but a queue
+  //   that filled up before that fix stays full until something clears it, and
+  //   the partner would publish every copy. Measured at 132 items, 131 of them
+  //   the same post.
+  if (
+    segments[0] === "linkedin" &&
+    segments[1] === "queue" &&
+    segments[2] === "compact" &&
+    request.method === "POST"
+  ) {
+    const db = new Supabase(env);
+    const result = await compactQueue(db);
+    return json({
+      ...result,
+      note:
+        result.removed === 0
+          ? "Nothing to collapse: every item in the queue is distinct work."
+          : `Removed ${result.removed} repeat${result.removed === 1 ? "" : "s"}. ${result.waiting} distinct post${result.waiting === 1 ? "" : "s"} still waiting for the partner.`,
+    });
   }
 
   // ---------------------------------------------------------------------

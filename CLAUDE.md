@@ -546,6 +546,33 @@ outright.
   Anything reading `.content` has to check which it got; indexing the error
   object yields nothing and hides the failure.
 
+- **A queue with no idempotency, fed by an hourly agent, fills up.** The
+  LinkedIn partner queue reached 132 items, 131 of them the same post, and the
+  partner would have published every copy. One early return caused it: handing
+  a draft to the queue *is* this channel's publish step, but the "partner not
+  wired up yet" branch returned before stamping the draft as handed over and
+  before consuming the schedule slot that asked for it — and the third guard,
+  the minimum gap between posts, counts only `executed` reports, which that
+  branch does not produce. Three guards, all skipped by the same return. Both
+  branches now do identical bookkeeping and differ only in the outcome they
+  report. `enqueueForPartner` is idempotent on a `sourceKey` as well, and
+  `POST /api/linkedin/queue/compact` collapses repeats already stored.
+  The lesson generalises: **when one branch of a publish path returns early,
+  check what bookkeeping the other branch was doing.**
+
+- **A digest deploy publishes the whole source, not the page you edited.**
+  `applyEdit()` guards the substitution it is handed. It cannot guard the pages
+  it is not editing, and every one of them goes live with it — which is how the
+  two stubs left in `site.source` after the empty-anchor incident would have
+  reached the real site on the next sound edit to any page.
+  `netlifySiteWriter.write()` now runs `criticalFindings()` over the whole map
+  twice, before the edit and after it, and refuses to deploy either way. This is
+  the complement to auto-restore, not a duplicate: restore repairs damage that
+  was published, this refuses to publish it. Note that Site-Integrity's own
+  restore calls `deploySite()` directly rather than going through `write()`, so
+  putting a verified copy back is never blocked by the gate — which is right,
+  because a restore fires precisely when the source is damaged.
+
 - **X free tier posts but does not read.** `POST /2/tweets` is included; the
   read endpoints Social Engagement needs (`/2/users/me`, `/2/users/:id/mentions`)
   return `402 credits-depleted` until a paid tier is active. That is a billing
@@ -727,7 +754,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 384 tests
+npx vitest run            # 421 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -762,9 +789,13 @@ src/
                         growth-strategy
     intelligence/       competitive-intel
     orchestration/      chief-of-staff (Coordinator + an agent)
-  connectors/           facebook, x (OAuth 1.0a), linkedin (queue), site
+  connectors/           facebook, x (OAuth 1.0a), linkedin (idempotent queue),
+                        site, netlify (deploy gated on whole-source integrity)
   routes/               api.ts, integrations.ts
   ui/dashboard.ts       the canvas dashboard
+scripts/                seed-site-source.mjs, seed-site-inventory.mjs,
+                        apply-migrations.mjs,
+                        post-deploy-check.mjs (what to run after deploying)
 db/migrations/          0001_orchestration_layer.sql
                         0002_intelligence_layer.sql
 db/seeds/               intel-candidates.json (verified; proposed, not applied)
@@ -1155,108 +1186,119 @@ works from the watchlist alone and says so in the brief's limitations.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-29**. Facts here about live settings go
-stale — a note in a document is not a setting. Verify against
+the unfinished work, as of **2026-08-29, 17:45 UTC**. Facts here about live
+settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
 
-### Live schedule overrides, 2026-08-29
+### Live schedule overrides, 2026-08-29 17:45 UTC
 
 | Agent | Override | Why |
 |---|---|---|
-| `seo_site` | **paused** | Correct. See the thread below — it has never completed a run. |
+| `seo_site` | *(cleared 17:44)* | The watched run has been done. See the closed thread below. |
+| `competitive_intel` | *(cleared 17:44)* | The pause was overriding the monthly cadence. |
+| `site_integrity` | *(cleared earlier)* | Back on hourly, so auto-restore stays armed. |
 | `finance_watch` | **paused** | Set 2026-08-27. Reason not recorded. Ask before clearing. |
-| `competitive_intel` | **paused** | Set 2026-08-27, and it **overrides the monthly cadence**. |
-| `site_integrity` | *(cleared 2026-08-29)* | Back on its built-in hourly, so auto-restore can arm. |
 | `x` | hourly | |
 | `chief_of_staff` | daily | |
-| `social_engagement` | weekly | |
+| `social_engagement` | weekly | Overrides an hourly cadence in code. Set 2026-08-21. |
 
-A `paused` override excludes an agent from **every** tick (`registry.ts:73`), so
-it beats the cadence in the agent definition. Competitive Intelligence was
-rebuilt to run monthly at a $4.50 cap, and while that pause stands it will never
-run at all. Clearing it is a spend decision and belongs to the owner.
+A `paused` override excludes an agent from **every** tick, so it beats the
+cadence in the agent definition, and it still does — clearing somebody's pause
+on their behalf is worse than leaving it. What changed is that it is no longer
+silent. An override now records `builtInCadence`, the agent's cadence in code at
+the moment it was set; when the two have since diverged, `staleOverrides()` in
+`registry.ts` reports it, `GET /api/schedules` returns it under `stale`,
+`runDue` logs it every tick, and the agent's dashboard panel says so in amber.
 
-### Thread 1 — the SEO agent has still never completed a run
+The two remaining overrides both predate that field, so neither can be reported
+stale — not knowing is not evidence, and the code deliberately does not guess.
+Somebody has to say whether they are still wanted.
 
-The manual run described below **was attempted on 2026-08-29 at 11:20 and it
-failed**:
+### CLOSED — the SEO agent has completed a run
+
+Both earlier diagnoses were right and neither was the whole story. The
+empty-anchor bug was real and was fixed. The reason the agent still never
+completed a run afterwards was the budget bug: `propose()` makes its first model
+call inside the finding loop, so `Ran out of output budget on claude-sonnet-5
+(max_tokens 400)` took the entire run with it — `proposed 0, failed 1`, every
+time. The budget fix deployed at ~15:00; the pause is what stopped it proving so.
+
+The watched run was done at **17:41 UTC on 2026-08-29**, against a snapshot held
+in hand: **3 proposed, 2 executed, 1 queued, 0 failed.**
+
+| Page | Before | After | |
+|---|---|---|---|
+| `/index.html` | 26,454 | 26,614 | meta description inserted |
+| `/proof-of-concept.html` | 22,022 | 22,184 | meta description inserted |
+| `/faq.html` | 8,221 | 8,221 | queued for approval — protected pricing page |
+| `/styles.css`, `/site.js` | — | unchanged | |
+
+Both pages **grew** by the length of the inserted tag. That is what an anchored
+insertion looks like, and it is exactly what the incident did not do. Both were
+then confirmed correct on the live site. The pause is cleared and the agent is
+back on `daily`.
+
+Two proposals now sit in the queue for `/faq.html` — a meta description and an
+internal link. It is the pricing page, so they will never auto-apply. **One
+quotes "$999" without the $149 intro rate**, which is the phrasing problem in
+section 1. Read them before approving.
+
+### CLOSED — auto-restore is live, armed and verified
+
+Verified again at 17:38 UTC: `site.source.last_good` held all five paths at
+their pre-run sizes, saved 15:17 UTC, and `site.restores` is unset, so no
+automatic restore has ever had to fire.
+
+One thing to expect rather than worry about: that restore point is now behind
+the two meta descriptions. Site-Integrity promotes a new one on its next clean
+hourly pass, which is how the mechanism is meant to work.
+
+### Thread 3 — the LinkedIn partner queue: diagnosed and fixed, NOT yet live
+
+Measured 17:39 UTC: **132 items, all `queued`, two distinct texts, one of them
+repeated 131 times.**
+
+The question the previous note left open — *why the same approved draft is
+re-queued each tick rather than being recognised as already queued* — is
+answered, and it was not the connector. It was one early return in
+`channel-agent.ts`. See the new trap in section 10 for the mechanism. Both ends
+are fixed on this branch and **neither fix is deployed yet**.
+
+Nothing can collect that queue while the partner integration is off, so the 131
+repeats are inert rather than urgent — but they are 131 duplicate publishes
+waiting for the day it is switched on.
+
+**It cannot be repaired through the API.** The queue is stored as
+`detail.items`, while `/api/state/<key>` writes `detail.value`, so writing it
+that way would read back as an empty queue and take the one real post with it.
+It needs the deploy, after which `POST /api/linkedin/queue/compact` collapses
+it — and `readQueueHealed` heals it on the next read anyway.
+
+After deploying, run:
 
 ```
-Ran out of output budget on claude-sonnet-5 (max_tokens 400).
+node scripts/post-deploy-check.mjs https://velvex-vx03.a99339744.workers.dev <APP_PATH_SECRET>
 ```
 
-That is the budget bug in section 10, and the fix (`SHORT_ANSWER_MAX_TOKENS`)
-deployed at ~15:00 the same day — *after* that run. So the agent has never once
-reached the point of proposing an edit on corrected code, and the original
-concern is untouched: on its one real run before the pause it published a
-whole-page replacement over `/proof-of-concept.html` (the empty-anchor failure in
-section 10a). It stays paused until a watched manual run has been done once.
-
-The site itself is healthy and was verified byte-identical after restore. A copy
-of the good source is at `site.source.backup`, separate from live `site.source`.
-
-What that run should look like:
-
-1. Confirm `src/core/site-edits.ts` exists in the deployed build and
-   `applyEdit()` in `src/connectors/netlify.ts` refuses an empty `before`.
-2. Snapshot first: read `/api/state/site.source` and keep it.
-3. `POST /api/run/seo_site` — and hold the connection. The run belongs to it.
-4. Immediately fetch every page and compare byte sizes against the snapshot. A
-   page that shrank is the failure recurring — restore at once.
-5. Only if every page is intact, consider a cadence.
-
-Site-Integrity is now armed (thread 2), so a catastrophic shrink would be caught
-within the hour even if nobody is watching. That is a safety net, not a licence
-to run it unattended.
-
-### Thread 2 — auto-restore is live and armed (verify, do not assume)
-
-Deployed 2026-08-29 and confirmed working in production on a manual run:
-
-```
-site_integrity: 5 stored paths, 0 problem(s) in the source itself
-site_integrity: restore point updated (5 files)
-site_integrity: source and live site both intact
-```
-
-`site.source.last_good` holds 5 files — `/index.html` 26,454 bytes,
-`/proof-of-concept.html` 22,022, `/faq.html` 8,221, `/styles.css` 30,191,
-`/site.js` 5,011. The mechanism is documented in section 10; the thing worth
-re-checking is that `last_good` is still being promoted and has not gone stale,
-since promotion is gated on no critical findings.
-
-That same run also produced the first production proof of `reconcileStale()`:
-`closed 3 stale status row(s) left by a run that never ended`.
-
-### Thread 3 — the LinkedIn partner queue is filling with one post
-
-`linkedin.outbound_queue` holds **130 items, all status `queued`, and only two
-distinct texts — one of them repeated 129 times**, from 2026-08-21 through
-2026-08-29T15:00. It grows by one on most hourly ticks and nothing drains it,
-because `LINKEDIN_INTEGRATION_ENABLED` is `false` and there is no
-`LINKEDIN_PARTNER_TOKEN`, which is also why every hourly report reads
-`publish_post … blocked_inactive`.
-
-`enqueueForPartner()` in `src/connectors/linkedin.ts` unshifts unconditionally
-with a fresh `crypto.randomUUID()` and slices to 200. There is no dedupe on
-content and no drain, so the cap is the only bound: it will reach 200 and then
-churn, and the row is already 156KB. Callers are `channel-agent.ts:555` and
-`:571` and `social-engagement.ts:346`.
-
-Not yet diagnosed: why the same approved draft is re-queued each tick rather than
-being recognised as already queued. Fix the re-queue, not the symptom — raising
-the cap or clearing the row leaves it refilling. Note that the queue is the
-*intended* publishing route for LinkedIn (section 6), so it must keep working
-once a partner token exists.
+which re-checks the site source and the restore point, compacts the queue, and
+prints the overrides with any stale ones flagged.
 
 ### Thread 4 — leftovers
 
+- `finance_watch` and `marketing_analytics` both last ended with "this run
+  stopped reporting and never recorded an ending. Closed by a later run."
+  `reconcileStale()` is doing its job; what left them that way is not yet known.
 - Historical site snapshots are still in `memory` and are the owner's to keep or
   drop: `site.source.pre-pricing-fix` (102KB) and `site.source.wrecked-20260822`
-  (47KB, a copy of the broken site kept as evidence).
+  (47KB, a copy of the broken site kept as evidence). `site.source.backup` was
+  written 17:38 as the pre-run snapshot; `site.source.last_good` is the one the
+  restore mechanism actually reads, and is the one to trust.
 - `transfer.*` rows from code transfers are cleared to `""` after use. There is
   no DELETE route on `/api/state`, so overwriting is how they get emptied.
+- `APP_PATH_SECRET` was shared into a Claude session transcript on 2026-08-29.
+  Rotating it is cheap: `wrangler secret put APP_PATH_SECRET`, then the
+  dashboard URL changes.
 
 
 ## 13. Deliberately not built
