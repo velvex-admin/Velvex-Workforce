@@ -40,7 +40,13 @@ framework, no agent library, no SDK for Supabase — plain `fetch` against
 PostgREST, and a thin wrapper around the Anthropic Messages API.
 
 **Repo:** `velvex-admin/Velvex-Workforce`
-**Working branch:** `claude/vx03-operations-layer-7rq5ya`
+**Branch of record:** `claude/vx03-operations-layer-7rq5ya` — this is the branch
+on the owner's machine, the one that gets tested and deployed. A Claude session
+is assigned its own scratch branch name each time and pushes fail with 403
+regardless (section 11), so that name never matters: what matters is that work
+reaches `claude/vx03-operations-layer-7rq5ya` locally, by bundle. Note that
+`origin` is far behind it and always will be, so never resolve a question about
+"current state" by reading origin.
 **Live Worker:** `https://velvex-vx03.a99339744.workers.dev`
 **Cloudflare account id:** `cb58bfa682b8997a987de0637c7a69bc`
 **Supabase project ref:** `ttwudgdwusorwscegtnz`
@@ -547,6 +553,32 @@ outright.
   as "skip this channel and carry on" and records an observation so the state
   is visible; every other status still fails loudly. Read access is roughly
   $200/month, so it is a volume decision, not a setup step.
+
+- **A big `memory` row is not a big prompt, and the panic over that wastes a
+  session.** `readMemory({ minSalience: 6 })` is called by Chief-of-Staff
+  (`chief-of-staff.ts:166`) and Growth-Strategy (`growth-strategy.ts:70`), it
+  selects `*`, and rows sort `salience.desc, updated_at.desc` — so a freshly
+  written 277KB blob at salience 7 does sort straight to the top. What it does
+  **not** do is reach the model: `writeJson()` in `src/core/state.ts` puts the
+  payload in `detail` and a one-line summary in `content`, and both prompt
+  builders render `row.content` only:
+
+  ```ts
+  const notes = memory.map((row) => `- ${row.key}: ${row.content}`).join("\n");
+  ```
+
+  So the prompt gets `- transfer.full: state pushed to transfer.full`. The cost
+  of an oversized row is bytes over the wire into the Worker on those two runs,
+  not tokens. Before declaring a token leak, check which field the prompt reads.
+  This one was called live and was wrong.
+
+- **Section 11's transfer path is the only way code leaves a session, so treat a
+  failed transfer as an incident.** The full write-up is in section 11. The short
+  version, because it is the expensive one: a failed bundle fetch does not stop
+  the `git checkout` and `wrangler deploy` that follow it in the same paste, and
+  origin is months behind because push is 403. Check the **test count** and the
+  **number of cron lines wrangler prints**, not just the md5.
+
 
 ---
 
@@ -1120,46 +1152,112 @@ works from the watchlist alone and says so in the brief's limitations.
 
 ---
 
-## 12a. RIGHT NOW — the open thread (delete this section once done)
+## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-one unfinished piece of work, and should be removed when it is finished.
+the unfinished work, as of **2026-08-29**. Facts here about live settings go
+stale — a note in a document is not a setting. Verify against
+`GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
+anything below.
 
-**The SEO agent was NOT actually paused, whatever this section used to say.**
-The live override in `control.agent_schedules` read `weekly`, set 2026-08-22, so
-it has been firing unattended on the Monday 09:00 tick the whole time. No damage
-was done — its runs proposed nothing, because every one of them died on the
-`max_tokens: 400` bug above — but the safety decision recorded here was not in
-force. Check the live value with `GET /api/schedules` rather than trusting this
-file; a note in a document is not a setting. That was deliberate: it published a whole-page
-replacement over `/proof-of-concept.html` on its first real run — see the
-empty-anchor failure in section 10a — and the pause stopped the daily tick from
-repeating it. **Do not resume it on a schedule until the run below has been
-done once, manually, and checked.**
+### Live schedule overrides, 2026-08-29
 
-The site was restored from backup and verified byte-identical. It is healthy.
-A copy of the good source is in the memory table under `site.source.backup`,
-separate from the live `site.source`.
+| Agent | Override | Why |
+|---|---|---|
+| `seo_site` | **paused** | Correct. See the thread below — it has never completed a run. |
+| `finance_watch` | **paused** | Set 2026-08-27. Reason not recorded. Ask before clearing. |
+| `competitive_intel` | **paused** | Set 2026-08-27, and it **overrides the monthly cadence**. |
+| `site_integrity` | *(cleared 2026-08-29)* | Back on its built-in hourly, so auto-restore can arm. |
+| `x` | hourly | |
+| `chief_of_staff` | daily | |
+| `social_engagement` | weekly | |
 
-**The owner's decision:** run the SEO agent once, by hand, with Claude watching
-and ready to restore. Not back on cron. That is the right instinct and it should
-be respected — the failure above is exactly why.
+A `paused` override excludes an agent from **every** tick (`registry.ts:73`), so
+it beats the cadence in the agent definition. Competitive Intelligence was
+rebuilt to run monthly at a $4.50 cap, and while that pause stands it will never
+run at all. Clearing it is a spend decision and belongs to the owner.
+
+### Thread 1 — the SEO agent has still never completed a run
+
+The manual run described below **was attempted on 2026-08-29 at 11:20 and it
+failed**:
+
+```
+Ran out of output budget on claude-sonnet-5 (max_tokens 400).
+```
+
+That is the budget bug in section 10, and the fix (`SHORT_ANSWER_MAX_TOKENS`)
+deployed at ~15:00 the same day — *after* that run. So the agent has never once
+reached the point of proposing an edit on corrected code, and the original
+concern is untouched: on its one real run before the pause it published a
+whole-page replacement over `/proof-of-concept.html` (the empty-anchor failure in
+section 10a). It stays paused until a watched manual run has been done once.
+
+The site itself is healthy and was verified byte-identical after restore. A copy
+of the good source is at `site.source.backup`, separate from live `site.source`.
 
 What that run should look like:
 
-1. Confirm the fix is deployed. `src/core/site-edits.ts` must exist and
-   `applyEdit()` in `src/connectors/netlify.ts` must refuse an empty `before`.
-2. Snapshot the current source first, the way it was done last time: read
-   `/api/state/site.source`, keep it, and write it to `site.source.backup`.
-3. Trigger one run: `POST /api/run/seo_site`.
-4. Immediately fetch every page and check byte sizes against the snapshot. A
+1. Confirm `src/core/site-edits.ts` exists in the deployed build and
+   `applyEdit()` in `src/connectors/netlify.ts` refuses an empty `before`.
+2. Snapshot first: read `/api/state/site.source` and keep it.
+3. `POST /api/run/seo_site` — and hold the connection. The run belongs to it.
+4. Immediately fetch every page and compare byte sizes against the snapshot. A
    page that shrank is the failure recurring — restore at once.
-5. Only if all pages are intact, consider whether it goes back on a cadence.
+5. Only if every page is intact, consider a cadence.
 
-Two proposals are already queued for `/faq.html` — a meta description and an
-internal link. That page is the pricing page and is protected, so they will
-never auto-apply. One of them quotes "$999" without the $149 intro rate, which
-is the phrasing problem described in section 1. Read them before approving.
+Site-Integrity is now armed (thread 2), so a catastrophic shrink would be caught
+within the hour even if nobody is watching. That is a safety net, not a licence
+to run it unattended.
+
+### Thread 2 — auto-restore is live and armed (verify, do not assume)
+
+Deployed 2026-08-29 and confirmed working in production on a manual run:
+
+```
+site_integrity: 5 stored paths, 0 problem(s) in the source itself
+site_integrity: restore point updated (5 files)
+site_integrity: source and live site both intact
+```
+
+`site.source.last_good` holds 5 files — `/index.html` 26,454 bytes,
+`/proof-of-concept.html` 22,022, `/faq.html` 8,221, `/styles.css` 30,191,
+`/site.js` 5,011. The mechanism is documented in section 10; the thing worth
+re-checking is that `last_good` is still being promoted and has not gone stale,
+since promotion is gated on no critical findings.
+
+That same run also produced the first production proof of `reconcileStale()`:
+`closed 3 stale status row(s) left by a run that never ended`.
+
+### Thread 3 — the LinkedIn partner queue is filling with one post
+
+`linkedin.outbound_queue` holds **130 items, all status `queued`, and only two
+distinct texts — one of them repeated 129 times**, from 2026-08-21 through
+2026-08-29T15:00. It grows by one on most hourly ticks and nothing drains it,
+because `LINKEDIN_INTEGRATION_ENABLED` is `false` and there is no
+`LINKEDIN_PARTNER_TOKEN`, which is also why every hourly report reads
+`publish_post … blocked_inactive`.
+
+`enqueueForPartner()` in `src/connectors/linkedin.ts` unshifts unconditionally
+with a fresh `crypto.randomUUID()` and slices to 200. There is no dedupe on
+content and no drain, so the cap is the only bound: it will reach 200 and then
+churn, and the row is already 156KB. Callers are `channel-agent.ts:555` and
+`:571` and `social-engagement.ts:346`.
+
+Not yet diagnosed: why the same approved draft is re-queued each tick rather than
+being recognised as already queued. Fix the re-queue, not the symptom — raising
+the cap or clearing the row leaves it refilling. Note that the queue is the
+*intended* publishing route for LinkedIn (section 6), so it must keep working
+once a partner token exists.
+
+### Thread 4 — leftovers
+
+- Historical site snapshots are still in `memory` and are the owner's to keep or
+  drop: `site.source.pre-pricing-fix` (102KB) and `site.source.wrecked-20260822`
+  (47KB, a copy of the broken site kept as evidence).
+- `transfer.*` rows from code transfers are cleared to `""` after use. There is
+  no DELETE route on `/api/state`, so overwriting is how they get emptied.
+
 
 ## 13. Deliberately not built
 
