@@ -28,6 +28,7 @@ import competitiveIntel from "../src/agents/intelligence/competitive-intel.ts?ra
 import channelAgent from "../src/agents/marketing/channel-agent.ts?raw";
 import growthStrategy from "../src/agents/executive/growth-strategy.ts?raw";
 import judge from "../src/lib/judge.ts?raw";
+import learningStore from "../src/core/learning-store.ts?raw";
 
 /** Enough for a model to think and then answer briefly. */
 const FLOOR = 1500;
@@ -41,6 +42,7 @@ const SOURCES: Array<[string, string]> = [
   ["competitive-intel", competitiveIntel],
   ["channel-agent", channelAgent],
   ["growth-strategy", growthStrategy],
+  ["learning-store", learningStore],
 ];
 
 /**

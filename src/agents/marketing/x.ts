@@ -38,4 +38,10 @@ Numbers, states, mechanics: use them. "Wholesale and DTC share the same roasting
 
 The Velvex account is small and institutional. It grows when a specific operator finds one post that names their exact problem, not when a post goes viral. Optimise for precision.`,
   active: () => true,
+  // The only strategist that keeps a learning record, and the first agent in the
+  // system to keep one at all. X is the right place to start because it proposes
+  // hourly and its growth ideas queue for approval by design, so rulings arrive
+  // faster here than anywhere else — and rulings are the only feedback any
+  // channel has while read access is unbought.
+  learning: true,
 });

@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { DRAFT_SCHEMA } from "../src/agents/marketing/channel-agent.js";
 import { BRIEF_SCHEMA, DISCOVERY_SCHEMA, SCAN_SCHEMA } from "../src/core/intel.js";
+import { LESSON_SCHEMA } from "../src/core/learning-store.js";
 
 /** Every structured-output schema in the codebase. */
 const SCHEMAS: Array<[string, unknown]> = [
@@ -20,6 +21,7 @@ const SCHEMAS: Array<[string, unknown]> = [
   // have caught a maxItems added to it.
   ["DISCOVERY_SCHEMA", DISCOVERY_SCHEMA],
   ["SCAN_SCHEMA", SCAN_SCHEMA],
+  ["LESSON_SCHEMA", LESSON_SCHEMA],
 ];
 
 /** Keywords the API rejects inside an output_config schema. */

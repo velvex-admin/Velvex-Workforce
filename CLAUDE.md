@@ -347,6 +347,44 @@ outright.
   the veto can keep refusing the second while allowing the first, and
   `observeOnly` now means "never writes anything NEW" rather than "never writes".
 
+- **The error path must not need the resource that just ran out, and this was
+  read as a hanging fetch for a whole session.** Site-Integrity died on
+  consecutive hourly ticks on 2026-08-29 — 20:00 and 21:00 each logged one line
+  and then produced nothing: no heartbeat, no findings, no restore-point
+  promotion, no error. An earlier session read that signature as a `fetch()` with
+  no timeout and gave it `AbortSignal.timeout(10_000)`, which was a real fix for a
+  real bug and left this one untouched. The tells that it was not the fetch: the
+  timeout **was** in the deployed bundle (pull the live script and grep it, do not
+  trust a note); all five pages answer in under a second; and the heartbeat is a
+  `setInterval`, so a missing beat at +120s means the isolate is **dead**, not
+  slow. Run alone via `POST /api/run/site_integrity` it finishes in seconds and
+  promotes the restore point — so the agent was never the problem, the tick was.
+  Site-Integrity runs **last** on the hourly tick and is the heaviest thing in it,
+  so it is the one that discovers the invocation's ~50 subrequests are spent. And
+  the reason it left no evidence: both catch blocks in `runAgent` filed their
+  failure report with a bare `await coordinator.receiveReport(...)`, which is
+  itself a subrequest — so the report threw too, and *that* throw escaped
+  `runAgent` past `stopBeat()` and the terminal `writeStatus()`, out of `runDue()`,
+  killing the whole invocation and leaving a `running` row that nothing could
+  correct. `reportSafely()` now swallows a reporting failure the way
+  `writeStatus()` already swallows its own. **A restore point that stops advancing
+  is the visible symptom of an invocation dying, not of the site being wrong.**
+
+- **A report that cannot be written must never revise what the run actually did.**
+  Found while testing the above. On the success path the report was inside the
+  same `try` as `execute()`, so a throw there landed in the execute `catch`, which
+  counted the *same* action as `failed` on top of the `executed` it had already
+  been counted as — two increments for one action, and a failure report filed for
+  work that had already happened externally. An agent reading that back sees
+  something to retry, and retrying an external publish is exactly how the LinkedIn
+  partner queue reached 131 copies of one post. By that line the tweet is sent;
+  the bookkeeping does not get to disagree.
+
+- **`readMemory` takes a list of keys, and reading three keys one at a time costs
+  three subrequests.** `state.readMany()` exists for this. It matters only where
+  the margin is thin, which is precisely where it was needed: the agent at the end
+  of a tick is the one that finds the budget gone.
+
 - **`/faq` is a pricing page.** Protected from unattended SEO edits.
 - **Every wire on the dashboard was invisible, and had been from the start.**
   `.canvas-inner` holds only absolutely positioned children, so it collapsed to
@@ -709,8 +747,8 @@ the live Worker in one paste while every line looked like it worked.
 Two tells, and neither is the md5:
 
 - The **test count**. It is the cheapest version check in this repo. 175 is the
-  pre-session tree; the current number is in section 12. A count that dropped is
-  a reverted checkout, not a passing suite.
+  pre-session tree, 424 the tree before the learning layer; the current number is
+  in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy**. Five is current; three is the old
   `wrangler.toml`. Those come from the file being deployed, so they describe what
   actually went live rather than what you meant to send.
@@ -769,13 +807,20 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 424 tests
+npx vitest run            # 457 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
 Both must pass before deploying. The tests encode real decisions — an autonomy
 rule change that breaks `test/autonomy.test.ts` is a behaviour change, not a
 test problem.
+
+`.github/workflows/ci.yml` now runs both on every push and pull request. Before
+it existed the only check reporting on the PR was Cloudflare's Workers Builds —
+the red herring in section 9, failing on every push since 2026-08-20 — so a red
+tick meant nothing and a green one was unavailable. CI does **not** deploy:
+`wrangler.toml` is the source of truth for variables, and a job holding deploy
+credentials would be a second thing that can stamp them.
 
 ### File map
 
@@ -794,6 +839,8 @@ src/
     schedule.ts         weekly jittered posting plan
     state.ts            typed views over the memory table
     intel.ts            the brief document, its schema, and page diffing
+    learning.ts         episodes, lessons, and the forgetting rules (pure)
+    learning-store.ts   reading/writing a learning record, and forming lessons
   agents/
     registry.ts         the roster; runDue() honours schedule overrides
     marketing/          content, channel-agent (shared strategist factory),
@@ -1198,10 +1245,131 @@ works from the watchlist alone and says so in the brief's limitations.
 
 ---
 
+## 12c. The learning layer
+
+Every agent proposes; the owner rules; and until now nothing read the ruling
+back. This is the layer that does, and it is live on **one agent** — the X
+Strategist. The factory is shared, so turning it on for LinkedIn or Facebook is
+the `learning: true` flag in their spec and nothing else.
+
+### The cut: which agents get it, and why it is not "operational vs not"
+
+Memory compounds only where the world answers back. A procedural layer on an
+agent that acts and hears nothing accumulates confident rules with nothing
+validating them, which is worse than no layer at all. So the question is which
+agents have a **real feedback signal**, and the answer is less obvious than it
+looks:
+
+| Signal | Where it comes from | Who has it today |
+|---|---|---|
+| Owner verdict | `pending_approvals.status` | **every agent that queues** |
+| Execution outcome | `reports.outcome` / `error` | every agent that acts |
+| Audience response | `fetchMetrics()` | **nobody** |
+
+**X sees no engagement, and this is the fact the design turns on.** `fetchMetrics()`
+calls `/2/users/me` and `/2/users/:id/tweets`; both are read endpoints and both
+return 402 on the free tier, so no post this system has ever published has
+reported an impression back. The agent that most obviously "needs" learning is
+the one with no audience signal at all. Read access is roughly $200/month and is
+a purchase decision, not a design one — and even bought, `fetchMetrics()`
+aggregates a window rather than attributing to a post, so per-post retrieval
+keyed on the `external_ref` every published report already stores is a second
+piece of work behind it.
+
+So the layer X actually gets is built on the owner's rulings. That signal is
+free, already collected, low-latency, and attributable to a specific proposal —
+and the precedent for reading it back is in this repo already: `absorbRejections()`
+does exactly this for the intelligence agent's candidates. This generalises it,
+and reads approvals as well as rejections, because a rejection alone says what
+not to do and nothing about what to do instead.
+
+**SEO is the interesting case and the answer is "one layer, not three".** It gets
+no outcome feedback — no rank, no click-through — so a semantic layer there would
+be exactly the failure above. But it has a sharp *execution* signal: `applyEdit()`
+refuses with a specific recorded reason, and "anchor matched zero times" versus
+"matched more than once" is a procedural lesson validated by the next run for
+free. Not built yet; noted here so the case is not re-argued from scratch.
+
+**Deterministic agents must not learn.** `ops_health`, `site_integrity` and
+`lead_pipeline` run no model because timing and threshold arithmetic are not
+judgement calls. A smoke alarm that develops opinions about when not to go off is
+strictly worse than one that does not. The `null` model tier and "no learning
+layer" are the same decision.
+
+### Three layers, and only two have anything true in them
+
+- **Episodic** — already existed. It is `reports`. What was missing was not a
+  store but a *join*: a proposal against what the owner decided about it. That is
+  `episodes`, a bounded ring of at most `MAX_EPISODES` (40), keyed on the
+  proposal's dedupe key.
+- **Procedural** — the genuinely new one. A `Lesson` carries a claim, its basis,
+  a support count, a contradiction count and a last-confirmed date.
+- **Semantic** — the slot is built and **deliberately empty**. For a channel,
+  semantic means audience truth, and the audience is silent. `learningContext()`
+  states that absence to the model in words, because a model handed past posts
+  and asked what worked will find a pattern — that is what it is for — and with
+  no engagement signal the pattern is about nothing. `HAS_AUDIENCE_DATA` in
+  `channel-agent.ts` is the single switch that changes when metrics exist.
+
+### The retrieval contract, and why it is arithmetic rather than a convention
+
+Section 12b's lesson: memory is read into other agents' prompts, so a document
+stored there is paid for by agents that never asked for it. The broadcast surface
+is **exactly two readers** — Growth-Strategy (`minSalience: 6`, limit 30) and
+Chief-of-Staff (`minSalience: 6`, limit 25), both untagged. Everything else
+already retrieves narrowly; the channel strategists query `tags: [channel]`.
+
+So a learning record is written at **salience 4** with `tags: ["lesson", agentId]`.
+`minSalience: 6` becomes `salience=gte.6` in PostgREST, so a row at 4 *cannot*
+match it, whatever anyone later forgets. `test/learning-retrieval.test.ts` asserts
+**both halves** — that we write below the floor, and that those two readers still
+read at it. One half alone is not the invariant: assert only the write and
+somebody raises a lesson's salience "so the Chief-of-Staff can see it too";
+assert only the readers and somebody drops Growth-Strategy to 3. Both were
+verified to fail on the broken code before being kept.
+
+### Forgetting is the part that is hard
+
+An additive memory costs more every cycle and grows more confident while it does
+it. That is measured, not theoretical: carrying every open question forward took
+the intelligence agent's research pass from $0.66 to $1.18 in one cycle. So:
+
+- a lesson supported no more often than it is contradicted is dropped — a coin
+  flip quoted as guidance reads as established and costs the space a real lesson
+  would use;
+- a lesson unconfirmed for `LESSON_STALE_DAYS` (45) is dropped, because a true
+  claim is re-derived from the next batch for free while a false one nothing
+  contradicts would sit in the prompt forever;
+- `lessonId()` compares a normalised 48-character prefix, not the whole string,
+  for the reason `settledKey()` does: the model rephrases the same claim every
+  cycle and exact matching lets one belief occupy several slots.
+
+### What it costs, and where it runs
+
+Three subrequests and at most one model call, and **only on runs that were going
+to call a model anyway**. The strategist wakes hourly but drafts only when its
+shelf is short, so the learning block sits inside the drafting path — which is
+also exactly when the lessons get used. On a tick whose subrequest budget is
+tight enough to kill the last agent in it (see the trap below), that placement is
+the difference between a layer that pays for itself and one that breaks its
+neighbours.
+
+The formation call is **Sonnet at effort `low`**, not Opus: it reads a small table
+of decisions and says what they have in common, which is classification against
+evidence in hand. It fires only once `FORM_AFTER_VERDICTS` (5) rulings have piled
+up — the same "answer whether this is worth paying for before paying" argument as
+the intelligence layer's stage-0 scan.
+
+`failed` is **not** a rejection. The owner said yes and the machinery broke; that
+is a fact about the connector. Counting it as a rejection would teach the agent
+to stop proposing things that were approved.
+
+---
+
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-29, 17:45 UTC**. Facts here about live
+the unfinished work, as of **2026-08-29, 21:25 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
@@ -1289,29 +1457,50 @@ Worth knowing for next time: the queue is stored as `detail.items` while
 through the state route — doing so would have read back as an empty queue and
 taken the real posts with it. It needed the deploy.
 
-### OPEN — Site-Integrity's hourly check can hang, and did
+### DIAGNOSED, fix written and NOT yet deployed — the hourly tick kills its last agent
 
-`fetchServed()` had no timeout on its outbound `fetch`. The 20:00 UTC run on
-2026-08-29 logged "5 stored paths, 0 problem(s) in the source itself" at
-20:00:56 and then produced nothing at all for the next half hour: no heartbeat,
-no findings, no restore-point promotion. `site.source.last_good` was still
-holding its 15:17 copy at 20:33, five hourly ticks later, which is how the
-symptom shows up — the restore point silently stops advancing.
+The fetch timeout was a real fix for a real bug and **was not this bug**. Measured
+2026-08-29 21:00–21:10 UTC against the live Worker:
 
-`AbortSignal.timeout(10_000)` per page is fixed in code and **is deployed**.
-What is *not* established:
+- `AbortSignal.timeout(10_000)` **is** in the deployed bundle. Pulled the live
+  script and grepped it; do not take a note's word for what is deployed.
+- All five pages answer in 0.3–0.9s, HTTP 200. The site is not hanging.
+- The 21:00 run repeated the 20:00 signature exactly: one log line at 21:00:56,
+  then nothing. `heartbeatAt` never moved again, and the heartbeat is a
+  `setInterval`, so a missing beat at +120s means the isolate is **dead**.
+- Run alone via `POST /api/run/site_integrity` it finished in seconds and
+  promoted the restore point. `site.source.last_good` advanced 15:17 → **21:10:06**
+  and now holds `/index.html` at 26,614 and `/proof-of-concept.html` at 22,184,
+  the correct post-SEO sizes.
+- Every other agent on run `97edb289` finished in 1–2s: linkedin, facebook, x,
+  ops_health. Only site_integrity, which runs **last**, did not.
 
-- whether every hourly run since 15:17 hung the same way, or only that one.
-  Site-Integrity files no reports on a healthy pass, so an absence of reports is
-  the same shape as a hang. The runtime board holds only the newest run.
-- what the pages were doing. A timeout now records the page as unreachable at
-  status 0, so the next occurrence leaves evidence rather than silence.
+So the agent was never the problem — the tick was. It is last in the hourly tick
+and the heaviest thing in it, so it is the one that finds the invocation's ~50
+subrequests spent. And the reason it left no evidence is the trap now recorded in
+section 10: both catch blocks in `runAgent` filed their failure report with an
+unguarded `receiveReport`, which is itself a subrequest, so the report threw and
+that throw escaped `runAgent` entirely, killing the invocation and leaving a
+`running` row nothing could correct.
 
-**How to tell it is healthy again:** `site.source.last_good.savedAt` should
-advance within an hour of any clean pass. If it is still 2026-08-29T15:17 an
-hour after the deploy, the hang was not the only cause and the next thing to
-look at is `isPromotable()` and the `page_unreachable` findings that block
-promotion, not the fetch.
+**Written, tested, not yet deployed:** `reportSafely()` guards all three report
+calls, and `state.readMany()` collapses site_integrity's two known-good reads into
+one. That makes the failure *visible* and shaves the margin; it does not raise the
+ceiling.
+
+**Still open — the structural fix.** Guarding the report does not stop the tick
+running out. The real fix is the weekly-split argument transposed: `0 8 * * 1` and
+`0 9 * * 1` exist because one invocation gets 15 minutes for everything it runs,
+and the same invocation gets ~50 subrequests for everything it runs. Giving
+site_integrity its own cron slot (`30 * * * *`) would hand it a fresh budget. That
+touches `wrangler.toml` and `scheduled()` routing, which sections 9 and 11 both
+flag as drift-prone, so it is deliberately not done unattended. **Until it is
+done, expect site_integrity to keep dying on the hourly tick — it will now say so
+instead of going quiet.**
+
+**One loose end:** `/faq.html` in `site.source` is 8,396 bytes, up from 8,221 at
+15:17. Something edited the protected pricing page in that window, and the 21:10
+promotion has baked it into the restore point. Worth reading before it is trusted.
 
 ### Thread 4 — leftovers
 

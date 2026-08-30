@@ -248,6 +248,46 @@ function reconcileStale(board: AgentRuntimeStatusMap, runId: string, now: number
 }
 
 /**
+ * File a failure report without letting the filing become the failure.
+ *
+ * The error paths in `runAgent` exist to turn a broken run into a recorded one.
+ * Both of them did it with a bare `await coordinator.receiveReport(...)`, and a
+ * report is a subrequest — so when the thing that broke the run was running OUT
+ * of subrequests, the report threw too, and that second throw escaped `runAgent`
+ * entirely: past `stopBeat()`, past the terminal `writeStatus()`, out of
+ * `runDue()`, killing the whole invocation. The agent's status row then read
+ * `running` forever with no error recorded anywhere, because recording it was
+ * the thing that failed.
+ *
+ * That is not hypothetical. Site-Integrity is last in the hourly tick and the
+ * heaviest agent in it, and it died this way on consecutive hourly runs on
+ * 2026-08-29 — 20:00 and 21:00 both logged one line and then stopped, with no
+ * heartbeat, no findings and no error, while the same agent run alone in its own
+ * invocation completed in seconds. An earlier session read that signature as a
+ * hanging `fetch` and gave it a timeout, which was a real fix for a different
+ * bug and left this one untouched.
+ *
+ * So: the error path must not depend on the resource that just ran out. A report
+ * that cannot be filed is swallowed, exactly as `writeStatus()` already swallows
+ * its own, and for the same reason — the run's ending is worth more than the
+ * record of why it ended, because a missing ending is a lie that only another
+ * run can correct.
+ */
+async function reportSafely(
+  coordinator: Coordinator,
+  report: AgentReport,
+  ctx: RunContext
+): Promise<void> {
+  try {
+    await coordinator.receiveReport(report, ctx);
+  } catch (err) {
+    ctx.log(`could not file a failure report for ${report.agentId}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Propose -> classify -> execute or queue -> report. The whole autonomy model
  * lives in these forty lines; everything else is detail.
  */
@@ -407,7 +447,8 @@ export async function runAgent(
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
     result.failed += 1;
-    await coordinator.receiveReport(
+    await reportSafely(
+      coordinator,
       {
         agentId: agent.id,
         batch: agent.batch,
@@ -490,7 +531,20 @@ export async function runAgent(
       if (execution.outcome === "failed") result.failed += 1;
       else result.executed += 1;
 
-      await coordinator.receiveReport(
+      // Guarded, and for a sharper reason than the catch blocks.
+      //
+      // By this line the action HAS happened — a post is published, a queue is
+      // written, a site is deployed. An unguarded report that throws here lands
+      // in the catch below, which counts the same action as failed on top of the
+      // executed it was already counted as, and files a failure report for work
+      // that succeeded. An agent reading that back sees an action it needs to
+      // retry, and retrying an external publish is how the LinkedIn queue reached
+      // 131 copies of one post.
+      //
+      // So a report that cannot be written must never revise what the run
+      // actually did. It is logged and the execution stands.
+      await reportSafely(
+        coordinator,
         {
           agentId: agent.id,
           batch: agent.batch,
@@ -508,7 +562,8 @@ export async function runAgent(
       result.failed += 1;
       const message = err instanceof Error ? err.message : String(err);
       result.decisions.push({ action, decision, outcome: "failed" });
-      await coordinator.receiveReport(
+      await reportSafely(
+        coordinator,
         {
           agentId: agent.id,
           batch: agent.batch,

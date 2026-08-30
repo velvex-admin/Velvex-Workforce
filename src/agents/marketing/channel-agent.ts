@@ -40,6 +40,21 @@ import {
   type ContentPillar,
 } from "../../core/config.js";
 import { flag, type Env } from "../../env.js";
+import { dedupeKey } from "../../core/proposal-key.js";
+import {
+  demote,
+  learningContext,
+  recordEpisodes,
+  shouldForm,
+  type LearningRecord,
+} from "../../core/learning.js";
+import {
+  absorbVerdicts,
+  episodesFor,
+  formLessons,
+  readLearning,
+  writeLearning,
+} from "../../core/learning-store.js";
 import {
   dueSlot,
   ensureWeeklyPlan,
@@ -75,12 +90,47 @@ export interface ChannelStrategistSpec {
    * ourselves.
    */
   route?: "connector" | "linkedin-partner-queue";
+  /**
+   * Whether this strategist keeps a learning record: episodes of what it
+   * proposed, the owner's rulings on them, and the lessons formed from those.
+   *
+   * Off by default, and on for X only. Not because the other channels could not
+   * use it, but because a layer that shapes public copy should be watched on one
+   * channel before it shapes three. The factory is shared, so turning it on
+   * elsewhere is this one flag — which is the point of putting it here rather
+   * than forking the file.
+   *
+   * What it learns from is the owner's approve/reject decisions and nothing
+   * else. There is no audience signal on any of these channels today: X's free
+   * tier posts but does not read, so `fetchMetrics()` 402s and no post has ever
+   * reported an impression back. See `learningContext()` for how that absence is
+   * stated to the model rather than left for it to fill in.
+   */
+  learning?: boolean;
 }
 
 const REASONING_MODEL = MODELS.reasoning;
 
 // Rough spend ceiling per platform per day, in ready drafts.
 const TARGET_READY_PER_CHANNEL = 3;
+
+/**
+ * Whether any channel reports audience response back to us. It does not.
+ *
+ * X's free tier posts but does not read: `/2/users/me` and the timeline
+ * endpoint `fetchMetrics()` needs both return 402 until a paid tier is active,
+ * so no post this system has ever published has reported an impression. LinkedIn
+ * publishes through a partner queue we hold no API credentials for. Facebook is
+ * dormant.
+ *
+ * This is a constant rather than a per-spec flag because it is one fact about
+ * the whole system's connectivity, and because making it a flag invites someone
+ * to set it true on a channel that still cannot read. When read access is
+ * bought, this becomes the switch that turns the semantic layer on — and the
+ * work behind it is per-post metric retrieval keyed on the `external_ref` every
+ * published report already stores, not just flipping this.
+ */
+const HAS_AUDIENCE_DATA = false;
 
 export const DRAFT_SCHEMA = {
   type: "object",
@@ -174,7 +224,8 @@ export async function readChannelHistory(
 async function draftForChannel(
   spec: ChannelStrategistSpec,
   ctx: RunContext,
-  history: { recentPosts: string[]; lastPublishedAt: number | null }
+  history: { recentPosts: string[]; lastPublishedAt: number | null },
+  learned: string | null
 ): Promise<StrategyResult | null> {
   const memory = await ctx.db.readMemory({
     tags: [spec.channel],
@@ -223,7 +274,7 @@ ${posts}
 
 Standing notes tagged ${spec.channel}:
 ${notes}
-
+${learned ? `\n${learned}\n` : ""}
 Now draft one new post and, if you see it, propose one to three growth ideas.`;
 
   const result = await ctx.claude.complete<StrategyResult>({
@@ -411,9 +462,55 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       }
 
       const history = await readChannelHistory(spec.channel, ctx);
+
+      // --- learning: read, absorb, form -----------------------------------
+      //
+      // This is deliberately INSIDE the drafting path rather than at the top of
+      // propose(). The strategist wakes hourly but only drafts when its shelf is
+      // short, so putting the learning work here means it costs three
+      // subrequests on the runs that were already going to make a model call,
+      // and nothing at all on the rest. On an hourly tick whose subrequest
+      // budget is already tight enough to kill the last agent in it, that
+      // distinction is the difference between a layer that pays for itself and
+      // one that breaks its neighbours.
+      //
+      // Failure here must never cost the run its draft. A learning record is an
+      // optimisation; the post is the work. So the whole block is guarded and a
+      // failure degrades to drafting with no lessons, which is what the agent
+      // did before this existed.
+      let record: LearningRecord | null = null;
+      let learned: string | null = null;
+      if (spec.learning) {
+        try {
+          record = await readLearning(ctx.db, spec.id, ctx.now);
+          const absorbed = await absorbVerdicts(ctx.db, spec.id, record, ctx.now);
+          record = absorbed.record;
+          if (absorbed.resolved > 0) {
+            ctx.log(`${spec.id}: absorbed ${absorbed.resolved} new ruling(s)`);
+          }
+
+          if (shouldForm(record)) {
+            ctx.log(`${spec.id}: forming lessons from ${record.pendingVerdicts} ruling(s)`);
+            const formed = await formLessons(ctx.claude, record, spec.name);
+            if (formed) {
+              record = formed;
+              ctx.log(`${spec.id}: ${record.lessons.length} lesson(s) held`);
+            }
+          }
+
+          learned = learningContext(record, HAS_AUDIENCE_DATA);
+        } catch (err) {
+          ctx.log(`${spec.id}: learning pass failed, drafting without it`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          record = null;
+          learned = null;
+        }
+      }
+
       let result: StrategyResult | null = null;
       try {
-        result = await draftForChannel(spec, ctx, history);
+        result = await draftForChannel(spec, ctx, history, learned);
       } catch (err) {
         ctx.log(`${spec.id}: drafting call failed`, { error: err instanceof Error ? err.message : String(err) });
         return proposals;
@@ -475,6 +572,44 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           rationale: idea.why,
           dedupeKey: `growth:${spec.id}:${idea.title.slice(0, 60)}`,
         });
+      }
+
+      // --- learning: record what was proposed -----------------------------
+      //
+      // The episode key is `dedupeKey(spec.id, action)`, which is the exact
+      // string the Chief-of-Staff stamps onto the approval row when it queues
+      // one (chief-of-staff.ts:97). Recomputing it here rather than inventing a
+      // handle is what lets a ruling that arrives days later be joined back to
+      // the proposal that earned it — and it already carries a content hash, so
+      // two differently-worded ideas stay two episodes instead of collapsing
+      // into one.
+      //
+      // Only proposals that can BE ruled on are worth recording. A draft that
+      // classifies routine is executed without anyone deciding anything, so it
+      // would sit unresolved forever and drag the ring down with it.
+      if (spec.learning && record) {
+        try {
+          const episodes = episodesFor(
+            proposals
+              .filter((action) => action.type === "campaign_direction")
+              .map((action) => ({
+                key: dedupeKey(spec.id, action),
+                kind: "growth_idea" as const,
+                summary: String(action.payload["title"] ?? action.summary),
+                features: {
+                  risk: String(action.payload["risk"] ?? "unknown"),
+                  channel: spec.channel,
+                },
+              })),
+            ctx.now
+          );
+          const next = demote(recordEpisodes(record, episodes, ctx.now), ctx.now);
+          await writeLearning(ctx.db, spec.id, next);
+        } catch (err) {
+          ctx.log(`${spec.id}: could not save the learning record`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
 
       return proposals;

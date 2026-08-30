@@ -225,6 +225,34 @@ async function readJson<T>(db: Supabase, key: string): Promise<T | null> {
   return (value ?? null) as T | null;
 }
 
+/**
+ * Several keys in one request.
+ *
+ * `readMemory` already accepts a list of keys and turns it into a single
+ * `key=in.(...)` filter, so reading three keys one at a time costs three
+ * subrequests where one would do. That matters more than it sounds: a Worker
+ * invocation gets roughly fifty subrequests for EVERYTHING on the tick, shared
+ * across every agent that runs, and the agent at the end of the hourly tick is
+ * the one that discovers the budget is gone.
+ *
+ * Returns a map rather than a tuple so a missing key is simply absent, and the
+ * caller reads each value at the type it expects.
+ */
+async function readManyJson(
+  db: Supabase,
+  keys: string[]
+): Promise<Map<string, unknown>> {
+  const rows = await db.readMemory({ keys, limit: keys.length });
+  const values = new Map<string, unknown>();
+  for (const row of rows) {
+    const detail = row.detail;
+    if (!detail || typeof detail !== "object") continue;
+    const value = (detail as Record<string, unknown>)["value"];
+    if (value !== undefined) values.set(row.key, value);
+  }
+  return values;
+}
+
 async function writeJson<T>(
   db: Supabase,
   key: string,
@@ -246,6 +274,7 @@ async function writeJson<T>(
 
 export const state = {
   read: readJson,
+  readMany: readManyJson,
   write: writeJson,
 
   pipeline: (db: Supabase) => readJson<PipelineSnapshot>(db, STATE_KEYS.pipeline),

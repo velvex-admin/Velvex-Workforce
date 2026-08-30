@@ -165,8 +165,18 @@ export const siteIntegrityAgent: AgentDefinition = {
     findings.push(...compareWithServed(pages, served));
 
     // --- the known-good copy, and whether to go back to it ----------------
-    const knownGood = await state.read<KnownGoodSource>(ctx.db, STATE_KEYS.siteLastGood);
-    const ledger = await state.read<RestoreLedger>(ctx.db, STATE_KEYS.siteRestores);
+    //
+    // Both keys in one request. This agent runs last on the hourly tick and is
+    // the heaviest thing in it — a big source read, five page fetches, and a
+    // ~92KB write when it promotes — so it is the one that finds out the
+    // invocation's subrequest budget is spent. Two reads collapsed into one is
+    // a small saving taken where the margin is thinnest.
+    const stored = await state.readMany(ctx.db, [
+      STATE_KEYS.siteLastGood,
+      STATE_KEYS.siteRestores,
+    ]);
+    const knownGood = (stored.get(STATE_KEYS.siteLastGood) ?? null) as KnownGoodSource | null;
+    const ledger = (stored.get(STATE_KEYS.siteRestores) ?? null) as RestoreLedger | null;
     const damage = assessDamage(pages, served, knownGood ?? null);
 
     if (damage.ruined) {
