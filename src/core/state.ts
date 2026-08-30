@@ -196,6 +196,17 @@ export interface ContentDraft {
   /** Set when the draft itself needed sign-off and got it. */
   approvalRef?: string;
   publishedOn: Array<{ channel: string; ref: string; at: string }>;
+  /**
+   * Channels where the owner looked at this draft and said no.
+   *
+   * Per channel for the same reason `publishedOn` is: a channel-neutral draft
+   * turned down for LinkedIn may still be right for X. It is also what stops a
+   * declined draft jamming the channel — the publish proposal's dedupe key is
+   * stable, and `queueApproval` ignores duplicates whatever their status, so
+   * without this the agent would re-pick the same rejected draft every tick,
+   * fail to re-queue it, and go quiet instead of writing something else.
+   */
+  declinedOn?: Array<{ channel: string; at: string }>;
   status: "ready" | "needs_revision" | "retired";
   revisionNote?: string;
 }

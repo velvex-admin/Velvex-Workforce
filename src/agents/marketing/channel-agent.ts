@@ -31,6 +31,7 @@ import { state, type ContentDraft } from "../../core/state.js";
 import { getConnector } from "../../connectors/registry.js";
 import { ConnectorInactiveError } from "../../connectors/types.js";
 import { enqueueForPartner } from "../../connectors/linkedin.js";
+import { linkedInDirectConnector } from "../../connectors/linkedin-direct.js";
 import { MODELS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
@@ -108,6 +109,44 @@ export interface ChannelStrategistSpec {
    * stated to the model rather than left for it to fill in.
    */
   learning?: boolean;
+
+  /**
+   * Every post on this channel waits for the owner before it goes out.
+   *
+   * The default across this system is that publishing a draft the strategist
+   * itself wrote, inside approved pillars and into an established slot, is
+   * routine. That is right for a channel whose voice is settled. It is not right
+   * for a channel the owner is still shaping: the cost of one generic post on a
+   * company page is not one bad post, it is the page reading as automated to
+   * everyone who sees it afterwards.
+   *
+   * So this turns publishing into a veto. The owner reads the exact text, and
+   * approving it is what publishes it. Rejecting it takes that draft out of the
+   * running for this channel and the agent writes something else.
+   */
+  approveBeforePublish?: boolean;
+
+  /**
+   * The page's own voice, from before the agent existed.
+   *
+   * `readChannelHistory` reads what THIS SYSTEM published, which on a channel it
+   * has never posted to is nothing at all — so the model would be told "nothing
+   * published on this channel yet" about a page with a year of posts on it and
+   * would invent a register from the guide alone. That is exactly how an agent
+   * arrives generic on day one.
+   *
+   * Carries both halves deliberately. Examples alone teach a house style; the
+   * contrast between what the page is moving toward and what it has moved away
+   * from teaches the judgement, and this page's own trajectory is the clearest
+   * statement of that judgement available.
+   *
+   * It is a starting register, not a library: once there is real history, that
+   * history is what the model reasons over.
+   */
+  voiceBaseline?: {
+    target: Array<{ text: string }>;
+    avoid: Array<{ why: string; text: string }>;
+  };
 }
 
 const REASONING_MODEL = MODELS.reasoning;
@@ -248,6 +287,19 @@ async function draftForChannel(
   const notes = memory.map((row) => `- ${row.key}: ${row.content}`).join("\n") || "(none)";
   const posts = history.recentPosts.join("\n") || "(nothing published on this channel yet)";
 
+  // Only while this system has published nothing here. After that the page's
+  // real history is richer and current, and carrying a frozen baseline beside it
+  // would compete with it — the additive-memory failure this repo has paid for
+  // twice already.
+  const baseline =
+    spec.voiceBaseline && history.recentPosts.length === 0
+      ? `\nThe page already exists and has a voice, written by the owner before you. This is it.\n\nWRITE LIKE THIS:\n\n${spec.voiceBaseline.target
+          .map((sample, i) => `[${i + 1}]\n${sample.text}`)
+          .join("\n\n")}\n\nDO NOT WRITE LIKE THIS. These are earlier posts from the same page that it has deliberately moved away from:\n\n${spec.voiceBaseline.avoid
+          .map((sample, i) => `[${i + 1}] ${sample.why}\n${sample.text}`)
+          .join("\n\n")}\n\nYour job is to continue the first list, not to average the two.\n`
+      : "";
+
   const system = `You are the channel strategist for Velvex on ${spec.channel}. You draft the copy AND think about what could make the ${spec.channel} presence bigger.
 
 ${BUSINESS_CONTEXT}
@@ -283,7 +335,7 @@ Respond only with the JSON object described by the schema.`;
 
   const user = `Recent posts on ${spec.channel} (most recent first):
 ${posts}
-
+${baseline}
 Standing notes tagged ${spec.channel}:
 ${notes}
 ${learned ? `\n${learned}\n` : ""}
@@ -299,6 +351,59 @@ Now draft one new post and, if you see it, propose one to three growth ideas.`;
   });
 
   return result.parsed ?? null;
+}
+
+/**
+ * Take drafts the owner turned down out of this channel's running.
+ *
+ * Rejection deliberately has no hook anywhere in this system: rulings are read
+ * back by the agent that cares, at the start of its own run. `absorbRejections()`
+ * in the intelligence agent does exactly this for candidates, and the learning
+ * layer does it for verdicts. This is the third instance of the same pattern.
+ *
+ * It is not optional bookkeeping. `queueApproval` ignores a duplicate dedupe key
+ * whatever its status, and a publish proposal's key is stable for a given draft
+ * and slot — so a rejected draft that stayed available would be re-picked every
+ * tick, silently fail to re-queue, and the channel would simply stop producing.
+ * Marking it declined is what frees the shelf so the drafting pass writes
+ * something else, which is the whole point of rejecting it.
+ */
+async function absorbDeclines(
+  spec: ChannelStrategistSpec,
+  drafts: ContentDraft[],
+  ctx: RunContext
+): Promise<ContentDraft[]> {
+  const approvals = await ctx.db.listApprovals("rejected", 50);
+  const declined = new Set<string>();
+  for (const row of approvals) {
+    if (row.agent_id !== spec.id) continue;
+    const action = row.action as ProposedAction | undefined;
+    if (!action) continue;
+    if (action.type !== "publish_post" && action.type !== "schedule_post") continue;
+    const draftId = action.payload?.["draftId"];
+    if (typeof draftId === "string") declined.add(draftId);
+  }
+  if (declined.size === 0) return drafts;
+
+  let changed = 0;
+  const next = drafts.map((draft) => {
+    if (!declined.has(draft.id)) return draft;
+    const already = (draft.declinedOn ?? []).some((entry) => entry.channel === spec.channel);
+    if (already) return draft;
+    changed += 1;
+    return {
+      ...draft,
+      declinedOn: [
+        ...(draft.declinedOn ?? []),
+        { channel: spec.channel, at: ctx.now.toISOString() },
+      ],
+    };
+  });
+
+  if (changed === 0) return drafts;
+  ctx.log(`${spec.id}: ${changed} draft(s) declined by the owner, taken out of the running`);
+  await state.saveContentQueue(ctx.db, next);
+  return next;
 }
 
 export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefinition {
@@ -349,6 +454,23 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
     ],
 
     approvalRules: [
+      // Ordered first because it is the broadest veto on this channel. Approval
+      // rules are evaluated before routine rules and any hit queues the action,
+      // so this beats `publish_own_draft` without that rule needing to know.
+      ...(spec.approveBeforePublish
+        ? [
+            {
+              id: `${spec.id}.publish_needs_sign_off`,
+              describe: `Every ${spec.channel} post waits for the owner to read it.`,
+              classification: "needs_approval" as const,
+              risk: "medium" as const,
+              test: (action: ProposedAction) =>
+                action.type === "publish_post" || action.type === "schedule_post"
+                  ? `Posts to the ${spec.channel} page are read by the owner before they go out.`
+                  : null,
+            },
+          ]
+        : []),
       {
         id: `${spec.id}.growth_experiment`,
         describe: "A growth idea, by definition.",
@@ -408,7 +530,10 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         return [];
       }
 
-      const drafts = await state.contentQueue(ctx.db);
+      let drafts = await state.contentQueue(ctx.db);
+      if (spec.approveBeforePublish) {
+        drafts = await absorbDeclines(spec, drafts, ctx);
+      }
       const ready = drafts.filter(
         (draft) =>
           draft.status === "ready" &&
@@ -432,7 +557,9 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       // no error anywhere, and it took the learning layer with it, since that
       // lives inside the drafting path.
       const available = ready.filter(
-        (draft) => !draft.publishedOn.some((entry) => entry.channel === spec.channel)
+        (draft) =>
+          !draft.publishedOn.some((entry) => entry.channel === spec.channel) &&
+          !(draft.declinedOn ?? []).some((entry) => entry.channel === spec.channel)
       );
 
       const proposals: ProposedAction[] = [];
@@ -723,7 +850,16 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         }
       };
 
-      if (spec.route === "linkedin-partner-queue") {
+      // Direct posting takes precedence over the partner queue the moment it is
+      // actually live. Both branches are kept because the queue is the honest
+      // fallback while LinkedIn's Community Management API app is under review:
+      // the alternative is an agent that cannot publish at all until an outside
+      // approval lands, and drafts that pile up nowhere.
+      const linkedInDirect =
+        spec.route === "linkedin-partner-queue" &&
+        linkedInDirectConnector.status(ctx.env).active;
+
+      if (spec.route === "linkedin-partner-queue" && !linkedInDirect) {
         // We do not post to LinkedIn ourselves. The strategist drafts, the
         // outside partner agent collects and publishes. If the partner is not
         // wired up yet, the draft still lands in the queue and waits.

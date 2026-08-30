@@ -16,6 +16,12 @@ export interface Env {
   FACEBOOK_ENABLED: string;
   X_ENABLED: string;
   LINKEDIN_INTEGRATION_ENABLED: string;
+  /**
+   * Whether this Worker posts to the LinkedIn company page itself, rather than
+   * handing drafts to the partner queue. Off until the Community Management API
+   * app is approved and a token exists.
+   */
+  LINKEDIN_DIRECT_ENABLED?: string;
   OPS_PIPELINE_MONITOR_ENABLED: string;
   /**
    * Whether the Competitive Intelligence agent may reach the open web.
@@ -42,6 +48,10 @@ export interface Env {
   X_ACCESS_TOKEN?: string;
   X_ACCESS_TOKEN_SECRET?: string;
   LINKEDIN_PARTNER_TOKEN?: string;
+  /** Company page URN number only, e.g. "1234567" from urn:li:organization:1234567. */
+  LINKEDIN_ORG_ID?: string;
+  /** OAuth token with w_organization_social, and r_organization_social to read back. */
+  LINKEDIN_ACCESS_TOKEN?: string;
   /** Netlify write access for the SEO / Site agent. Both are required. */
   NETLIFY_AUTH_TOKEN?: string;
   NETLIFY_SITE_ID?: string;

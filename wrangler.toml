@@ -39,9 +39,19 @@ MODEL_FAST = "claude-haiku-4-5"
 FACEBOOK_ENABLED = "false"
 X_ENABLED = "true"
 
-# The LinkedIn agent is built by an outside company. This Worker only exposes
-# the integration point it will call. No agent, no scheduling on our side.
+# LinkedIn has two routes to the same page and they are independent.
+#
+# The partner queue is the original architecture doc's integration point: an
+# outside agent drains it. We own the strategist regardless, per the owner.
 LINKEDIN_INTEGRATION_ENABLED = "false"
+#
+# Direct posting through our own connector. Off until the Community Management
+# API app is approved and LINKEDIN_ORG_ID / LINKEDIN_ACCESS_TOKEN are set as
+# secrets. When this is "true" and both secrets exist, the strategist publishes
+# through the connector and stops using the partner queue. Either way, every
+# LinkedIn post waits for the owner's approval first - that is a rule in the
+# agent, not a consequence of the transport.
+LINKEDIN_DIRECT_ENABLED = "false"
 
 # Ops-Health reads the operations pipeline read-only. Left unset on purpose:
 # no Phase 0 credentials are wired into this project.

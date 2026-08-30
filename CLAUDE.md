@@ -165,9 +165,81 @@ recent list. The owner cares about this: creativity is the point.
 ### LinkedIn was originally an external build
 
 The architecture doc had an outside company delivering it. The owner overrode
-that — we own the strategist. Publishing still routes through the partner queue
-(`route: "linkedin-partner-queue"`) because we hold no LinkedIn API credentials.
-Switching to direct posting later means deleting that one option.
+that — we own the strategist.
+
+**Two routes to the page now exist and they are independent.** The partner queue
+(`route: "linkedin-partner-queue"`) is the doc's integration point. Alongside it,
+`src/connectors/linkedin-direct.ts` posts to the company page ourselves. The
+strategist prefers direct whenever it is actually live and falls back to the
+queue otherwise, so `/api/status` lists LinkedIn **twice** on purpose — a draft
+handed to a queue is not a draft that reached LinkedIn, and one row would hide
+that.
+
+Direct posting is not a paste-a-secret job the way X was. It needs LinkedIn's
+**Community Management API** product on a developer app, which LinkedIn reviews,
+plus the page having that app's owner as an admin. `r_organization_social` from
+the same review is what would give this system its **first audience signal
+anywhere** — X's free tier 402s on every read, so nothing published by this
+system has ever reported an impression back.
+
+Two things the connector deliberately refuses rather than papers over: it will
+not publish when handed `scheduledFor`, because the Posts API has no scheduling
+field and posting now would put a post out hours early with nothing saying so;
+and it will not invent a reference when LinkedIn returns 201 with no
+`x-restli-id`, because a made-up ref reads for ever after as a successful publish
+nobody can find, and a retry would post twice.
+
+`escapeCommentary()` is the one part written against documentation rather than a
+real response. An unescaped `(` is the usual cause of a 422 on ordinary prose;
+`#` is deliberately left alone, since escaping it would publish a visible
+backslash and kill the one hashtag the guide allows. **Verify it on the first
+real post** — too wide and backslashes show, too narrow and a sentence 422s.
+
+### Every LinkedIn post waits for the owner
+
+`approveBeforePublish: true` on the LinkedIn spec turns publishing into a veto,
+which is a deliberate departure from every other channel, where publishing a
+draft the strategist wrote into an established slot is routine. The owner's
+reasoning is the right one: the cost of one generic post on a company page is not
+one bad post, it is every reader who now reads the page as automated, and the
+agent getting better later does not remove the posts that taught them to scroll.
+
+The half that is easy to leave out is what happens on a **rejection**.
+`queueApproval` ignores a duplicate `dedupe_key` whatever its status, and a
+publish proposal's key is stable for a given draft and slot — so a rejected draft
+left available would be re-picked every tick, silently fail to re-queue, and the
+channel would go quiet rather than write something else. `absorbDeclines()` reads
+the agent's own rejected publishes at the start of a run and stamps `declinedOn`,
+which is per channel for the same reason `publishedOn` is: a channel-neutral
+draft turned down for LinkedIn may still be right for X. This is the third
+instance of the same pattern, after `absorbRejections()` and `absorbVerdicts()` —
+rejection has no hook anywhere in this system, by design.
+
+### The page already had a voice, and the agent could not see it
+
+`readChannelHistory` reads what **this system** published, which on a page it has
+never posted to is nothing — so the model would be told "nothing published on
+this channel yet" about a page with a year of posts on it, and would invent a
+register from the guide alone. That is precisely how an agent arrives generic on
+day one, which was the owner's stated fear.
+
+`db/seeds/linkedin-voice.json` is the page as read from the public URL on
+2026-08-30, and it carries **both halves**: three recent posts as the target, and
+three older ones marked with why they are not. The contrast is the lesson — the
+page's own trajectory dropped the calls to action and the comment-bait questions,
+and continuing that is a clearer instruction than any adjective. It is used only
+while `history.recentPosts` is empty; real history is richer and current, and a
+frozen baseline sitting beside it would compete with it.
+
+The page was readable with no authentication, incidentally, which is also how the
+reaction counts were obtained. On 339 followers those run 0–7 per post and the
+newest posts have had days against the oldest posts' month, so they are **not yet
+a signal** and the `audienceLine` says so.
+
+**Three conflicts between the page and the code, all settled by the owner:**
+hashtags — the page stacks 4–6, the guide now allows at most one, and the owner
+chose the guide; em dashes — the page uses them, `allowEmDash` stays `false`;
+closing questions — banned, and the page had already stopped.
 
 ### Facebook is dormant
 
@@ -292,7 +364,8 @@ the file.
 | `SUPABASE_SERVICE_ROLE_KEY` | database access (bypasses RLS) |
 | `APP_PATH_SECRET` | the unguessable dashboard path segment |
 | `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET` | X publishing — **all four are set** |
-| `LINKEDIN_PARTNER_TOKEN` | not yet supplied |
+| `LINKEDIN_PARTNER_TOKEN` | partner queue — not yet supplied |
+| `LINKEDIN_ORG_ID`, `LINKEDIN_ACCESS_TOKEN` | direct company-page posting — not yet supplied |
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | not yet supplied |
 
 To check what the live Worker actually believes, call
@@ -795,7 +868,7 @@ Two tells, and neither is the md5:
 
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
-  deadlock was found; the current number is
+  deadlock was found, 478 before the LinkedIn page work; the current number is
   in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy**. Six is current; five is the tree
   before the hourly split, three is the old
@@ -856,7 +929,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 478 tests
+npx vitest run            # 517 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -902,6 +975,7 @@ src/
     intelligence/       competitive-intel
     orchestration/      chief-of-staff (Coordinator + an agent)
   connectors/           facebook, x (OAuth 1.0a), linkedin (idempotent queue),
+                        linkedin-direct (company page; dormant until approved),
                         site, netlify (deploy gated on whole-source integrity)
   routes/               api.ts, integrations.ts
   ui/dashboard.ts       the canvas dashboard
@@ -1459,7 +1533,7 @@ connector failure is not a judgement about an idea.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-30, 11:55 UTC**. Facts here about live
+the unfinished work, as of **2026-08-30, 17:15 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
@@ -1502,6 +1576,41 @@ approvals, so the first lessons are formed on evidence that is nearly all yes an
 say little about what gets rejected. That balances as more rulings land; it is
 not a fault in the layer, and `demote()` will drop either claim if the
 contradictions catch up with the support.
+
+### OPEN — LinkedIn is built and waiting on LinkedIn, not on us
+
+Everything on our side is done, tested and committed. What is left is an
+application to LinkedIn that only the owner can make.
+
+**To turn direct posting on:**
+
+1. Create a LinkedIn developer app owned by a page admin, and request the
+   **Community Management API** product. This is a review, not a toggle.
+2. Once approved, OAuth for `w_organization_social` (post) and
+   `r_organization_social` (read statistics). Tokens are 60-day and refreshable;
+   there is no permanent one, so a refresh path is the next piece of work.
+3. `wrangler secret put LINKEDIN_ORG_ID` — the number only, from
+   `urn:li:organization:<number>`.
+4. `wrangler secret put LINKEDIN_ACCESS_TOKEN`.
+5. Set `LINKEDIN_DIRECT_ENABLED = "true"` in `wrangler.toml` and deploy. **Not in
+   the Cloudflare dashboard** — see section 9.
+6. Confirm on `GET /api/status`: the LinkedIn row whose note mentions the
+   Community Management API should read `active: true` with an empty `missing`.
+
+Until then the agent drafts normally and approved posts route to the partner
+queue, which is where they already went.
+
+**First live post is a checkpoint, not a milestone.** Read the published text for
+stray backslashes: `escapeCommentary()` is written against documentation rather
+than a real response, and it is the one thing here that has not been verified
+against LinkedIn itself.
+
+**Still not built, and worth knowing:** the learning layer is off for LinkedIn
+(`learning: true` is X only). Turning it on is one flag — but the interesting
+version waits for `r_organization_social`, because that would be the first real
+audience signal in this system and `HAS_AUDIENCE_DATA` in `channel-agent.ts` is
+the switch that changes what the model is told about it. Do not flip that flag
+before the metrics are actually flowing.
 
 ### Live schedule overrides, 2026-08-29 17:45 UTC
 

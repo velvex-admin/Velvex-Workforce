@@ -86,9 +86,42 @@ describe("readiness", () => {
     );
   });
 
-  it("lists all three channels, with LinkedIn as an integration point", () => {
+  it("covers every channel, and both of LinkedIn's two routes", () => {
+    // LinkedIn appears twice, and that is the decision rather than an oversight.
+    // There are genuinely two ways to that page — the partner queue an outside
+    // agent drains, and direct posting through our own connector — and they go
+    // live independently. One row would hide the difference between a draft
+    // handed to a queue and a draft that reached LinkedIn.
     const statuses = connectorStatuses(bareEnv);
-    expect(statuses.map((status) => status.channel).sort()).toEqual(["facebook", "linkedin", "x"]);
+    expect(statuses.map((status) => status.channel).sort()).toEqual([
+      "facebook",
+      "linkedin",
+      "linkedin",
+      "x",
+    ]);
     expect(statuses.every((status) => status.active === false)).toBe(true);
+  });
+
+  it("says which LinkedIn route each row is, since the channel name cannot", () => {
+    const linkedin = connectorStatuses(bareEnv).filter((s) => s.channel === "linkedin");
+    expect(linkedin).toHaveLength(2);
+    const notes = linkedin.map((s) => s.note ?? "").join(" | ");
+    expect(notes).toMatch(/partner|queue/i);
+    expect(notes).toMatch(/Community Management API|direct/i);
+  });
+
+  it("names exactly what direct LinkedIn posting is waiting on", () => {
+    // The owner reads connectors[].missing off /api/status to find out what to
+    // set. A vague entry there means a support conversation instead.
+    const direct = connectorStatuses(bareEnv).find(
+      (s) => s.channel === "linkedin" && /Community Management API|direct/i.test(s.note ?? "")
+    );
+    expect(direct?.missing).toEqual(
+      expect.arrayContaining([
+        'LINKEDIN_DIRECT_ENABLED="true"',
+        "LINKEDIN_ORG_ID",
+        "LINKEDIN_ACCESS_TOKEN",
+      ])
+    );
   });
 });
