@@ -169,6 +169,52 @@ export function recordEpisodes(
 }
 
 /**
+ * Add resolved episodes for rulings this record has never seen.
+ *
+ * `applyVerdicts` joins a ruling onto an episode the agent recorded when it
+ * made the proposal, which means it can only ever see rulings made SINCE the
+ * learning layer shipped. Everything the owner decided before that is invisible
+ * to it — and on X that was nine real rulings, eight approvals and a rejection,
+ * sitting in `pending_approvals` with the whole original action still attached.
+ * Starting from zero when that evidence is already on file would have made the
+ * agent wait weeks to learn something it could have known on its first run.
+ *
+ * Twice over, in fact: those keys predate the content hash `dedupeKey` now
+ * appends, so even a re-proposal of the identical idea would not have matched.
+ *
+ * This is not a weaker kind of episode. The stored row carries the proposal's
+ * title, its risk and its type, so the reconstruction has the same fields the
+ * live path records — which is also why nothing marks a back-filled episode as
+ * such in `features`: the model generalises over features, and a flag that
+ * happens to correlate with "approved" across a historical batch is exactly the
+ * spurious rule this layer is supposed to avoid. The `at` timestamp already
+ * says when it happened.
+ *
+ * Only ruled episodes are back-filled. A still-pending historical proposal is
+ * left alone: the agent will record it itself if it proposes it again, and
+ * inventing an unresolved episode for it would just age out unanswered.
+ */
+export function backfillEpisodes(
+  record: LearningRecord,
+  incoming: Episode[],
+  now: Date
+): { record: LearningRecord; added: number } {
+  const known = new Set(record.episodes.map((episode) => episode.key));
+  const fresh = incoming.filter((episode) => episode.verdict && !known.has(episode.key));
+  if (fresh.length === 0) return { record, added: 0 };
+
+  return {
+    record: {
+      ...record,
+      episodes: [...record.episodes, ...fresh].slice(-MAX_EPISODES),
+      pendingVerdicts: record.pendingVerdicts + fresh.length,
+      updatedAt: now.toISOString(),
+    },
+    added: fresh.length,
+  };
+}
+
+/**
  * The verdict a stored approval represents, or null while it is still open.
  *
  * `executed` counts as approved because it is what an approved action becomes

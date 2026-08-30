@@ -385,6 +385,39 @@ outright.
   the margin is thin, which is precisely where it was needed: the agent at the end
   of a tick is the one that finds the budget gone.
 
+- **Two passes over one shelf, asking different questions, deadlocked the X
+  agent for five days in total silence.** Nothing ever moves a draft off
+  `status: "ready"` — `publishedOn` is the only record that it went out, and that
+  is deliberate, because a channel-neutral draft published on X may still be due
+  on LinkedIn. So availability is a **per-channel** question. The publish pass in
+  `channel-agent.ts` asked it correctly (`!publishedOn.some(channel)`); the
+  drafting gate counted `ready.length` and did not. A shelf holding three drafts
+  already published on X therefore read as **full** to the drafting gate and
+  **empty** to the publish pass, and the two answers lock: nothing left to send,
+  no reason to draft, and the only thing that drains the shelf is publishing. X
+  published nothing from 2026-08-25 to 2026-08-30 with no error anywhere, and it
+  took the learning layer with it, since that lives inside the drafting path. One
+  `available` list now feeds both passes. `test/draft-shelf.test.ts` drives the
+  real `xAgent.propose` against the shelf as it actually was — and asserts the
+  publish half too, so nobody ever makes the two agree by loosening the publish
+  pass and republishing a post that has already gone out.
+
+- **A join can only see what it was built to join to, and on day one that is
+  nothing.** `applyVerdicts` matches a ruling to the episode the agent recorded
+  when it proposed, which is right, and means the layer starts blind to every
+  ruling made before it shipped. On X that was **nine real rulings — eight
+  approvals and a rejection** — already in `pending_approvals` with the whole
+  original action attached, while the agent sat waiting to accumulate five new
+  ones. Twice blind, in fact: those keys predate the content hash `dedupeKey`
+  appends, so a re-proposal of the identical idea would not have matched either.
+  `backfillEpisodes()` reconstructs them from the stored row, which carries the
+  title, the risk and the action type, so nothing is guessed. Two things it
+  deliberately does not do: it does not select on the shape of the dedupe key
+  (the action type is the same vocabulary the propose path filters on, so the two
+  cannot drift), and it does not mark a reconstruction in `features` — a flag
+  correlating perfectly with a historical batch that is 8:1 approved is exactly
+  the spurious rule the layer exists to avoid.
+
 - **`/faq` is a pricing page.** Protected from unattended SEO edits.
 - **Every wire on the dashboard was invisible, and had been from the start.**
   `.canvas-inner` holds only absolutely positioned children, so it collapsed to
@@ -747,7 +780,8 @@ the live Worker in one paste while every line looked like it worked.
 Two tells, and neither is the md5:
 
 - The **test count**. It is the cheapest version check in this repo. 175 is the
-  pre-session tree, 424 the tree before the learning layer; the current number is
+  pre-session tree, 424 the tree before the learning layer, 457 before the shelf
+  deadlock was found; the current number is
   in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy**. Five is current; three is the old
   `wrangler.toml`. Those come from the file being deployed, so they describe what
@@ -807,7 +841,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 457 tests
+npx vitest run            # 470 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -840,7 +874,8 @@ src/
     state.ts            typed views over the memory table
     intel.ts            the brief document, its schema, and page diffing
     learning.ts         episodes, lessons, and the forgetting rules (pure)
-    learning-store.ts   reading/writing a learning record, and forming lessons
+    learning-store.ts   reading/writing a learning record, forming lessons, and
+                        back-filling rulings made before the layer existed
   agents/
     registry.ts         the roster; runDue() honours schedule overrides
     marketing/          content, channel-agent (shared strategist factory),
@@ -1364,15 +1399,92 @@ the intelligence layer's stage-0 scan.
 is a fact about the connector. Counting it as a rejection would teach the agent
 to stop proposing things that were approved.
 
+The placement has a second consequence nobody wanted, and it is worth stating
+plainly because the fix for it lives somewhere else entirely: **a strategist that
+cannot draft cannot learn.** That is defensible on its own terms — lessons are
+only *used* when drafting, so a run that skips drafting has no use for them — but
+it means anything that jams the drafting gate silently jams the learning layer
+too, and that is exactly what happened on X between 2026-08-25 and 2026-08-30.
+See the shelf-deadlock trap in section 10. If the layer ever looks like it is not
+running, check whether the agent is drafting at all before looking at the layer.
+
+### Starting from the rulings that already exist
+
+`applyVerdicts` joins a ruling onto the episode the agent recorded when it made
+the proposal, so on the day the layer ships it can see **nothing**: the record is
+empty, and every ruling the owner has ever made joins to nothing. On X that was
+nine growth ideas already ruled on, eight approved and one rejected, sitting in
+`pending_approvals` with the whole original action still attached.
+
+`absorbVerdicts()` therefore takes an optional `BackfillSpec` and reconstructs
+those into resolved episodes. The stored row carries the proposal's title, its
+risk and its type, so the reconstruction has the same fields the live path
+records and nothing is invented. It is idempotent — a key already in the ring is
+never added twice, and an episode the agent logged itself is never overwritten by
+a reconstruction of it.
+
+The two restraints in it matter more than the mechanism:
+
+- It selects on **`action.type`**, not on the shape of the dedupe key. The
+  historical X keys look like `x:growth:x:<title>` with no trailing content hash,
+  because they predate the hash `dedupeKey` now appends — so a key-shape match
+  would be matching a format that has already changed once. The action type is
+  the same vocabulary the propose path filters on, which is why `LEARNS_FROM` in
+  `channel-agent.ts` is shared between the two.
+- It does **not** flag a reconstruction in `features`. A feature that correlates
+  perfectly with a historical batch running 8:1 approved is precisely the
+  spurious rule this layer exists to avoid; the model generalises over features,
+  and the `at` timestamp already says when it happened.
+
+An escalated `publish_post` is excluded for the same reason: the owner clearing a
+connector failure is not a judgement about an idea.
+
 ---
 
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-29, 21:25 UTC**. Facts here about live
+the unfinished work, as of **2026-08-30, 05:25 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
+
+### FIXED IN CODE, NOT YET DEPLOYED — X had stopped publishing entirely
+
+Found while checking whether the learning layer had run. It had not, and could
+not have.
+
+Measured against the live Worker on 2026-08-30:
+
+| | |
+|---|---|
+| Last X publish | **2026-08-25T13:00** — five days |
+| `content.queue` | 6 drafts: 3 `ready` for x, 3 `ready` for linkedin |
+| Those 3 x drafts | **every one already published to x**, refs on file |
+| `learning.x` | `null` — the layer has never executed |
+| `schedule.plan.x` | untouched since 2026-08-25T13:00, 2 slots unconsumed and past |
+
+The three x drafts each carry a `publishedOn` entry for x and still read
+`status: "ready"`, because nothing ever changes that. So the shelf counted as
+full, the drafting pass returned early on every hourly wake, the publish pass
+found nothing left to send, and neither could unstick the other. No error, no
+failed report, no status row saying anything was wrong. See the trap in section
+10 for the mechanism.
+
+**Fixed:** one `available` list, filtered per channel, now feeds both passes.
+Once deployed, X drafts on its next wake and publishes into the due slot.
+
+Two things follow immediately on that first drafting run, and both are expected:
+
+- the learning layer executes for the first time, and
+- it back-fills the **nine** growth rulings already on file (8 approved, 1
+  rejected), which is over `FORM_AFTER_VERDICTS`, so it forms its first lessons
+  on that same run rather than in several weeks.
+
+Watch for `x: recovered 9 earlier ruling(s) from the queue` followed by
+`x: forming lessons from 9 ruling(s)`. Afterwards `GET /api/state/learning.x`
+returns the record — it is written as `detail.value`, so the state route reads it
+without a new endpoint.
 
 ### Live schedule overrides, 2026-08-29 17:45 UTC
 

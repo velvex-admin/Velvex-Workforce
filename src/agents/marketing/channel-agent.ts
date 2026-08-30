@@ -21,6 +21,7 @@
 
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type {
+  ActionType,
   AgentId,
   Channel,
   ExecutionResult,
@@ -131,6 +132,17 @@ const TARGET_READY_PER_CHANNEL = 3;
  * published report already stores, not just flipping this.
  */
 const HAS_AUDIENCE_DATA = false;
+
+/**
+ * The proposal types a strategist can actually be ruled on.
+ *
+ * A draft classifies routine and executes without anyone deciding anything, so
+ * an episode for one would sit unresolved forever and drag the ring down with
+ * it. Growth ideas always queue by design, which is what makes them the only
+ * thing here with a verdict attached. Shared between the recording path and the
+ * back-fill so the two cannot disagree about what counts.
+ */
+const LEARNS_FROM: readonly ActionType[] = ["campaign_direction"];
 
 export const DRAFT_SCHEMA = {
   type: "object",
@@ -403,6 +415,26 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           (draft.channelHint === spec.channel || draft.channelHint === undefined)
       );
 
+      // A draft this channel has already published is history, not stock.
+      //
+      // Nothing ever moves a draft off "ready": `publishedOn` is the only record
+      // that it went out, and that is deliberate, because a channel-neutral
+      // draft published on X may still be due on LinkedIn. So availability is
+      // per channel, and BOTH passes below have to ask the same question.
+      //
+      // They did not. The publish pass filtered on `publishedOn` and the shelf
+      // count did not, so a shelf holding three already-published drafts read as
+      // full to one pass and empty to the other, and the two answers deadlocked
+      // the agent: the publish pass found nothing left to send, the drafting
+      // pass returned early because the shelf looked stocked, and the shelf
+      // could only ever drain by publishing. X sat exactly like that from
+      // 2026-08-25 to 2026-08-30 with three permanently unpublishable drafts and
+      // no error anywhere, and it took the learning layer with it, since that
+      // lives inside the drafting path.
+      const available = ready.filter(
+        (draft) => !draft.publishedOn.some((entry) => entry.channel === spec.channel)
+      );
+
       const proposals: ProposedAction[] = [];
 
       // --- publishing pass ------------------------------------------------
@@ -417,9 +449,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           ctx.now.getTime() - history.lastPublishedAt < spec.schedule.minGapHours * 3600_000;
 
         if (!withinGap) {
-          const next = ready.find(
-            (draft) => !draft.publishedOn.some((entry) => entry.channel === spec.channel)
-          );
+          const next = available[0];
           if (next) {
             if (spec.maxLength && next.text.length > spec.maxLength) {
               proposals.push({
@@ -456,8 +486,8 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       // --- drafting pass --------------------------------------------------
       // Only draft when the shelf for this channel is short. That caps spend
       // even on a busy schedule.
-      if (ready.length >= TARGET_READY_PER_CHANNEL) {
-        ctx.log(`${spec.id}: ${ready.length} channel drafts ready, no new draft this run`);
+      if (available.length >= TARGET_READY_PER_CHANNEL) {
+        ctx.log(`${spec.id}: ${available.length} channel drafts ready, no new draft this run`);
         return proposals;
       }
 
@@ -483,10 +513,21 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       if (spec.learning) {
         try {
           record = await readLearning(ctx.db, spec.id, ctx.now);
-          const absorbed = await absorbVerdicts(ctx.db, spec.id, record, ctx.now);
+          // The back-fill spec names what this agent records episodes FOR, and
+          // it is the same `campaign_direction` filter the episode-recording
+          // block below applies. Both have to agree or a ruling is reconstructed
+          // for a proposal the agent would never have logged.
+          const absorbed = await absorbVerdicts(ctx.db, spec.id, record, ctx.now, {
+            types: LEARNS_FROM,
+            kind: "growth_idea",
+            features: { channel: spec.channel },
+          });
           record = absorbed.record;
           if (absorbed.resolved > 0) {
             ctx.log(`${spec.id}: absorbed ${absorbed.resolved} new ruling(s)`);
+          }
+          if (absorbed.backfilled > 0) {
+            ctx.log(`${spec.id}: recovered ${absorbed.backfilled} earlier ruling(s) from the queue`);
           }
 
           if (shouldForm(record)) {
@@ -591,7 +632,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         try {
           const episodes = episodesFor(
             proposals
-              .filter((action) => action.type === "campaign_direction")
+              .filter((action) => LEARNS_FROM.includes(action.type))
               .map((action) => ({
                 key: dedupeKey(spec.id, action),
                 kind: "growth_idea" as const,

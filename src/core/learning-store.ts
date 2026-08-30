@@ -23,15 +23,18 @@ import type { Claude } from "../lib/claude.js";
 import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "./models.js";
 import {
   applyVerdicts,
+  backfillEpisodes,
   demote,
   emptyRecord,
   learningKey,
   LESSON_SALIENCE,
   mergeLessons,
   resolvedEpisodes,
+  verdictOf,
   type Episode,
   type LearningRecord,
 } from "./learning.js";
+import type { ProposedAction } from "./types.js";
 
 /** How many of the agent's own rulings to look back over. */
 const RULING_LOOKBACK = 100;
@@ -109,25 +112,74 @@ export async function writeLearning(
 }
 
 /**
+ * Which stored rulings represent proposals this agent would have recorded.
+ *
+ * Selected on the stored `action.type` rather than on the shape of the dedupe
+ * key. The key shape is not a stable thing to match against — the historical X
+ * rows predate the content hash `dedupeKey` now appends — whereas the action
+ * type is the same vocabulary the propose path filters on, so the two cannot
+ * drift apart without someone changing both.
+ */
+export interface BackfillSpec {
+  /** Action types the agent records episodes for, e.g. `campaign_direction`. */
+  types: readonly string[];
+  kind: Episode["kind"];
+  /** Features stamped on every reconstruction, e.g. the channel. */
+  features: Record<string, string>;
+}
+
+/**
  * Read this agent's rulings and join them onto the episodes that earned them.
  * Deterministic — no model, and the only cost is the one read.
+ *
+ * With a `BackfillSpec`, rulings with no episode at all are reconstructed from
+ * the stored approval row rather than discarded. See `backfillEpisodes()` for
+ * why that is worth doing once and harmless every run after.
  */
 export async function absorbVerdicts(
   db: Supabase,
   agentId: string,
   record: LearningRecord,
-  now: Date
-): Promise<{ record: LearningRecord; resolved: number }> {
+  now: Date,
+  backfill?: BackfillSpec
+): Promise<{ record: LearningRecord; resolved: number; backfilled: number }> {
   const approvals = await db.listApprovals("all", RULING_LOOKBACK);
-  const rulings = approvals
-    .filter((row) => row.agent_id === agentId && row.dedupe_key)
-    .map((row) => ({
+  const mine = approvals.filter((row) => row.agent_id === agentId && row.dedupe_key);
+
+  const applied = applyVerdicts(
+    record,
+    mine.map((row) => ({
       key: String(row.dedupe_key),
       status: row.status,
       decidedAt: row.decided_at ?? undefined,
-    }));
+    })),
+    now
+  );
+  if (!backfill) return { ...applied, backfilled: 0 };
 
-  return applyVerdicts(record, rulings, now);
+  const reconstructed: Episode[] = [];
+  for (const row of mine) {
+    const verdict = verdictOf(row.status);
+    if (!verdict) continue;
+    const action = row.action as ProposedAction | undefined;
+    if (!action || !backfill.types.includes(action.type)) continue;
+
+    const payload = (action.payload ?? {}) as Record<string, unknown>;
+    reconstructed.push({
+      at: row.decided_at ?? row.created_at ?? now.toISOString(),
+      key: String(row.dedupe_key),
+      kind: backfill.kind,
+      summary: String(payload["title"] ?? row.title ?? action.summary).slice(0, 200),
+      // Same keys, same order as the live path builds, so a lesson formed over a
+      // mixed batch is generalising over one feature set rather than two.
+      features: { risk: String(payload["risk"] ?? "unknown"), ...backfill.features },
+      verdict,
+      verdictAt: row.decided_at ?? now.toISOString(),
+    });
+  }
+
+  const filled = backfillEpisodes(applied.record, reconstructed, now);
+  return { record: filled.record, resolved: applied.resolved, backfilled: filled.added };
 }
 
 /**
