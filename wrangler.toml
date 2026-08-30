@@ -66,8 +66,18 @@ INTEL_WEB_RESEARCH_ENABLED = "true"
 # own, so the weekly cadence is split across two Monday ticks rather than being
 # asked to fit in one. Intelligence goes first; Growth-Strategy reads the newest
 # brief an hour later, which is the order the two were designed in.
+#
+# The hourly tick is split against the other per-invocation limit: an invocation
+# also gets roughly 50 subrequests for everything it runs. Site-Integrity runs
+# last and fetches every stored page, so it is the one that finds them spent, and
+# it died that way on consecutive hourly ticks on 2026-08-29 leaving no error at
+# all. Its own slot at :30 gives it a fresh budget. The two hourly lines are a
+# partition — everything hourly except site_integrity, then site_integrity alone
+# — and test/hourly-split.test.ts asserts that against the real roster, because
+# dropping it from one without adding it to the other fails silently.
 crons = [
-  "0 * * * *",   # hourly agent tick — each agent runs if its own cadence is due
+  "0 * * * *",   # hourly agent tick — everything hourly EXCEPT site_integrity
+  "30 * * * *",  # half past — site_integrity alone, on its own subrequest budget
   "0 7 * * *",   # 07:00 UTC — Chief-of-Staff daily roll-up
   "0 8 1 * *",   # 1st of the month 08:00 UTC — monthly agents (intelligence)
   "0 8 * * 1",   # Monday 08:00 UTC — weekly: intelligence only, if set back to weekly

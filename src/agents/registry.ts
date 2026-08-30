@@ -138,6 +138,17 @@ export interface BatchFilter {
   only?: AgentBatch[];
   /** Everything except these batches. */
   except?: AgentBatch[];
+  /**
+   * Only these agents, by id.
+   *
+   * A batch is the right unit when a whole batch is expensive, which is what the
+   * weekly split needed. It is the wrong unit for the hourly tick: the agent
+   * that exhausts it is Site-Integrity, and it shares the `executive` batch with
+   * Finance-Watch, Ops-Health and Growth-Strategy, none of which need moving.
+   */
+  onlyAgents?: AgentId[];
+  /** Everything except these agents, by id. */
+  exceptAgents?: AgentId[];
 }
 
 /** Narrow a list of due agents to the slice one tick owns. */
@@ -148,6 +159,8 @@ export function applyBatchFilter(
   return agents.filter((agent) => {
     if (filter.only && !filter.only.includes(agent.batch)) return false;
     if (filter.except && filter.except.includes(agent.batch)) return false;
+    if (filter.onlyAgents && !filter.onlyAgents.includes(agent.id)) return false;
+    if (filter.exceptAgents && filter.exceptAgents.includes(agent.id)) return false;
     return true;
   });
 }

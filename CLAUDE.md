@@ -182,7 +182,8 @@ The owner has no Facebook page. The agent returns `[]` on every tick until
 
 | Cron | Fires |
 |---|---|
-| `0 * * * *` | hourly, on the hour |
+| `0 * * * *` | hourly, on the hour — everything hourly **except** Site-Integrity |
+| `30 * * * *` | hourly, half past — **Site-Integrity alone**, on its own subrequest budget |
 | `0 7 * * *` | 07:00 UTC daily |
 | `0 8 1 * *` | 08:00 UTC on the 1st — **monthly**, where intelligence now runs |
 | `0 8 * * 1` | 08:00 UTC Mondays — weekly, **intelligence only** if set back to weekly |
@@ -201,6 +202,19 @@ asserts the two ticks are a **partition** of the weekly agents — drop one and 
 silently never runs again, overlap and it runs twice and bills twice — and that
 the cron strings in `wrangler.toml` still match the literals the handler matches
 on, since nothing about that drift fails at build time.
+
+**The hourly cadence is split for the same reason, against the other limit.** An
+invocation gets ~50 **subrequests** for everything it runs, as well as its fifteen
+minutes. Site-Integrity runs last in the hourly loop and fetches every stored
+page, so it is the agent that finds them spent — and it died that way on
+consecutive hourly ticks on 2026-08-29 leaving no error at all, because the
+failure report is itself a subrequest. `30 * * * *` gives it a fresh budget.
+`BatchFilter` gained `onlyAgents` / `exceptAgents` for this: a batch is the wrong
+unit here, since Site-Integrity shares `executive` with three agents that do not
+need moving. `test/hourly-split.test.ts` asserts the two hourly ticks are a
+**partition** — drop it from one without adding it to the other and auto-restore
+silently stops being armed — and that the cron literals still match what the
+handler matches on.
 
 **Cadence** is per agent — which tick wakes it. This is what the hourly/daily/
 weekly label on a dashboard node means.
@@ -783,7 +797,8 @@ Two tells, and neither is the md5:
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found; the current number is
   in section 12. A count that dropped is a reverted checkout, not a passing suite.
-- The **cron lines wrangler prints on deploy**. Five is current; three is the old
+- The **cron lines wrangler prints on deploy**. Six is current; five is the tree
+  before the hourly split, three is the old
   `wrangler.toml`. Those come from the file being deployed, so they describe what
   actually went live rather than what you meant to send.
 
@@ -841,7 +856,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 470 tests
+npx vitest run            # 478 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1444,47 +1459,49 @@ connector failure is not a judgement about an idea.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-30, 05:25 UTC**. Facts here about live
+the unfinished work, as of **2026-08-30, 11:55 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
 
-### FIXED IN CODE, NOT YET DEPLOYED — X had stopped publishing entirely
+### CLOSED — X was deadlocked, and the learning layer has now run
 
-Found while checking whether the learning layer had run. It had not, and could
-not have.
+Found while checking whether the learning layer had executed. It had not, and
+could not have: X had published nothing since 2026-08-25, and the drafting gate
+the layer lives behind was permanently shut.
 
-Measured against the live Worker on 2026-08-30:
+The three x drafts on the shelf each carried a `publishedOn` entry for x and
+still read `status: "ready"`, because nothing ever changes that. The shelf
+counted as full to the drafting pass and empty to the publish pass. See the trap
+in section 10 for the mechanism.
 
-| | |
+**Deployed and verified 2026-08-30**, version `a8c2aa66`. Two runs against the
+live Worker:
+
+| Run | What happened |
 |---|---|
-| Last X publish | **2026-08-25T13:00** — five days |
-| `content.queue` | 6 drafts: 3 `ready` for x, 3 `ready` for linkedin |
-| Those 3 x drafts | **every one already published to x**, refs on file |
-| `learning.x` | `null` — the layer has never executed |
-| `schedule.plan.x` | untouched since 2026-08-25T13:00, 2 slots unconsumed and past |
+| 1 | `recovered 9 earlier ruling(s) from the queue` → `forming lessons from 9 ruling(s)` → `2 lesson(s) held`. Drafted; 4 proposed, 1 executed, 3 queued, 0 failed, $0.072 |
+| 2 | **published** tweet `2094029247236976696` — first since 2026-08-25 — then drafted a replacement |
 
-The three x drafts each carry a `publishedOn` entry for x and still read
-`status: "ready"`, because nothing ever changes that. So the shelf counted as
-full, the drafting pass returned early on every hourly wake, the publish pass
-found nothing left to send, and neither could unstick the other. No error, no
-failed report, no status row saying anything was wrong. See the trap in section
-10 for the mechanism.
+`learning.x` now holds 12 episodes (9 back-filled, 3 awaiting a ruling),
+`pendingVerdicts` back to 0, and two lessons:
 
-**Fixed:** one `available` list, filtered per channel, now feeds both passes.
-Once deployed, X drafts on its next wake and publishes into the due slot.
+- *Approve quote-post or reply-based structural commentary on public diligence,
+  allocator commentary, or disclosed filings without pitching* — support 4,
+  contradict 0.
+- *Approve structural/mechanism-focused content on x that uses
+  observed/inference/assumption tagging or per-category failure mechanics* —
+  support 6, contradict 1.
 
-Two things follow immediately on that first drafting run, and both are expected:
+The lessons were visibly in use on the same run that formed them: one of the
+three queued growth ideas is filing-sourced quote-posting, which is lesson one
+applied.
 
-- the learning layer executes for the first time, and
-- it back-fills the **nine** growth rulings already on file (8 approved, 1
-  rejected), which is over `FORM_AFTER_VERDICTS`, so it forms its first lessons
-  on that same run rather than in several weeks.
-
-Watch for `x: recovered 9 earlier ruling(s) from the queue` followed by
-`x: forming lessons from 9 ruling(s)`. Afterwards `GET /api/state/learning.x`
-returns the record — it is written as `detail.value`, so the state route reads it
-without a new endpoint.
+**One thing to watch rather than fix.** Eight of the nine back-filled rulings are
+approvals, so the first lessons are formed on evidence that is nearly all yes and
+say little about what gets rejected. That balances as more rulings land; it is
+not a fault in the layer, and `demote()` will drop either claim if the
+contradictions catch up with the support.
 
 ### Live schedule overrides, 2026-08-29 17:45 UTC
 
@@ -1569,50 +1586,39 @@ Worth knowing for next time: the queue is stored as `detail.items` while
 through the state route — doing so would have read back as an empty queue and
 taken the real posts with it. It needed the deploy.
 
-### DIAGNOSED, fix written and NOT yet deployed — the hourly tick kills its last agent
+### CLOSED — the hourly tick no longer kills its last agent
 
-The fetch timeout was a real fix for a real bug and **was not this bug**. Measured
-2026-08-29 21:00–21:10 UTC against the live Worker:
+The fetch timeout was a real fix for a real bug and **was not this bug**. What
+actually happened on 2026-08-29 is recorded as a trap in section 10: an
+invocation gets ~50 subrequests for everything it runs, Site-Integrity is last in
+the hourly loop and the heaviest thing in it, and both catch blocks in `runAgent`
+filed their failure report with an unguarded `receiveReport` — itself a
+subrequest — so the report threw, that throw escaped `runAgent` past
+`stopBeat()` and the terminal `writeStatus()`, and the whole invocation died
+leaving a `running` row nothing could correct.
 
-- `AbortSignal.timeout(10_000)` **is** in the deployed bundle. Pulled the live
-  script and grepped it; do not take a note's word for what is deployed.
-- All five pages answer in 0.3–0.9s, HTTP 200. The site is not hanging.
-- The 21:00 run repeated the 20:00 signature exactly: one log line at 21:00:56,
-  then nothing. `heartbeatAt` never moved again, and the heartbeat is a
-  `setInterval`, so a missing beat at +120s means the isolate is **dead**.
-- Run alone via `POST /api/run/site_integrity` it finished in seconds and
-  promoted the restore point. `site.source.last_good` advanced 15:17 → **21:10:06**
-  and now holds `/index.html` at 26,614 and `/proof-of-concept.html` at 22,184,
-  the correct post-SEO sizes.
-- Every other agent on run `97edb289` finished in 1–2s: linkedin, facebook, x,
-  ops_health. Only site_integrity, which runs **last**, did not.
+Both halves are now done and deployed:
 
-So the agent was never the problem — the tick was. It is last in the hourly tick
-and the heaviest thing in it, so it is the one that finds the invocation's ~50
-subrequests spent. And the reason it left no evidence is the trap now recorded in
-section 10: both catch blocks in `runAgent` filed their failure report with an
-unguarded `receiveReport`, which is itself a subrequest, so the report threw and
-that throw escaped `runAgent` entirely, killing the invocation and leaving a
-`running` row nothing could correct.
+- `reportSafely()` guards all three report calls, and `state.readMany()` collapses
+  site_integrity's two known-good reads into one. That makes the failure
+  **visible** and shaves the margin.
+- `30 * * * *` gives it its own invocation and therefore its own budget, which
+  **raises the ceiling**. `BatchFilter` gained `onlyAgents`/`exceptAgents`
+  because a batch is the wrong unit: site_integrity shares `executive` with three
+  agents that did not need moving.
 
-**Written, tested, not yet deployed:** `reportSafely()` guards all three report
-calls, and `state.readMany()` collapses site_integrity's two known-good reads into
-one. That makes the failure *visible* and shaves the margin; it does not raise the
-ceiling.
+The two hourly ticks are a partition, asserted against the real roster in
+`test/hourly-split.test.ts`, because dropping the agent from one tick without
+adding it to the other would silently stop arming auto-restore — and that
+failure looks like nothing at all.
 
-**Still open — the structural fix.** Guarding the report does not stop the tick
-running out. The real fix is the weekly-split argument transposed: `0 8 * * 1` and
-`0 9 * * 1` exist because one invocation gets 15 minutes for everything it runs,
-and the same invocation gets ~50 subrequests for everything it runs. Giving
-site_integrity its own cron slot (`30 * * * *`) would hand it a fresh budget. That
-touches `wrangler.toml` and `scheduled()` routing, which sections 9 and 11 both
-flag as drift-prone, so it is deliberately not done unattended. **Until it is
-done, expect site_integrity to keep dying on the hourly tick — it will now say so
-instead of going quiet.**
+**Expect six cron lines on deploy now, not five.** That is the version tell in
+section 11 and it changed with this.
 
-**One loose end:** `/faq.html` in `site.source` is 8,396 bytes, up from 8,221 at
-15:17. Something edited the protected pricing page in that window, and the 21:10
-promotion has baked it into the restore point. Worth reading before it is trusted.
+**One loose end, unchanged:** `/faq.html` in `site.source` is 8,396 bytes, up
+from 8,221 at 15:17 on 2026-08-29. Something edited the protected pricing page in
+that window and the 21:10 promotion baked it into the restore point. Worth
+reading before it is trusted.
 
 ### Thread 4 — leftovers
 

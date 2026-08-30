@@ -154,6 +154,17 @@ export default {
     const WEEKLY_INTEL = "0 8 * * 1";
     const WEEKLY_REST = "0 9 * * 1";
 
+    // The hourly tick is split for the same reason, against the OTHER limit.
+    // An invocation gets roughly fifty subrequests for everything it runs, and
+    // Site-Integrity is last in the hourly loop and the heaviest thing in it: it
+    // fetches every stored page, so it is the one that finds the budget already
+    // spent. It died that way on consecutive hourly ticks on 2026-08-29 and left
+    // no error, because the failure report is itself a subrequest. Guarding that
+    // report makes the failure visible; it does not raise the ceiling. Its own
+    // slot does, by giving it a fresh budget.
+    const HOURLY_MAIN = "0 * * * *";
+    const HOURLY_INTEGRITY = "30 * * * *";
+
     const cadence: RunCadence =
       event.cron === MONTHLY
         ? "monthly"
@@ -174,7 +185,11 @@ export default {
         ? { only: ["intelligence"] }
         : event.cron === WEEKLY_REST
           ? { except: ["intelligence"] }
-          : {};
+          : event.cron === HOURLY_INTEGRITY
+            ? { onlyAgents: ["site_integrity"] }
+            : event.cron === HOURLY_MAIN
+              ? { exceptAgents: ["site_integrity"] }
+              : {};
 
     const logs: string[] = [];
     const ctx = buildContext(env, { trigger: "cron", logs });
