@@ -21,7 +21,6 @@
 
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type {
-  ActionType,
   AgentId,
   Channel,
   ExecutionResult,
@@ -48,11 +47,13 @@ import {
   learningContext,
   recordEpisodes,
   shouldForm,
+  type Episode,
   type LearningRecord,
 } from "../../core/learning.js";
 import {
   absorbVerdicts,
   episodesFor,
+  buildFeatures,
   formLessons,
   readLearning,
   writeLearning,
@@ -173,15 +174,33 @@ const TARGET_READY_PER_CHANNEL = 3;
 const HAS_AUDIENCE_DATA = false;
 
 /**
- * The proposal types a strategist can actually be ruled on.
+ * The proposal types a strategist can be ruled on, and the episode kind each
+ * becomes. Shared between the recording path and the back-fill so the two
+ * cannot disagree about what counts.
  *
- * A draft classifies routine and executes without anyone deciding anything, so
- * an episode for one would sit unresolved forever and drag the ring down with
- * it. Growth ideas always queue by design, which is what makes them the only
- * thing here with a verdict attached. Shared between the recording path and the
- * back-fill so the two cannot disagree about what counts.
+ * Growth ideas always queue by design, so they always carry a verdict. A
+ * PUBLISH normally does not: on every channel but one it classifies routine and
+ * goes out without anyone deciding anything, and an episode for it would sit
+ * unresolved for ever and drag the ring down with it.
+ *
+ * `approveBeforePublish` inverts exactly that. On a channel where every post
+ * waits for the owner, a publish ruling is the densest and most direct signal
+ * this system has anywhere: it is a verdict on the copy itself, not on an idea
+ * about copy. Not collecting it would mean learning about LinkedIn from the
+ * handful of growth ideas while ignoring the owner's verdict on every post.
+ *
+ * A connector failure is not a ruling, and is already excluded here without a
+ * special case: the Chief-of-Staff files a problem escalation with
+ * `action.type: "observation"`, so it never matches either entry below.
  */
-const LEARNS_FROM: readonly ActionType[] = ["campaign_direction"];
+function learnsFrom(spec: ChannelStrategistSpec): Record<string, Episode["kind"]> {
+  return {
+    campaign_direction: "growth_idea",
+    ...(spec.approveBeforePublish
+      ? { publish_post: "draft" as const, schedule_post: "draft" as const }
+      : {}),
+  };
+}
 
 export const DRAFT_SCHEMA = {
   type: "object",
@@ -641,13 +660,12 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         try {
           record = await readLearning(ctx.db, spec.id, ctx.now);
           // The back-fill spec names what this agent records episodes FOR, and
-          // it is the same `campaign_direction` filter the episode-recording
-          // block below applies. Both have to agree or a ruling is reconstructed
-          // for a proposal the agent would never have logged.
+          // it is the same map the episode-recording block below applies. Both
+          // have to agree or a ruling is reconstructed for a proposal the agent
+          // would never have logged.
           const absorbed = await absorbVerdicts(ctx.db, spec.id, record, ctx.now, {
-            types: LEARNS_FROM,
-            kind: "growth_idea",
-            features: { channel: spec.channel },
+            kinds: learnsFrom(spec),
+            channel: spec.channel,
           });
           record = absorbed.record;
           if (absorbed.resolved > 0) {
@@ -757,17 +775,15 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       // would sit unresolved forever and drag the ring down with it.
       if (spec.learning && record) {
         try {
+          const kinds = learnsFrom(spec);
           const episodes = episodesFor(
             proposals
-              .filter((action) => LEARNS_FROM.includes(action.type))
+              .filter((action) => kinds[action.type])
               .map((action) => ({
                 key: dedupeKey(spec.id, action),
-                kind: "growth_idea" as const,
+                kind: kinds[action.type]!,
                 summary: String(action.payload["title"] ?? action.summary),
-                features: {
-                  risk: String(action.payload["risk"] ?? "unknown"),
-                  channel: spec.channel,
-                },
+                features: buildFeatures(action.payload, spec.channel),
               })),
             ctx.now
           );

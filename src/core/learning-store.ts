@@ -36,6 +36,29 @@ import {
 } from "./learning.js";
 import type { ProposedAction } from "./types.js";
 
+/**
+ * The comparable parts of a proposal.
+ *
+ * Lives here rather than in the agent because both the live recording path and
+ * the back-fill build episodes, and a lesson formed over a mix of the two must
+ * be generalising over one feature set rather than two. A key absent from the
+ * payload is absent from the features rather than present as "unknown": a
+ * constant is not a comparable, and "unknown" across a whole batch is exactly
+ * the kind of spurious feature this layer is meant to avoid.
+ */
+export function buildFeatures(
+  payload: Record<string, unknown>,
+  channel: string
+): Record<string, string> {
+  const features: Record<string, string> = {};
+  for (const key of ["risk", "pillar", "format"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value) features[key] = value;
+  }
+  features["channel"] = channel;
+  return features;
+}
+
 /** How many of the agent's own rulings to look back over. */
 const RULING_LOOKBACK = 100;
 
@@ -121,11 +144,10 @@ export async function writeLearning(
  * drift apart without someone changing both.
  */
 export interface BackfillSpec {
-  /** Action types the agent records episodes for, e.g. `campaign_direction`. */
-  types: readonly string[];
-  kind: Episode["kind"];
-  /** Features stamped on every reconstruction, e.g. the channel. */
-  features: Record<string, string>;
+  /** Action types the agent records episodes for, mapped to the episode kind. */
+  kinds: Readonly<Record<string, Episode["kind"]>>;
+  /** The channel, stamped on every reconstruction. */
+  channel: string;
 }
 
 /**
@@ -162,17 +184,19 @@ export async function absorbVerdicts(
     const verdict = verdictOf(row.status);
     if (!verdict) continue;
     const action = row.action as ProposedAction | undefined;
-    if (!action || !backfill.types.includes(action.type)) continue;
+    if (!action) continue;
+    const kind = backfill.kinds[action.type];
+    if (!kind) continue;
 
     const payload = (action.payload ?? {}) as Record<string, unknown>;
     reconstructed.push({
       at: row.decided_at ?? row.created_at ?? now.toISOString(),
       key: String(row.dedupe_key),
-      kind: backfill.kind,
+      kind,
       summary: String(payload["title"] ?? row.title ?? action.summary).slice(0, 200),
-      // Same keys, same order as the live path builds, so a lesson formed over a
-      // mixed batch is generalising over one feature set rather than two.
-      features: { risk: String(payload["risk"] ?? "unknown"), ...backfill.features },
+      // Built by the same function the live path uses, so a lesson formed over a
+      // mixed batch generalises over one feature set rather than two.
+      features: buildFeatures(payload, backfill.channel),
       verdict,
       verdictAt: row.decided_at ?? now.toISOString(),
     });

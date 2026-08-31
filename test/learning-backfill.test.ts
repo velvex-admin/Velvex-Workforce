@@ -26,9 +26,8 @@ import type { Supabase } from "../src/lib/supabase.js";
 const NOW = new Date("2026-08-30T12:00:00Z");
 
 const SPEC = {
-  types: ["campaign_direction"] as const,
-  kind: "growth_idea" as const,
-  features: { channel: "x" },
+  kinds: { campaign_direction: "growth_idea" } as const,
+  channel: "x",
 };
 
 function growth(title: string, status: ApprovalRow["status"], decidedAt: string): ApprovalRow {

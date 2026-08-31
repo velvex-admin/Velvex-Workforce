@@ -971,7 +971,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 518 tests
+npx vitest run            # 529 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1418,6 +1418,34 @@ back. This is the layer that does, and it is live on **one agent** — the X
 Strategist. The factory is shared, so turning it on for LinkedIn or Facebook is
 the `learning: true` flag in their spec and nothing else.
 
+### It now runs on two channels, and LinkedIn has the better signal
+
+X learns from growth-idea rulings, because that is the only thing on that channel
+the owner decides. LinkedIn is gated (`approveBeforePublish`), so **every post
+produces a verdict on the copy itself** — denser and more directly useful to the
+next draft than any ruling about an idea for copy.
+
+`learnsFrom(spec)` is what expresses that, and it keys off the approval gate
+rather than the channel name, so turning the gate on for a third channel starts
+collecting its post rulings with no further change. On an ungated channel a
+publish still must NOT be recorded: it classifies routine and executes with
+nobody deciding anything, so the episode would never resolve and would push real
+evidence out of the 40-slot ring.
+
+A connector failure is excluded without needing a special case: the
+Chief-of-Staff files a problem escalation with `action.type: "observation"`,
+which matches no entry in the map. The owner clearing a 429 is not a judgement
+about the writing.
+
+`buildFeatures()` is shared by the live path and the back-fill, so a lesson
+formed over a mix of the two generalises over one feature set rather than two. A
+key the payload does not carry is **omitted** rather than written as "unknown":
+a constant across a whole batch is not a comparable, it is a spurious feature.
+Growth ideas therefore contribute `risk`, posts contribute `pillar` and `format`.
+
+**`HAS_AUDIENCE_DATA` stays `false` on both.** That is the half that must not
+move until `r_organization_social` is actually returning numbers.
+
 ### The cut: which agents get it, and why it is not "operational vs not"
 
 Memory compounds only where the world answers back. A procedural layer on an
@@ -1681,12 +1709,16 @@ stray backslashes: `escapeCommentary()` is written against documentation rather
 than a real response, and it is the one thing here that has not been verified
 against LinkedIn itself.
 
-**Still not built, and worth knowing:** the learning layer is off for LinkedIn
-(`learning: true` is X only). Turning it on is one flag — but the interesting
-version waits for `r_organization_social`, because that would be the first real
-audience signal in this system and `HAS_AUDIENCE_DATA` in `channel-agent.ts` is
-the switch that changes what the model is told about it. Do not flip that flag
-before the metrics are actually flowing.
+**The learning layer is now ON for LinkedIn**, and it collects post rulings
+rather than only growth ideas — see section 12c. That needed no audience data:
+the owner's yes or no on a draft is a verdict on the copy. `HAS_AUDIENCE_DATA`
+is still `false` and must stay that way until `r_organization_social` returns
+real numbers.
+
+**Known:** `LINKEDIN_ORG_ID` is **127634091**, read from the page's public HTML.
+The developer app exists and is verified. Its client id and secret are NOT what
+this Worker needs — they are used once, by the owner, in the OAuth exchange that
+mints the access token. Only `LINKEDIN_ACCESS_TOKEN` is stored as a secret.
 
 ### Live schedule overrides, 2026-08-29 17:45 UTC
 

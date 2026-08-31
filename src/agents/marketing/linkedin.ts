@@ -65,6 +65,16 @@ Write for the one reader whose exact structural problem the post names. Precisio
   // what publishes; rejecting takes that draft out of the running for this
   // channel and the next run writes something else.
   approveBeforePublish: true,
+  // On this channel the learning layer has a better signal than it has on X.
+  // Every post waits for the owner, so every post produces a verdict on the
+  // COPY — not on an idea about copy, which is all a growth-idea ruling is.
+  //
+  // What it still does NOT have is audience data. HAS_AUDIENCE_DATA stays false
+  // and the prompt says so in words, because a model handed past posts and asked
+  // what worked will always find a pattern, and with no engagement signal that
+  // pattern is about nothing. r_organization_social is what changes that, and it
+  // arrives with the same Community Management API review as posting does.
+  learning: true,
   // The page's own posts, read from the public page on 2026-08-30. Used only
   // until this system has published here itself; see `voiceBaseline` for why it
   // carries the "avoid" half as well as the "write like this" half.
