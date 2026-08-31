@@ -162,10 +162,17 @@ describe("reading what a web-enabled turn actually looked at", () => {
 
 describe("cost estimation", () => {
   it("prices each tier at its own rate", () => {
+    // These are PUBLISHED PRICES, not decisions this repo gets to make, and the
+    // balanced tier's were wrong here for weeks: Sonnet 5 is $2/$10, and this
+    // carried Sonnet 4.6's $3/$15, overstating every Sonnet cost by 50%. That is
+    // not cosmetic — spendCapUsd is enforced against these numbers, so a run
+    // could be stopped for a bill it never actually ran up.
+    //
+    // Re-check against the current price list when a model moves tier.
     const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
-    expect(estimateCostUsd(MODELS.reasoning, usage)).toBeCloseTo(30, 5); // 5 + 25
-    expect(estimateCostUsd(MODELS.balanced, usage)).toBeCloseTo(18, 5); // 3 + 15
-    expect(estimateCostUsd(MODELS.fast, usage)).toBeCloseTo(6, 5); // 1 + 5
+    expect(estimateCostUsd(MODELS.reasoning, usage)).toBeCloseTo(30, 5); // Opus 5: 5 + 25
+    expect(estimateCostUsd(MODELS.balanced, usage)).toBeCloseTo(12, 5); // Sonnet 5: 2 + 10
+    expect(estimateCostUsd(MODELS.fast, usage)).toBeCloseTo(6, 5); // Haiku 4.5: 1 + 5
   });
 
   it("bills cache reads at a tenth of the input rate", () => {
@@ -174,7 +181,7 @@ describe("cost estimation", () => {
       cache_read_input_tokens: 1_000_000,
       output_tokens: 0,
     });
-    expect(cost).toBeCloseTo(0.3, 5);
+    expect(cost).toBeCloseTo(0.2, 5); // Sonnet 5 input $2, a tenth of it
   });
 
   it("is zero when there is no usage to price", () => {

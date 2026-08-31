@@ -12,6 +12,7 @@ import {
   type AgentScheduleOverride,
 } from "../core/state.js";
 import type { Supabase } from "../lib/supabase.js";
+import { readLedger, recordSpend, writeLedger } from "../core/spend.js";
 import { chiefOfStaff, chiefOfStaffAgent } from "./orchestration/chief-of-staff.js";
 
 import { contentAgent } from "./marketing/content.js";
@@ -201,6 +202,34 @@ export async function runDue(
     ctx.log(`running ${agent.id}`);
     results.push(await runAgent(agent, chiefOfStaff, ctx));
   }
+
+  // Record what the tick cost, but only when it cost something.
+  //
+  // Most hourly ticks make no model call at all — the strategists wake, find
+  // their shelves stocked and return — so this write happens on the ticks that
+  // actually spent rather than on every one. That matters: an invocation has
+  // roughly fifty subrequests for everything it runs, and this system has
+  // already lost an agent to spending them on bookkeeping.
+  //
+  // The number is measured, not modelled: runAgent snapshots the Claude
+  // client's spend either side of the run. Before this existed it was computed
+  // and thrown away, so "what does this cost to run" had no answer anywhere.
+  const spending = results
+    .filter((r) => r.costUsd > 0)
+    .map((r) => ({ agentId: r.agentId, costUsd: r.costUsd, modelCalls: r.modelCalls }));
+  if (spending.length > 0) {
+    try {
+      const ledger = await readLedger(ctx.db, ctx.now);
+      await writeLedger(ctx.db, recordSpend(ledger, spending, ctx.now));
+    } catch (err) {
+      // Bookkeeping must never take a tick down with it. Same rule as the
+      // status board and the failure report.
+      ctx.log("could not record this tick's spend", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return results;
 }
 

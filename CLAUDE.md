@@ -971,7 +971,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 547 tests
+npx vitest run            # 560 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1004,6 +1004,7 @@ src/
     state.ts            typed views over the memory table
     intel.ts            the brief document, its schema, and page diffing
     learning.ts         episodes, lessons, and the forgetting rules (pure)
+    spend.ts            the measured spend ledger and what it implies for a balance
     learning-store.ts   reading/writing a learning record, forming lessons, and
                         back-filling rulings made before the layer existed
   agents/
@@ -1883,6 +1884,46 @@ gets a dashed amber ring rather than a red one.
 
 `X_READ_ENABLED` was added to the environment for the day the paid tier is
 bought. It is a purchase, not a setup step, so it needs a switch.
+
+---
+
+## 12e. What this actually costs, measured
+
+Every run already computed `result.costUsd` — `runAgent` snapshots the Claude
+client's spend either side of the run, so it is real rather than modelled — and
+then **threw it away**. `usage` was null on every report row, nothing persisted
+a total, and "what am I spending" could only be answered by arithmetic over
+assumptions.
+
+`src/core/spend.ts` keeps a ledger in `memory` at `spend.ledger`: one entry per
+day, per-agent split, capped at `MAX_SPEND_DAYS` (60). `runDue` folds each tick
+into it **only when the tick spent something** — most hourly ticks make no model
+call at all, and buying two subrequests an hour to store a zero is exactly the
+budget this system has already lost an agent to.
+
+`GET /api/spend?balance=12` returns the summary: today, last 7, last 30, daily
+average, monthly projection, which agents are responsible, and — given a balance
+— the date it runs out. The balance is a query parameter and deliberately not
+stored: it lives in the Anthropic console and anything cached here is wrong
+within a day.
+
+**The daily average divides by days OBSERVED, not days that spent.** A quiet day
+is a real day, and dividing by only the expensive ones flatters the average —
+the wrong direction to be wrong when the output is "your credit lasts N days".
+The first test written for this passed on either formula, because its fixture
+spent on every day; `test/spend-ledger.test.ts` now includes a quiet-day case
+that tells them apart.
+
+**Sonnet 5 was priced wrong here for weeks.** `MODEL_CAPABILITIES` carried
+$3/$15 — Sonnet 4.6's rates — against Sonnet 5's actual $2/$10, overstating every
+Sonnet cost by 50%. That is not cosmetic: `spendCapUsd` is enforced against these
+numbers, so a run could be stopped for a bill it never ran up. Current rates:
+Opus 5 $5/$25, Sonnet 5 $2/$10, Haiku 4.5 $1/$5 per MTok.
+
+**`max_tokens` is a ceiling, not a spend.** Raising it costs nothing unless the
+tokens are generated. A call that dies on `max_tokens` still bills for what it
+produced before truncating, so raising a limit that was too low converts a
+wasted spend into a useful one rather than adding cost.
 
 ---
 

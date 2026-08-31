@@ -592,15 +592,24 @@ export async function runAgent(
 
   result.proposed = actions.length;
   await settleThoughts();
-  await writeStatus(
+  // Reuses the board this run already holds rather than reading it back. This
+  // is a phase label, not a terminal write: nothing else needs merging into it,
+  // and at two subrequests each these mid-run reads are what leave an agent
+  // without enough budget to record its own ending. Five agents on the daily
+  // tick had exactly that — work completed, "no issues found this pass" logged,
+  // and then a status row stuck on running that a later run closed as
+  // "stopped reporting and never recorded an ending".
+  const acting = await writeStatus(
     agent.id,
     {
       phase: "acting",
       latestThought: `proposed ${actions.length} action${actions.length === 1 ? "" : "s"}, deciding what to do with each`,
       thoughts,
     },
-    ctx
+    ctx,
+    board ?? undefined
   );
+  if (acting) board = acting;
 
   for (const action of actions) {
     // An observe-only agent that tries to act externally is a bug, and it is

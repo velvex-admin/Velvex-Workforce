@@ -82,8 +82,12 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     adaptiveThinking: true,
     effort: true,
     contextTokens: 1_000_000,
-    priceInPerMTok: 3,
-    priceOutPerMTok: 15,
+    // $2/$10, not the $3/$15 this carried until 2026-08-31. Those are Sonnet
+    // 4.6's rates, and every Sonnet cost in this system was overstated by 50%
+    // while they sat here — which matters because spendCapUsd is enforced
+    // against these numbers, so a run could be stopped for a bill it never had.
+    priceInPerMTok: 2,
+    priceOutPerMTok: 10,
     webSearchToolType: "web_search_20260209",
     webFetchToolType: "web_fetch_20260209",
   },

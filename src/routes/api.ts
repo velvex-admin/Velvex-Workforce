@@ -21,6 +21,7 @@ import { unmetRequirements } from "../core/agent.js";
 import { connectorStatuses } from "../connectors/registry.js";
 import { compactQueue } from "../connectors/linkedin.js";
 import { STATE_KEYS, state } from "../core/state.js";
+import { readLedger, summarise } from "../core/spend.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
 import { resolveTiers } from "../core/models.js";
 import {
@@ -742,6 +743,27 @@ export async function handleApi(
   }
 
   // GET /api/memory
+  // GET /api/spend[?balance=12] — what this system actually costs.
+  //
+  // `balance` is not stored: a credit balance lives in the Anthropic console and
+  // anything cached here would be wrong within a day. Passing it turns the
+  // measured burn rate into a date, which is the question people actually ask.
+  if (segments[0] === "spend" && request.method === "GET") {
+    const db = new Supabase(env);
+    const now = new Date();
+    const ledger = await readLedger(db, now);
+    const balanceParam = url.searchParams.get("balance");
+    const balance = balanceParam ? Number(balanceParam) : undefined;
+    return json({
+      summary: summarise(ledger, now, Number.isFinite(balance) ? balance : undefined),
+      days: ledger.days.slice(-30),
+      note:
+        ledger.days.length === 0
+          ? "Nothing recorded yet. Spend is written on the ticks that make a model call, so this fills in from the next one."
+          : `Measured across ${ledger.days.length} day(s) on file.`,
+    });
+  }
+
   if (segments[0] === "memory" && request.method === "GET") {
     const db = new Supabase(env);
     return json({
