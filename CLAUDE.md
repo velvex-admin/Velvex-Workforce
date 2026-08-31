@@ -971,7 +971,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 529 tests
+npx vitest run            # 547 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1603,7 +1603,7 @@ connector failure is not a judgement about an idea.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-31, 10:35 UTC**. Facts here about live
+the unfinished work, as of **2026-08-31, 14:45 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
@@ -1681,44 +1681,26 @@ to wait, the one-line stopgap is to drop `exceptAgents: ["site_integrity"]` from
 the `0 * * * *` branch so it at least runs on the main tick, where it was dying
 visibly rather than not running invisibly.
 
-### OPEN — LinkedIn is built and waiting on LinkedIn, not on us
+### BLOCKED, and recorded in the system — LinkedIn needs a registered company
 
-Everything on our side is done, tested and committed. What is left is an
-application to LinkedIn that only the owner can make.
+Confirmed 2026-08-31: LinkedIn's Community Management API requires a **legal name
+and a registered company**, which does not exist yet. There is no self-serve
+alternative — "Share on LinkedIn" grants `w_member_social`, which posts to a
+personal profile, not to a company page. So direct posting is not weeks away, it
+is a business step away.
 
-**To turn direct posting on:**
+This is no longer a note in a document. It is `requires` on the LinkedIn agent
+(section 12d), so `/api/status` reports it and the dashboard panel shows the
+steps under "What this needs to be operational". Nobody has to remember it.
 
-1. Create a LinkedIn developer app owned by a page admin, and request the
-   **Community Management API** product. This is a review, not a toggle.
-2. Once approved, OAuth for `w_organization_social` (post) and
-   `r_organization_social` (read statistics). Tokens are 60-day and refreshable;
-   there is no permanent one, so a refresh path is the next piece of work.
-3. `wrangler secret put LINKEDIN_ORG_ID` — the number only, from
-   `urn:li:organization:<number>`.
-4. `wrangler secret put LINKEDIN_ACCESS_TOKEN`.
-5. Set `LINKEDIN_DIRECT_ENABLED = "true"` in `wrangler.toml` and deploy. **Not in
-   the Cloudflare dashboard** — see section 9.
-6. Confirm on `GET /api/status`: the LinkedIn row whose note mentions the
-   Community Management API should read `active: true` with an empty `missing`.
+**What still works, which is most of it:** the agent drafts in the page's own
+voice, every post waits for approval, and it learns from each ruling. Approved
+posts collect in the partner queue and can be published by hand from there.
 
-Until then the agent drafts normally and approved posts route to the partner
-queue, which is where they already went.
-
-**First live post is a checkpoint, not a milestone.** Read the published text for
-stray backslashes: `escapeCommentary()` is written against documentation rather
-than a real response, and it is the one thing here that has not been verified
-against LinkedIn itself.
-
-**The learning layer is now ON for LinkedIn**, and it collects post rulings
-rather than only growth ideas — see section 12c. That needed no audience data:
-the owner's yes or no on a draft is a verdict on the copy. `HAS_AUDIENCE_DATA`
-is still `false` and must stay that way until `r_organization_social` returns
-real numbers.
-
-**Known:** `LINKEDIN_ORG_ID` is **127634091**, read from the page's public HTML.
-The developer app exists and is verified. Its client id and secret are NOT what
-this Worker needs — they are used once, by the owner, in the OAuth exchange that
-mints the access token. Only `LINKEDIN_ACCESS_TOKEN` is stored as a secret.
+Known and recorded in the requirement itself: `LINKEDIN_ORG_ID` is **127634091**
+(read from the page's public HTML), the developer app exists and is verified,
+and its client id/secret are NOT what the Worker needs — they are used once, by
+the owner, in the OAuth exchange that mints the access token.
 
 ### Live schedule overrides, 2026-08-29 17:45 UTC
 
@@ -1853,6 +1835,56 @@ reading before it is trusted.
   Rotating it is cheap: `wrangler secret put APP_PATH_SECRET`, then the
   dashboard URL changes.
 
+
+## 12d. Requirements: what an agent needs, and where that is written down
+
+Several agents are waiting on things the owner cannot simply supply. LinkedIn
+will not grant the Community Management API without a **registered legal
+entity**. X's read endpoints need a paid tier (~$200/month). There is no
+Facebook page. None of those is a bug and none will resolve on its own.
+
+The failure mode this prevents is not technical. An agent blocked on the outside
+world used to present as `failed` on the dashboard, and a red dot that means
+"LinkedIn wants a registered company" teaches you to stop reading red dots.
+
+So `AgentDefinition.requires` is a list of `AgentRequirement`, each carrying what
+is missing, whether it is `blocking`, the **steps that would end the wait**, and
+a note. `check(env)` is deterministic and cheap — environment only, no database,
+no model — and runs before `propose()` on every tick.
+
+Three states, and they are different:
+
+| | means |
+|---|---|
+| **failed** | it ran and something went wrong |
+| **paused** | somebody chose to stop it |
+| **blocked** | it is waiting on the outside world, expectedly, and something specific would end that |
+
+`blocking: true` holds the agent back entirely: it does not run, cannot spend a
+token, and writes `blockedBy` to the status board. `blocking: false` means the
+agent still runs and is merely degraded — which is the right setting for three of
+the four, because they do most of their job without the missing piece.
+
+**Where it shows.** `/api/status` returns `requirements` per agent, computed from
+the agent rather than from its last run — per-run would vanish the moment a
+degraded agent had a clean tick, which is exactly when the reminder is easiest to
+lose. The dashboard panel renders **"What this needs to be operational"** with
+the numbered steps, amber for degraded and red-bordered for blocking, and the dot
+gets a dashed amber ring rather than a red one.
+
+### What is on the list today
+
+| Agent | Blocking | Waiting on |
+|---|---|---|
+| `linkedin` | no | A registered legal entity, before LinkedIn will grant the Community Management API. Drafting, approval and learning all work without it; only delivery of an approved post is blocked, and those wait in the partner queue. |
+| `facebook` | **yes** | There is no Facebook page. Full strategist and connector are built. |
+| `social_engagement` | no | Read access on any channel. X returns 402 on the free tier; LinkedIn comments need `r_organization_social` from the same review above. |
+| `ops_health` | no | A read-only status URL from the Phase 0 pipeline. It watches this system's own agents regardless, which is the half that matters. |
+
+`X_READ_ENABLED` was added to the environment for the day the paid tier is
+bought. It is a purchase, not a setup step, so it needs a switch.
+
+---
 
 ## 13. Deliberately not built
 

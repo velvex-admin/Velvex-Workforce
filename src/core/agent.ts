@@ -47,6 +47,56 @@ export interface RunContext {
   log: (message: string, detail?: Record<string, unknown>) => void;
 }
 
+/**
+ * One thing an agent needs before it can work, stated so it survives forgetting.
+ *
+ * The fields are what the owner would have to reconstruct otherwise: what is
+ * missing, whether it is on them or on someone else, and the actual next step.
+ * `blocking: false` marks a requirement that degrades the agent rather than
+ * stopping it — it still runs, and the gap is reported rather than hidden.
+ */
+/** The unmet requirements on an agent, in declaration order. */
+export function unmetRequirements(
+  agent: Pick<AgentDefinition, "requires">,
+  env: Env
+): Array<{ requirement: AgentRequirement; reason: string }> {
+  const unmet: Array<{ requirement: AgentRequirement; reason: string }> = [];
+  for (const requirement of agent.requires ?? []) {
+    let reason: string | null;
+    try {
+      reason = requirement.check(env);
+    } catch (err) {
+      // A check that throws is itself a blocker, and a silent one otherwise.
+      reason = `requirement check failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (reason) unmet.push({ requirement, reason });
+  }
+  return unmet;
+}
+
+/** Whether anything unmet is severe enough to hold the agent back entirely. */
+export function isBlocked(agent: Pick<AgentDefinition, "requires">, env: Env): boolean {
+  return unmetRequirements(agent, env).some((entry) => entry.requirement.blocking);
+}
+
+export interface AgentRequirement {
+  /** Short identifier, e.g. "linkedin.community-management-api". */
+  id: string;
+  /** One line: what is missing. Shown as the heading on the dashboard. */
+  summary: string;
+  /** Whether the agent should be held back entirely while this is unmet. */
+  blocking: boolean;
+  /**
+   * What would actually resolve it, in order. Written for the owner in six
+   * months, not for whoever is in the conversation today.
+   */
+  steps: string[];
+  /** Anything that makes the wait expected rather than suspicious. */
+  note?: string;
+  /** Met? Return null when satisfied, or a short reason when not. */
+  check: (env: Env) => string | null;
+}
+
 export interface AgentDefinition {
   id: AgentId;
   name: string;
@@ -77,6 +127,27 @@ export interface AgentDefinition {
 
   /** Built elsewhere — we expose an integration point, we do not run it. */
   externalBuild?: boolean;
+
+  /**
+   * What this agent needs before it can do its job, and what to do about it.
+   *
+   * Some agents are blocked on things the owner cannot simply supply: LinkedIn's
+   * Community Management API needs a registered legal entity, X's read endpoints
+   * need a paid tier. Those are not bugs and they are not going to resolve on
+   * their own, so an agent in that state should not run, should not burn tokens,
+   * and — this is the part that was missing — should SAY WHY, somewhere the
+   * owner will see it months later without having to remember.
+   *
+   * A blocked agent is different from a failed one and from a paused one. Failed
+   * means it tried and something went wrong. Paused means somebody chose to stop
+   * it. Blocked means it is waiting on the outside world, the wait is expected,
+   * and there is a specific thing that would end it.
+   *
+   * `check` returns null when the requirement is met, or the reason it is not.
+   * It is deliberately deterministic and cheap: it runs before propose(), on
+   * every tick, from the environment alone. No database, no model.
+   */
+  requires?: AgentRequirement[];
 
   /**
    * The most this agent may spend in one run, in USD. Unset means uncapped.
@@ -307,6 +378,41 @@ export async function runAgent(
     decisions: [],
   };
 
+  // Blocked before anything else, and before any spend.
+  //
+  // An agent waiting on something outside the owner's control should not run,
+  // should not cost a token, and should not present as a failure — a red dot
+  // that means "LinkedIn requires a registered company" teaches you to ignore
+  // red dots. It writes its reason to the status board and returns, so the
+  // dashboard can say exactly what is needed months from now without anyone
+  // having to remember.
+  const blockers = unmetRequirements(agent, ctx.env);
+  const blocking = blockers.filter((entry) => entry.requirement.blocking);
+  if (blocking.length > 0) {
+    ctx.log(
+      `${agent.id}: blocked, not running. ${blocking.map((b) => b.reason).join("; ")}`
+    );
+    await writeStatus(
+      agent.id,
+      {
+        status: "blocked",
+        phase: "blocked",
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        latestThought: blocking[0]!.requirement.summary,
+        blockedBy: blocking.map((entry) => ({
+          id: entry.requirement.id,
+          summary: entry.requirement.summary,
+          reason: entry.reason,
+          steps: entry.requirement.steps,
+          note: entry.requirement.note,
+        })),
+      },
+      ctx
+    );
+    return result;
+  }
+
   // Snapshot spend so this agent's share of the bill is attributable to it.
   const spendBefore = ctx.claude instanceof Claude ? ctx.claude.spentUsd : 0;
   const callsBefore = ctx.claude instanceof Claude ? ctx.claude.callCount : 0;
@@ -415,6 +521,9 @@ export async function runAgent(
     {
       status: "running",
       phase: "thinking",
+      // Clear any block from a previous tick: a requirement that has since been
+      // met must not leave its notice sitting on a running agent.
+      blockedBy: [],
       // The agent's own start, not the tick's. ctx.now is fixed for a whole
       // cron invocation, so using it made every agent in a tick report the same
       // startedAt and made "how long has this been running" unreadable.

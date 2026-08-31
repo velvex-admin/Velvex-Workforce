@@ -173,6 +173,12 @@ a{color:var(--blue);text-decoration:none}
 .status-tag.working{color:var(--amber)}
 .status-tag.failed{color:var(--red)}
 .status-tag.stalled{color:var(--slate)}
+/* Blocked reads differently from failed on purpose: amber and steady, not red
+   and alarming. The agent is fine; the world has not caught up with it yet. */
+.status-tag.blocked{color:var(--amber)}
+.status-tag.needs{color:var(--amber);opacity:.75}
+.node.blocked .dot{border-color:var(--amber);border-style:dashed}
+.node.blocked .dot::after{border-color:var(--amber);opacity:.35;animation:none}
 /* A stalled run is not a working one: no pulse, no glow, so the canvas stops
    claiming an agent is thinking when nothing is on the other end. */
 .node.stalled .dot{border-color:var(--slate);border-style:dashed;box-shadow:none}
@@ -729,21 +735,31 @@ function nodeCard(a) {
   const stale = runIsStale(rt);
   const isWorking = rt && rt.status === 'running' && !stale;
   const isFailed = rt && rt.status === 'failed';
+  // An agent held back by something outside this system is not a failure and
+  // must not read as one. A red dot meaning "LinkedIn wants a registered
+  // company" teaches you to stop reading red dots.
+  const blockers = (a.requirements || []);
+  const hardBlocked = blockers.some(function (r) { return r.blocking; });
   const cls = 'node ' + a.batch +
     (paused ? ' paused' : '') +
     (isMock ? ' mock' : '') +
     (SELECTED === a.id ? ' selected' : '') +
     (isWorking ? ' working' : '') +
     (stale ? ' stalled' : '') +
-    (isFailed ? ' failed-status' : '');
+    (hardBlocked ? ' blocked' : '') +
+    (isFailed && !hardBlocked ? ' failed-status' : '');
   const initials = initialsOf(a.name);
   const statusTag = isWorking
     ? '<div class="status-tag working">' + esc(rt.phase || 'working') + '</div>'
     : stale
       ? '<div class="status-tag stalled">no signal</div>'
-      : isFailed
-        ? '<div class="status-tag failed">failed</div>'
-        : '';
+      : hardBlocked
+        ? '<div class="status-tag blocked">blocked</div>'
+        : blockers.length
+          ? '<div class="status-tag needs">needs setup</div>'
+          : isFailed
+            ? '<div class="status-tag failed">failed</div>'
+            : '';
   const thought = isWorking && rt.latestThought
     ? '<div class="thought" title="' + esc(rt.latestThought) + '">' + esc(rt.latestThought) + '</div>'
     : stale
@@ -983,6 +999,38 @@ async function openAgent(id) {
          </div>\`
       : '';
 
+  // What this agent needs to be operational.
+  //
+  // Rendered from the agent rather than from its last run, so it is there
+  // whether the agent is held back entirely or merely degraded, and so it does
+  // not vanish the moment a run happens to succeed. The steps are written for
+  // whoever reads this in six months, which is usually the same person who
+  // wrote them and has entirely forgotten.
+  const reqs = agent.requirements || [];
+  const requirementBlock = reqs.length
+    ? '<h3>What this needs to be operational</h3>' + reqs.map(function (r) {
+        const tone = r.blocking
+          ? 'border-color:rgba(193,102,107,.35);background:linear-gradient(135deg,rgba(193,102,107,.10),rgba(193,102,107,.02))'
+          : 'border-color:rgba(214,158,46,.35);background:linear-gradient(135deg,rgba(214,158,46,.10),rgba(214,158,46,.02))';
+        const badge = r.blocking
+          ? '<span style="color:var(--red);font-weight:600">not running</span>'
+          : '<span style="color:var(--amber);font-weight:600">running, but limited</span>';
+        const steps = (r.steps || []).map(function (step, i) {
+          return '<li style="margin:0 0 6px 0">' + esc(step) + '</li>';
+        }).join('');
+        const note = r.note
+          ? '<div style="margin-top:8px;font-size:11px;color:var(--text-faint);line-height:1.5">' + esc(r.note) + '</div>'
+          : '';
+        return '<div style="border:1px solid;border-radius:8px;padding:12px 14px;margin-bottom:10px;' + tone + '">'
+          + '<div style="font-weight:600;margin-bottom:2px">' + esc(r.summary) + '</div>'
+          + '<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">' + badge
+          + ' &middot; ' + esc(r.reason) + '</div>'
+          + '<ol style="margin:0;padding-left:18px;font-size:12px;line-height:1.55">' + steps + '</ol>'
+          + note
+          + '</div>';
+      }).join('')
+    : '';
+
   const thoughtTrail = rt && rt.thoughts && rt.thoughts.length
     ? \`<h3>Thought trail (\${rt.status === 'running' && !staleRun ? 'live' : 'last run'})</h3>
        <div class="thought-trail">\${rt.thoughts.slice().reverse().map(t =>
@@ -996,6 +1044,7 @@ async function openAgent(id) {
     <div class="meta">\${esc(agent.batch)} · \${agent.model ? esc(agent.model) + ' · effort ' + esc(agent.effort) : 'no model calls'} · currently \${esc(effCadence)}</div>
     \${nowThinking}
     <p class="lede">\${esc(agent.description)}</p>
+    \${requirementBlock}
     \${thoughtTrail}
 
     <h3>Run now</h3>

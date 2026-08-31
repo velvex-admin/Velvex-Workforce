@@ -17,6 +17,7 @@ import {
   staleOverrides,
 } from "../agents/registry.js";
 import type { AgentRuntimeStatusMap, AgentScheduleOverride } from "../core/state.js";
+import { unmetRequirements } from "../core/agent.js";
 import { connectorStatuses } from "../connectors/registry.js";
 import { compactQueue } from "../connectors/linkedin.js";
 import { STATE_KEYS, state } from "../core/state.js";
@@ -223,6 +224,17 @@ export async function handleApi(
         effort: agent.model ? agent.effort : null,
         observeOnly: agent.observeOnly ?? false,
         externalBuild: agent.externalBuild ?? false,
+        // Unmet requirements travel with the agent rather than with its last run,
+        // because a NON-blocking one still runs — and the whole point is that the
+        // reason stays visible months later without anyone having to remember it.
+        requirements: unmetRequirements(agent, env).map((entry) => ({
+          id: entry.requirement.id,
+          summary: entry.requirement.summary,
+          blocking: entry.requirement.blocking,
+          reason: entry.reason,
+          steps: entry.requirement.steps,
+          note: entry.requirement.note ?? null,
+        })),
         routine: agent.routineRules.map((rule) => ({ id: rule.id, describe: rule.describe })),
         needsApproval: agent.approvalRules.map((rule) => ({ id: rule.id, describe: rule.describe })),
       })),

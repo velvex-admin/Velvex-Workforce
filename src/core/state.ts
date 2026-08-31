@@ -109,8 +109,22 @@ export function overrideIsStale(
  * "idle" once done, and "failed" if it errored.
  */
 export interface AgentRuntimeStatus {
-  status: "running" | "idle" | "failed";
-  phase: "thinking" | "acting" | "reporting" | "idle" | "failed";
+  status: "running" | "idle" | "failed" | "blocked";
+  /**
+   * Why this agent is not running, when it is waiting on the outside world.
+   *
+   * Kept on the status row rather than only in code so the dashboard can show
+   * it without importing the roster, and so it survives as a record of what was
+   * true — a requirement met later clears this on the next run.
+   */
+  blockedBy?: Array<{
+    id: string;
+    summary: string;
+    reason: string;
+    steps: string[];
+    note?: string;
+  }>;
+  phase: "thinking" | "acting" | "reporting" | "idle" | "failed" | "blocked";
   startedAt?: string;
   endedAt?: string;
   runId?: string;

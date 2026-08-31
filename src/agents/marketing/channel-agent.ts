@@ -19,7 +19,7 @@
 // A strategist that is not "active" (the flag is off, or the whole platform is
 // on hold) does nothing. Facebook is idle until the owner has an account there.
 
-import type { AgentDefinition, RunContext } from "../../core/agent.js";
+import type { AgentDefinition, AgentRequirement, RunContext } from "../../core/agent.js";
 import type {
   AgentId,
   Channel,
@@ -144,6 +144,9 @@ export interface ChannelStrategistSpec {
    * It is a starting register, not a library: once there is real history, that
    * history is what the model reasons over.
    */
+  /** Passed straight through to the AgentDefinition. See AgentRequirement. */
+  requires?: AgentRequirement[];
+
   voiceBaseline?: {
     target: Array<{ text: string }>;
     avoid: Array<{ why: string; text: string }>;
@@ -440,6 +443,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
     // "internal" so a draft_content action (which is not published anywhere yet)
     // does not trip general.new_channel.
     approvedChannels: [spec.channel, "internal"],
+    ...(spec.requires ? { requires: spec.requires } : {}),
 
     routineRules: [
       {

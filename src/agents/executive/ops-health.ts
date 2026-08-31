@@ -15,7 +15,7 @@
 
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
-import { flag } from "../../env.js";
+import { flag, type Env } from "../../env.js";
 import { STATE_KEYS, state } from "../../core/state.js";
 
 export interface OpsStatus {
@@ -43,6 +43,27 @@ export const opsHealthAgent: AgentDefinition = {
   cadence: "hourly",
   observeOnly: true,
   approvedChannels: ["internal"],
+  // NOT blocking. Ops-Health has two jobs and only one of them needs the
+  // pipeline: it watches this system's own agents regardless, which is the half
+  // that matters most while there is no Phase 0 credential to give it.
+  requires: [
+    {
+      id: "ops.pipeline-status-endpoint",
+      summary: "The Phase 0 operations pipeline is not being watched — no status endpoint is wired",
+      blocking: false,
+      steps: [
+        "Expose a read-only status endpoint on the operations pipeline. It is a separate project with its own database, and this system deliberately holds no credentials for it, so the pipeline has to offer a URL rather than this agent reaching in.",
+        "wrangler secret put OPS_PIPELINE_STATUS_URL, and OPS_PIPELINE_STATUS_TOKEN if it needs one.",
+        "Set OPS_PIPELINE_MONITOR_ENABLED = \"true\" in wrangler.toml and deploy.",
+      ],
+      note:
+        "Read-only by design and never to be widened. The hard constraint on this repo is that it does not touch the operations-pipeline project, its database or its infrastructure; a status URL is the whole of the intended coupling.",
+      check: (env: Env) =>
+        flag(env.OPS_PIPELINE_MONITOR_ENABLED) && env.OPS_PIPELINE_STATUS_URL
+          ? null
+          : "no OPS_PIPELINE_STATUS_URL is configured",
+    },
+  ],
 
   routineRules: [
     {

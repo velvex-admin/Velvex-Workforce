@@ -13,6 +13,7 @@
 // call made below ENGAGEMENT_CONFIDENCE_FLOOR is treated as not-routine even
 // when the label itself came back "praise". Being unsure is not permission.
 
+import { flag, type Env } from "../../env.js";
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { Channel, ExecutionResult, ProposedAction } from "../../core/types.js";
 import {
@@ -136,6 +137,30 @@ export const socialEngagementAgent: AgentDefinition = {
   effort: "xhigh",
   cadence: "hourly",
   approvedChannels: ["linkedin", "facebook", "x"],
+  // NOT blocking, and that is the judgement call. It still runs, because the
+  // moment ANY channel can be read it has work to do — and gather() already
+  // treats 401/402/403 as "skip this channel and carry on" rather than as a
+  // fault. What it cannot do today is see anything at all, on any channel, so
+  // it wakes hourly and finds nothing. That is worth stating once here rather
+  // than being rediscovered as "the engagement agent never does anything".
+  requires: [
+    {
+      id: "social.read-access",
+      summary: "No channel can be read yet, so there is nothing to engage with",
+      blocking: false,
+      steps: [
+        "X: read access (GET /2/users/me and the mentions endpoints) needs a paid tier. The free tier posts but returns 402 credits-depleted on every read. Roughly $200/month, so this is a volume decision rather than a setup step — worth it when X is actually driving conversations, not before.",
+        "LinkedIn: comments on the page are readable with r_organization_social, which arrives with the same Community Management API approval the LinkedIn agent is waiting on. See that agent's requirement.",
+        "Facebook: pages_read_engagement, if a page ever exists.",
+      ],
+      note:
+        "The agent is built, tested and safe to leave running: it costs a few cheap calls an hour and files an observation recording that a channel was unreadable, so the state stays visible rather than silent.",
+      check: (env: Env) =>
+        flag(env.X_READ_ENABLED) || env.LINKEDIN_ACCESS_TOKEN || env.FACEBOOK_PAGE_ACCESS_TOKEN
+          ? null
+          : "X read endpoints return 402 on the free tier; LinkedIn and Facebook have no token",
+    },
+  ],
 
   routineRules: [
     {

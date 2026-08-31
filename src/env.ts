@@ -15,6 +15,13 @@ export interface Env {
   MODEL_FAST?: string;
   FACEBOOK_ENABLED: string;
   X_ENABLED: string;
+  /**
+   * Whether X's READ endpoints are available. Separate from X_ENABLED because
+   * they are separately purchased: the free tier posts fine and returns 402
+   * credits-depleted on every read, so this stays off until a paid tier is
+   * active. Social Engagement and any per-post metric retrieval depend on it.
+   */
+  X_READ_ENABLED?: string;
   LINKEDIN_INTEGRATION_ENABLED: string;
   /**
    * Whether this Worker posts to the LinkedIn company page itself, rather than

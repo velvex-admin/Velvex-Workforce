@@ -112,7 +112,12 @@ export const growthStrategyAgent: AgentDefinition = {
         `Category read:\n${category}`,
       model: MODEL,
       effort: growthStrategyAgent.effort,
-      maxTokens: 4000,
+      // 4000 failed in production: "Ran out of output budget on claude-opus-5".
+      // max_tokens covers THINKING as well as the answer on this generation, and
+      // this is Opus reading fourteen days of activity and writing a strategy
+      // memo. max_tokens is a ceiling rather than a spend, so raising it costs
+      // nothing unless the tokens are generated.
+      maxTokens: 16000,
     });
 
     return [
