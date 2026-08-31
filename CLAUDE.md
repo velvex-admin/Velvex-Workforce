@@ -258,22 +258,29 @@ The owner has no Facebook page. The agent returns `[]` on every tick until
 | `30 * * * *` | hourly, half past — **Site-Integrity alone**, on its own subrequest budget |
 | `0 7 * * *` | 07:00 UTC daily |
 | `0 8 1 * *` | 08:00 UTC on the 1st — **monthly**, where intelligence now runs |
-| `0 8 * * 1` | 08:00 UTC Mondays — weekly, **intelligence only** if set back to weekly |
-| `0 9 * * 1` | 09:00 UTC Mondays — weekly, **everything else** |
+| `0 9 * * 1` | 09:00 UTC Mondays — weekly, **all of it**, unfiltered |
 
-**The weekly cadence runs on two ticks, and that is not cosmetic.** A cron
-invocation gets 15 minutes of wall clock for *everything it runs*, and `runDue()`
-is a sequential loop. Competitive Intelligence measured **10m03s**, which left
-Growth-Strategy under five minutes — and it would not have failed loudly, because
-a killed agent leaves a `running` status row rather than an error. So
-`runDue(cadence, ctx, filter)` takes a `BatchFilter`, and `scheduled()` routes
-`0 8 * * 1` to `{ only: ["intelligence"] }` and `0 9 * * 1` to
-`{ except: ["intelligence"] }`. Intelligence still goes first, so Growth-Strategy
-reads the brief written for it an hour earlier. `test/weekly-split.test.ts`
-asserts the two ticks are a **partition** of the weekly agents — drop one and it
-silently never runs again, overlap and it runs twice and bills twice — and that
-the cron strings in `wrangler.toml` still match the literals the handler matches
-on, since nothing about that drift fails at build time.
+**The weekly cadence used to run on two ticks, and giving that up was forced.**
+A cron invocation gets 15 minutes of wall clock for *everything it runs*, and
+`runDue()` is a sequential loop. Competitive Intelligence measured **10m03s**,
+which left Growth-Strategy under five minutes — and it would not have failed
+loudly, because a killed agent leaves a `running` status row rather than an
+error. So the weekly cadence was split across an 08:00 tick for intelligence and
+an 09:00 tick for everything else.
+
+That split cost a cron line, and **Workers Free allows five per account** (see
+section 9). When Site-Integrity needed one, the 08:00 line was the one to give
+up: it was filtered to the `intelligence` batch, intelligence has been monthly
+since the cost measurement, so it fired every Monday and ran **nothing at all**.
+
+The consequence is that **intelligence's monthly cadence is now load-bearing**,
+not merely a cost choice. Override it back to weekly and it shares the 09:00 tick
+with Growth-Strategy and the squeeze returns. `runDue()` logs a warning when that
+happens rather than letting an agent be killed silently, and the weekly tick is
+deliberately **unfiltered** — a filter there is how a weekly agent silently never
+runs. `test/weekly-split.test.ts` asserts that, asserts intelligence still lands
+somewhere if set back to weekly, and **counts the cron lines against the ceiling**,
+which is the only cheap place a sixth is catchable before the API refuses it.
 
 **The hourly cadence is split for the same reason, against the other limit.** An
 invocation gets ~50 **subrequests** for everything it runs, as well as its fifteen
@@ -371,6 +378,38 @@ the file.
 To check what the live Worker actually believes, call
 `GET /x/<APP_PATH_SECRET>/api/status` and read `connectors[].missing`. That is
 authoritative; the dashboard UI is not.
+
+### Five cron triggers, per ACCOUNT, and a refusal that does not roll back
+
+Workers Free allows **5 cron triggers per account** — not per Worker, not per
+day. A sixth is refused by the API with `code: 10072`. Waiting does not help;
+this is a plan ceiling, and Workers Paid raises it to 1,000 for $5/month.
+
+The dangerous half is what happens on refusal. `wrangler deploy` uploads the
+script **first** and sets triggers **second**, and it says so plainly:
+
+```
+Uploaded velvex-vx03 (9.61 sec)
+✘ [ERROR] Trigger configuration ... was only partially updated
+    - This account has reached the Workers Free limit of 5 cron triggers
+  Successful trigger changes were not rolled back.
+```
+
+So **the new code goes live against the old cron table**. Any agent the code
+moved onto a schedule that was never created simply stops running, and stops
+silently: no error, no failed report, no `running` row, because nothing invoked
+it at all. That is exactly how Site-Integrity was orphaned for eighteen hours on
+2026-08-30 — the deployed code excluded it from `0 * * * *` and the `30 * * * *`
+it had been moved to did not exist, so auto-restore was unarmed the whole time
+and the only visible sign was `site.source.last_good` failing to advance.
+
+**So adding a cron line means removing one, and a deploy is not done when the
+upload succeeds.** Read past the trigger line for an error, then confirm the
+agent you moved actually ran: `GET /api/state/runtime.agent_status` and check
+`startedAt` on that agent against the tick it should have caught.
+
+`test/weekly-split.test.ts` counts the lines in `wrangler.toml` against the
+ceiling, which is the only place this is catchable before the API refuses it.
 
 ### Cloudflare Workers Builds is a red herring
 
@@ -870,10 +909,13 @@ Two tells, and neither is the md5:
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work; the current number is
   in section 12. A count that dropped is a reverted checkout, not a passing suite.
-- The **cron lines wrangler prints on deploy**. Six is current; five is the tree
-  before the hourly split, three is the old
-  `wrangler.toml`. Those come from the file being deployed, so they describe what
-  actually went live rather than what you meant to send.
+- The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
+  It is five now and it was five before the hourly split, so the count no longer
+  separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
+  current table; three lines is the original `wrangler.toml`. These come from the
+  file being deployed, so they describe what actually went live.
+  **And check for an error after the trigger line**, because a refused cron
+  update does not roll back the upload — see section 9.
 
 So gate the destructive half on the md5 rather than trusting the eye, and never
 put `git checkout` and `wrangler deploy` in the same unconditional paste as a
@@ -929,7 +971,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 517 tests
+npx vitest run            # 518 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1533,7 +1575,7 @@ connector failure is not a judgement about an idea.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-30, 17:15 UTC**. Facts here about live
+the unfinished work, as of **2026-08-31, 10:35 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
@@ -1576,6 +1618,40 @@ approvals, so the first lessons are formed on evidence that is nearly all yes an
 say little about what gets rejected. That balances as more rulings land; it is
 not a fault in the layer, and `demote()` will drop either claim if the
 contradictions catch up with the support.
+
+### FIXED IN CODE, NOT YET DEPLOYED — the :30 cron was refused and Site-Integrity stopped running
+
+The hourly split was right and the deploy of it half-failed, in the way that is
+hardest to see.
+
+`wrangler deploy` uploaded the script, then the API refused the sixth cron with
+`code: 10072` — **5 per account on Workers Free** — and, in wrangler's own words,
+"Successful trigger changes were not rolled back". So the new code went live
+against the old cron table: `0 * * * *` now excludes `site_integrity`, and the
+`30 * * * *` it was moved to was never created.
+
+Measured 2026-08-31 10:30 UTC from `runtime.agent_status`: the 10:00 tick ran
+`ops_health`, `x`, `facebook`, `linkedin` — and `site_integrity` last started at
+**2026-08-30T16:00**. Eighteen hours not running, auto-restore unarmed, nothing
+anywhere reporting a fault, because nothing invoked it.
+
+**The fix is a consolidation, since the ceiling is real.** `0 8 * * 1` was the
+line to give up: filtered to the intelligence batch, and intelligence is monthly,
+so it fired every Monday and ran nothing. Five lines again, with `30 * * * *` in
+and `0 8 * * 1` out, and the weekly tick now unfiltered.
+
+**After deploying, verify rather than assume:**
+
+1. No error after the `Deployed ... triggers` line.
+2. `30 * * * *` in the printed cron list, `0 8 * * 1` absent.
+3. Within the hour, `GET /api/state/runtime.agent_status` shows `site_integrity`
+   with a `startedAt` at :30 past.
+4. `GET /api/state/site.source.last_good` starts advancing again.
+
+Until it is deployed, **site_integrity is not running at all.** If the deploy has
+to wait, the one-line stopgap is to drop `exceptAgents: ["site_integrity"]` from
+the `0 * * * *` branch so it at least runs on the main tick, where it was dying
+visibly rather than not running invisibly.
 
 ### OPEN — LinkedIn is built and waiting on LinkedIn, not on us
 

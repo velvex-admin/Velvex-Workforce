@@ -151,8 +151,7 @@ export default {
     // error to show for it. Intelligence at 08:00, everything else at 09:00, so
     // Growth-Strategy still reads the brief that was written for it.
     const MONTHLY = "0 8 1 * *";
-    const WEEKLY_INTEL = "0 8 * * 1";
-    const WEEKLY_REST = "0 9 * * 1";
+    const WEEKLY = "0 9 * * 1";
 
     // The hourly tick is split for the same reason, against the OTHER limit.
     // An invocation gets roughly fifty subrequests for everything it runs, and
@@ -168,28 +167,23 @@ export default {
     const cadence: RunCadence =
       event.cron === MONTHLY
         ? "monthly"
-        : event.cron === WEEKLY_INTEL || event.cron === WEEKLY_REST
+        : event.cron === WEEKLY
           ? "weekly"
           : event.cron === "0 7 * * *"
             ? "daily"
             : "hourly";
 
-    // The weekly split stays even though intelligence is monthly by default,
-    // because the cadence is overridable from the dashboard. Set it back to
-    // weekly and it lands on its own 08:00 tick rather than sharing the 09:00
-    // one with Growth-Strategy and reintroducing the fifteen-minute squeeze.
-    // The monthly tick takes no filter: filtering it to one batch is how a
-    // monthly agent added later would silently never run.
+    // The weekly tick takes no filter. It used to be split in two so
+    // Competitive Intelligence could not eat Growth-Strategy's fifteen minutes,
+    // but that split cost a cron line the account does not have, and the line it
+    // cost was firing every Monday to run nothing. Filtering this one now would
+    // be how a weekly agent silently never runs.
     const filter: BatchFilter =
-      event.cron === WEEKLY_INTEL
-        ? { only: ["intelligence"] }
-        : event.cron === WEEKLY_REST
-          ? { except: ["intelligence"] }
-          : event.cron === HOURLY_INTEGRITY
-            ? { onlyAgents: ["site_integrity"] }
-            : event.cron === HOURLY_MAIN
-              ? { exceptAgents: ["site_integrity"] }
-              : {};
+      event.cron === HOURLY_INTEGRITY
+        ? { onlyAgents: ["site_integrity"] }
+        : event.cron === HOURLY_MAIN
+          ? { exceptAgents: ["site_integrity"] }
+          : {};
 
     const logs: string[] = [];
     const ctx = buildContext(env, { trigger: "cron", logs });

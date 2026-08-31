@@ -1,77 +1,89 @@
-// The weekly cadence runs on two Monday ticks rather than one.
+// The weekly cadence ran on two Monday ticks. It does not any more, and the
+// reason is a hard platform ceiling rather than a change of mind.
 //
-// A cron invocation gets fifteen minutes of wall clock for everything it runs,
-// and the agent loop is sequential. Competitive Intelligence measured 10m03s on
-// its own, so putting it in front of Growth-Strategy left the second one under
-// five minutes. It would not have failed loudly either: a killed agent leaves a
-// "running" status row, not an error, so the loss would have been silent.
+// Workers Free allows FIVE cron triggers per ACCOUNT — not per Worker, not per
+// day. Site-Integrity needed one of its own (see test/hourly-split.test.ts), so
+// a line had to be given up, and the 08:00 Monday line was the one that was
+// costing without earning: it was filtered to the intelligence batch, and
+// intelligence has been monthly since the cost measurement, so it fired every
+// Monday and ran nothing at all.
 //
-// Splitting a cadence across ticks is only safe if the split is a partition.
-// Drop an agent and it silently never runs again; overlap and it runs twice and
-// bills twice. Both are asserted here against the real roster, not a fixture.
+// What that trades away is real and is asserted here. Intelligence being monthly
+// is now LOAD-BEARING: set it back to weekly and it shares fifteen minutes with
+// Growth-Strategy, which is the squeeze the split existed to prevent. So the
+// weekly tick is deliberately unfiltered — a filter here is how a weekly agent
+// silently never runs — and runDue says so out loud when intelligence lands on
+// it, because the failure mode is an agent killed with a "running" row and no
+// error anywhere.
 
 import { describe, expect, it } from "vitest";
 import { AGENTS, agentsDueWith, applyBatchFilter } from "../src/agents/registry.js";
 import toml from "../wrangler.toml?raw";
 import index from "../src/index.ts?raw";
 
-const WEEKLY_INTEL = "0 8 * * 1";
-const WEEKLY_REST = "0 9 * * 1";
+const WEEKLY = "0 9 * * 1";
+const MONTHLY = "0 8 1 * *";
+const RETIRED_WEEKLY_INTEL = "0 8 * * 1";
 
 const weekly = agentsDueWith("weekly", {});
-const intelTick = applyBatchFilter(weekly, { only: ["intelligence"] });
-const restTick = applyBatchFilter(weekly, { except: ["intelligence"] });
 
-describe("the two Monday ticks", () => {
-  it("between them run every weekly agent, exactly once", () => {
-    const ids = [...intelTick, ...restTick].map((a) => a.id).sort();
-    expect(ids).toEqual(weekly.map((a) => a.id).sort());
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it("leaves Growth-Strategy on the 09:00 tick", () => {
-    expect(restTick.map((a) => a.id)).toContain("growth_strategy");
-    expect(restTick.map((a) => a.id)).not.toContain("competitive_intel");
-  });
-
-  it("still catches intelligence on its own tick if it is set back to weekly", () => {
-    // The cadence is overridable from the dashboard. If it goes back to weekly
-    // it must land on the 08:00 tick, not join Growth-Strategy at 09:00 and
-    // reintroduce the squeeze the split exists to prevent.
-    const overridden = agentsDueWith("weekly", {
-      competitive_intel: { cadence: "weekly", updatedAt: "2026-08-28T00:00:00Z" },
-    });
-    expect(
-      applyBatchFilter(overridden, { only: ["intelligence"] }).map((a) => a.id)
-    ).toEqual(["competitive_intel"]);
-    expect(
-      applyBatchFilter(overridden, { except: ["intelligence"] }).map((a) => a.id)
-    ).not.toContain("competitive_intel");
-  });
-
-  it("does not disturb the other cadences", () => {
-    // An unfiltered tick still runs everything due, which is what the hourly
-    // and daily crons pass.
+describe("the single Monday tick", () => {
+  it("runs every weekly agent, because a filter here would hide one", () => {
     expect(applyBatchFilter(weekly, {}).map((a) => a.id).sort()).toEqual(
       weekly.map((a) => a.id).sort()
     );
   });
+
+  it("carries Growth-Strategy", () => {
+    expect(weekly.map((a) => a.id)).toContain("growth_strategy");
+  });
+
+  it("picks up intelligence too if it is ever set back to weekly", () => {
+    // The old 08:00 tick is gone, so this is the ONLY tick that could run it.
+    // If this ever stopped being true, setting the cadence back to weekly would
+    // mean the agent simply never runs, with nothing saying so.
+    const overridden = agentsDueWith("weekly", {
+      competitive_intel: { cadence: "weekly", updatedAt: "2026-08-28T00:00:00Z" },
+    });
+    expect(applyBatchFilter(overridden, {}).map((a) => a.id)).toContain("competitive_intel");
+  });
+
+  it("keeps intelligence ordered before Growth-Strategy on the roster", () => {
+    // Registry order decides which brief Growth-Strategy reads. It mattered when
+    // they were an hour apart and it matters more now they share a tick.
+    const ids = AGENTS.map((a) => a.id);
+    expect(ids.indexOf("competitive_intel")).toBeLessThan(ids.indexOf("growth_strategy"));
+  });
 });
 
 describe("the cron table and the code that reads it", () => {
-  // wrangler.toml is the source of truth for triggers, and the handler matches
-  // on the literal strings. If one moves without the other, a tick either never
-  // fires or fires with the wrong filter, and nothing fails at build time.
-  it("declares both Monday triggers", () => {
-    expect(toml).toContain(`"${WEEKLY_INTEL}"`);
-    expect(toml).toContain(`"${WEEKLY_REST}"`);
+  it("declares the one Monday trigger and no longer the retired one", () => {
+    expect(toml).toContain(`"${WEEKLY}"`);
+    expect(toml).not.toContain(`"${RETIRED_WEEKLY_INTEL}"`);
   });
 
-  it("routes both of them in the scheduled handler", () => {
-    expect(index).toContain(`const WEEKLY_INTEL = "${WEEKLY_INTEL}"`);
-    expect(index).toContain(`const WEEKLY_REST = "${WEEKLY_REST}"`);
-    expect(index).toContain('{ only: ["intelligence"] }');
-    expect(index).toContain('{ except: ["intelligence"] }');
+  it("routes it in the scheduled handler, unfiltered", () => {
+    expect(index).toContain(`const WEEKLY = "${WEEKLY}"`);
+    expect(index).not.toContain('{ only: ["intelligence"] }');
+    expect(index).not.toContain('{ except: ["intelligence"] }');
+  });
+
+  it("stays inside the account's five cron triggers", () => {
+    // Workers Free allows five per ACCOUNT. A sixth is refused with code 10072,
+    // and — this is the part that cost eighteen hours of site_integrity not
+    // running — the refusal does NOT roll back the script upload. So the new
+    // code goes live against the old cron table, and any agent the code moved to
+    // a schedule that was never created simply stops running, with no error.
+    //
+    // Counting them here is the only cheap place this is catchable.
+    const crons = [...toml.matchAll(/^\s*"([^"]+)",?\s*(?:#.*)?$/gm)]
+      .map((m) => m[1]!)
+      .filter((line) => /^[\d*\/,\- ]+$/.test(line) && line.split(" ").length === 5);
+    expect(crons.length).toBeLessThanOrEqual(5);
+    expect(crons).toContain("0 * * * *");
+    expect(crons).toContain("30 * * * *");
+    expect(crons).toContain(WEEKLY);
+    expect(crons).toContain(MONTHLY);
   });
 });
 
@@ -87,7 +99,9 @@ describe("what the composing pass is allowed to spend", () => {
 
 describe("the monthly tick", () => {
   // The category has few competitors and moves quarterly at most, so a weekly
-  // brief was paying full price to report that nothing changed.
+  // brief was paying full price to report that nothing changed. That cost
+  // argument is now also a scheduling one: monthly is what keeps intelligence
+  // off the weekly tick, and off it is what keeps Growth-Strategy alive.
   const monthly = agentsDueWith("monthly", {});
 
   it("is where the intelligence agent runs by default", () => {
@@ -97,9 +111,6 @@ describe("the monthly tick", () => {
   });
 
   it("runs every monthly agent, because a filter here would hide a future one", () => {
-    // The weekly ticks are filtered by batch; this one deliberately is not.
-    // Filtering it to "intelligence" is exactly how a monthly agent added later
-    // would silently never run.
     expect(applyBatchFilter(monthly, {}).map((a) => a.id).sort()).toEqual(
       monthly.map((a) => a.id).sort()
     );
@@ -107,10 +118,8 @@ describe("the monthly tick", () => {
     expect(toml).toContain('"0 8 1 * *"');
   });
 
-  it("does not also fire on a weekly tick", () => {
-    // Belt and braces on the partition: a monthly agent must not be picked up
-    // by either Monday tick, or it runs four times a month and bills for it.
-    const ids = [...intelTick, ...restTick].map((a) => a.id);
-    expect(ids).not.toContain("competitive_intel");
+  it("does not also fire on the weekly tick", () => {
+    // A monthly agent picked up weekly runs four times a month and bills for it.
+    expect(weekly.map((a) => a.id)).not.toContain("competitive_intel");
   });
 });

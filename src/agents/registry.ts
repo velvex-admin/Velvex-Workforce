@@ -176,8 +176,28 @@ export async function runDue(
       `${entry.agentId}: schedule override "${entry.override.cadence}" was set when its cadence in code was "${entry.override.builtInCadence}"; it is now "${entry.builtInCadence}". The override is still in force.`
     );
   }
+  const due = applyBatchFilter(agentsDueWith(cadence, overrides), filter);
+
+  // The weekly cadence used to run on two Monday ticks so that Competitive
+  // Intelligence — measured at 10m03s — could not eat Growth-Strategy's share of
+  // the fifteen minutes an invocation gets. That split cost a cron line, and
+  // Workers Free allows five per account, so it was given up when site_integrity
+  // needed one. Intelligence being monthly is what makes that safe, which means
+  // its cadence is now load-bearing rather than only a cost choice. Override it
+  // back to weekly and the squeeze returns — so say so, rather than letting the
+  // second agent be killed with a "running" row and no error, which is exactly
+  // how it would present.
+  if (cadence === "weekly" && due.length > 1) {
+    const heavy = due.filter((agent) => agent.batch === "intelligence");
+    if (heavy.length > 0) {
+      ctx.log(
+        `weekly tick is carrying ${heavy.map((a) => a.id).join(", ")} alongside ${due.length - heavy.length} other agent(s). Intelligence runs ~10 minutes and a cron invocation has 15, so whatever follows it may be killed without an error. Put intelligence back on monthly, or free a cron line for a second weekly tick.`
+      );
+    }
+  }
+
   const results: AgentRunResult[] = [];
-  for (const agent of applyBatchFilter(agentsDueWith(cadence, overrides), filter)) {
+  for (const agent of due) {
     ctx.log(`running ${agent.id}`);
     results.push(await runAgent(agent, chiefOfStaff, ctx));
   }
