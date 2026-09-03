@@ -22,6 +22,22 @@ export interface SiteEditRequest {
   before: string;
   after: string;
   approvalRef?: string;
+  /**
+   * How `after` reaches the file.
+   *
+   * "anchor" (the default) is every edit to a page: `before` names existing
+   * text and is substituted for. "generated" writes `after` as the whole file,
+   * and exists only for the machine-built files in src/core/site-files.ts —
+   * a sitemap has no text to anchor against and no previous version to
+   * preserve, it is simply recomputed from the pages that exist.
+   *
+   * This is NOT the whole-file branch that the empty-anchor incident removed.
+   * That one was reachable from any model-written edit to any page, which is
+   * how a 22kB page went live as a 134-byte meta description. This one refuses
+   * every path outside a two-entry allowlist, refuses anything ending .html,
+   * and carries content no model ever touched.
+   */
+  mode?: "anchor" | "generated";
 }
 
 export interface SiteWriteResult {

@@ -909,6 +909,31 @@ outright.
   tries the href, then `+ ".html"`, then `/index.html` under it. Caught before
   the re-seed rather than after, which is the only reason it costs nothing.
 
+- **A page-level check cannot see a site-level fault, and the SEO agent
+  reported "no issues found" every day on a site that answered 404 for both
+  `/robots.txt` and `/sitemap.xml`.** `findIssues()` walks pages and asks what
+  is wrong with each one: meta description, alt text, orphan. Nothing was wrong
+  with any page. Everything was wrong with the site — the two inner pages were
+  reachable only by following links from a home page a crawler had to find
+  first, which is the whole of "I search Velvex and my site does not come up".
+  `findSiteFileIssues()` asks the other question, costs no model call, and runs
+  even when every page is clean.
+
+  **The generated files must be deterministic or the agent redeploys the site
+  daily for ever.** The obvious `<lastmod>` is today's date, on every page, on
+  every run — so the stored file differs from the freshly built one every time,
+  the staleness comparison is always true, and a full digest deploy goes out
+  every day carrying a date Google discounts anyway for being unreliable. The
+  sitemap therefore carries `<loc>` and nothing else, and the URL list is
+  sorted, because object key order would otherwise decide whether the file
+  "changed". Omitting the date is the feature.
+
+  The URLs are the **served** form, not the stored one. The source is keyed
+  `/faq.html` because a file deploy uploads file names; Netlify's Pretty URLs
+  serves `/faq` and rewrites the links in the served HTML to match, so `/faq` is
+  the only form a crawler ever sees. Both return 200 with no redirect, which is
+  a duplicate the sitemap now resolves in one direction.
+
 ## 10a. The site, and why we hold its source
 
 The site is a Netlify **file deploy** — no repo, no build command — so the SEO
@@ -996,7 +1021,7 @@ Two tells, and neither is the md5:
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
-  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1059,7 +1084,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 584 tests
+npx vitest run            # 598 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1780,21 +1805,37 @@ price of one Opus run.
 
 ### OPEN — the site was redeployed by hand and `site.source` is behind it
 
-Measured 2026-09-03 against the live site. **The owner deployed a new build and
-our stored copy is now the old one.** Both halves of that drifted:
+The owner deployed a new build around 2026-09-01 and supplied the four source
+files on 09-03. **Our stored copy is the pre-deploy one.**
 
-| | `site.source` (ours) | live |
+| | `site.source` (ours) | new build |
 |---|---|---|
-| `/index.html` | 26,614 bytes | ~26,948 |
+| `/index.html` | 26,614 bytes | ~26,948 served |
 | meta description on the home page | **present** | **absent** |
-| internal links | `faq.html` | `/faq` |
-| `/faq.html` | 8,396 | ~8,832 |
-| `/proof-of-concept.html` | 22,184 | ~23,186 |
+| `/faq.html` | 8,396 | ~8,832 served |
+| `/proof-of-concept.html` | 22,184 | ~23,186 served |
 
-So the new build **dropped the two meta descriptions the SEO agent inserted on
-29 August**, and the nav was rewritten extensionless. The navigation itself is
-intact — a first pass here read `href="..."` only and missed `href='/faq'` in
-single quotes, and briefly concluded the nav had been deleted. It has not.
+The new build has no meta description on any page, so it does not carry the two
+the SEO agent inserted on 29 August. That is not a fault in the deploy: the
+agent edits `site.source`, the owner deploys from their own folder, and the two
+copies were never joined. The agent will simply re-add them after the re-seed.
+
+**One conclusion here was wrong and is corrected.** An earlier pass read the
+SERVED html, saw `href='/faq'` where the source says `href="faq.html"`, and
+concluded the new build had rewritten every internal link extensionless. It has
+not: the supplied source files link `faq.html` exactly as before. What changed
+the href is **Netlify's Pretty URLs post-processing**, which rewrites links in
+the served page and also re-serialises the attributes, which is why the quotes
+flipped too. So the re-seed was never at risk of producing phantom orphans, and
+the `resolveToPage()` fix in section 10 is defensive rather than load-bearing.
+It is worth keeping — it costs nothing and covers the day somebody does write an
+extensionless href into the source — but it was not the emergency it was
+described as.
+
+Measured while checking: `/faq` and `/faq.html` **both return 200 and neither
+redirects**. Every page is served at two URLs with no canonical tag, so any
+signal earned by one is spent on a page nobody chose. The sitemap now names one
+form; a `<link rel="canonical">` on each page is the other half and is not built.
 
 **The hazard is the deploy path, not the drift.** A digest deploy publishes the
 whole source map, not the page being edited (section 10). So the next time the
@@ -1848,12 +1889,26 @@ result reads once it already ranks. The gap between "the SEO agent has nothing
 to do" and "I search Velvex and my site does not come up" is entirely made of
 the list above, and every item on it is deterministic — no model needed.
 
-Building it means letting the agent **create files** (`/sitemap.xml`,
-`/robots.txt`), which `applyEdit()` deliberately cannot do: it edits pages that
-exist, and its refusal to invent one is the guard that stopped the empty-anchor
-incident from being worse. So it needs a new action kind with its own autonomy
-line, and that is the owner's decision rather than a fix to slip in. Proposed
-and awaiting their word.
+**The first two are now built.** `src/core/site-files.ts` generates
+`/sitemap.xml` and `/robots.txt` from the paths in `site.source`, and
+`findSiteFileIssues()` in the SEO agent proposes them when they are absent or no
+longer match the pages. Both classify **routine**: `structural_seo` was already
+in `ROUTINE_SITE_EDITS`, the content is computed rather than written, and there
+is no judgement in either file for anyone to approve.
+
+Writing a file that does not exist yet needed a path `applyEdit()` deliberately
+does not have. It is `putGeneratedFile()`, kept as a separate function with its
+own refusals rather than a flag: a two-entry path allowlist, a refusal of
+anything ending `.html`, and a refusal of empty content. The empty-anchor
+incident happened because a whole-file branch was reachable from an ordinary
+model-written edit to an ordinary page; every one of those guards exists to make
+that shape unreachable from this direction.
+
+Still not built, and still the owner's call because they change what a page
+says: canonical tags (see the duplicate-URL finding above), JSON-LD, and the
+title/H1 question. Those are edits to pages rather than new machine files, so
+the existing anchored path already covers them mechanically — what is missing is
+a decision about wording, not a mechanism.
 
 ### Six agents are paused, and two of those pauses cost real function
 

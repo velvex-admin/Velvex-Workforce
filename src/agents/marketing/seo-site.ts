@@ -19,12 +19,13 @@ import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { ROUTINE_SITE_EDITS, isProtectedPage, type SiteEditKind } from "../../core/config.js";
 import { inventoryFromSource } from "../../core/site-inventory.js";
 import { altTextEdit, metaDescriptionEdit } from "../../core/site-edits.js";
+import { GENERATED_PATHS, generatedFiles } from "../../core/site-files.js";
 import { STATE_KEYS, state, type SitePage } from "../../core/state.js";
 import { getSiteWriter } from "../../connectors/site.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 
 import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
-import { BUSINESS_CONTEXT } from "../../core/business.js";
+import { BUSINESS_CONTEXT, BUSINESS } from "../../core/business.js";
 
 const MODEL = MODELS.balanced;
 
@@ -61,6 +62,54 @@ interface Finding {
   kind: SiteEditKind;
   problem: string;
   before: string;
+}
+
+interface FileFinding {
+  path: string;
+  content: string;
+  problem: string;
+}
+
+/**
+ * The site-level findings: files that should exist and either do not, or no
+ * longer describe the site.
+ *
+ * Separate from findIssues() because it is not about a page. findIssues walks
+ * pages and asks what is wrong with each; this asks one question about the set
+ * of them, which is why the SEO agent could report "no issues found" on a site
+ * that answered 404 for both /robots.txt and /sitemap.xml. Nothing was wrong
+ * with any page. Everything was wrong with the site.
+ *
+ * No model, and there should never be one here: both files are computed from
+ * the paths in the source, so the only thing a model could contribute is a
+ * chance of getting them wrong.
+ */
+function findSiteFileIssues(source: Record<string, string>): FileFinding[] {
+  const wanted = generatedFiles(source, BUSINESS.site);
+  const findings: FileFinding[] = [];
+
+  for (const path of GENERATED_PATHS) {
+    const content = wanted[path] ?? "";
+    const current = source[path];
+    if (current === undefined) {
+      findings.push({
+        path,
+        content,
+        problem: `${path} does not exist on the site`,
+      });
+    } else if (current !== content) {
+      findings.push({
+        path,
+        content,
+        // The comparison is only meaningful because the builders are
+        // deterministic. Put a generated timestamp in either file and this
+        // proposes the same edit every day for ever.
+        problem: `${path} no longer matches the pages on the site`,
+      });
+    }
+  }
+
+  return findings;
 }
 
 /** Deterministic pass first: find what is actually wrong before asking the model to fix it. */
@@ -215,13 +264,45 @@ export const seoSiteAgent: AgentDefinition = {
       ];
     }
 
-    const findings = findIssues(pages).slice(0, 5);
-    if (findings.length === 0) {
-      ctx.log("seo_site: no issues found this pass");
-      return [];
+    const proposals: ProposedAction[] = [];
+
+    // The site-level pass runs first and runs even when every page is clean.
+    // It costs no model call, and it is the half that decides whether anything
+    // on this site can be found at all.
+    for (const file of source ? findSiteFileIssues(source) : []) {
+      proposals.push({
+        type: "site_edit",
+        summary: `${file.problem}`,
+        channel: "site",
+        target: file.path,
+        payload: {
+          path: file.path,
+          kind: "structural_seo" as SiteEditKind,
+          // A generated file has no anchor: it is not a substitution into
+          // existing text, it is the file recomputed from the pages that exist.
+          mode: "generated",
+          before: "",
+          after: file.content,
+          generated: true,
+        },
+        rationale:
+          `${file.problem}. It is built from the paths in the stored source, so it carries no ` +
+          `judgement and nothing written by a model.`,
+        // Keyed on the content, so a rebuild that changes nothing does not
+        // re-propose, and one that does is a genuinely new proposal.
+        dedupeKey: `seo:file:${file.path}:${file.content.length}`,
+      });
     }
 
-    const proposals: ProposedAction[] = [];
+    const findings = findIssues(pages).slice(0, 5);
+    if (findings.length === 0) {
+      ctx.log(
+        proposals.length > 0
+          ? `seo_site: no page issues, ${proposals.length} site file(s) to write`
+          : "seo_site: no issues found this pass"
+      );
+      return proposals;
+    }
 
     for (const finding of findings) {
       let after = "";
@@ -348,6 +429,7 @@ export const seoSiteAgent: AgentDefinition = {
         before: String(action.payload["before"] ?? ""),
         after: String(action.payload["after"] ?? ""),
         approvalRef: action.approvedContentRef,
+        ...(action.payload["mode"] === "generated" ? { mode: "generated" as const } : {}),
       },
       ctx.db,
       ctx.env

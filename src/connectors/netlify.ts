@@ -25,6 +25,7 @@ import { STATE_KEYS } from "../core/state.js";
 import type { Supabase } from "../lib/supabase.js";
 import type { SiteEditRequest, SiteWriteResult, SiteWriter } from "./site.js";
 import { checkStoredSource, type IntegrityFinding } from "../core/site-integrity.js";
+import { GENERATED_PATHS } from "../core/site-files.js";
 
 const API = "https://api.netlify.com/api/v1";
 
@@ -166,6 +167,47 @@ function applyEdit(source: SiteSource, edit: SiteEditRequest): SiteSource {
 }
 
 /**
+ * Write a machine-generated file into the source, whole.
+ *
+ * The empty-anchor incident is the reason this is a separate function with its
+ * own refusals rather than a flag on applyEdit. What made that bug possible was
+ * a whole-file-replacement branch reachable from an ordinary edit to an
+ * ordinary page: `before: ""` fell through it and a 22kB page went live as the
+ * 134-byte description meant to be inserted into it. Every guard here exists to
+ * make that same shape unreachable from this direction:
+ *
+ * - the path must be on GENERATED_PATHS, a two-entry allowlist, so no page is
+ *   addressable through it however the caller is confused;
+ * - a .html path is refused outright, belt and braces, because a page is never
+ *   generated and the allowlist could one day be edited carelessly;
+ * - empty content is refused, since "regenerate" producing nothing is a bug in
+ *   the builder rather than a file that should be published empty.
+ *
+ * What it deliberately does NOT do is require the file to already exist. The
+ * first run is the one that creates it, and that is the whole point.
+ */
+function putGeneratedFile(source: SiteSource, edit: SiteEditRequest): SiteSource {
+  if (!(GENERATED_PATHS as readonly string[]).includes(edit.path)) {
+    throw new Error(
+      `${edit.path} is not a generated file. Only ${GENERATED_PATHS.join(" and ")} may be written whole; ` +
+        `everything else is a page and must name the text it replaces.`
+    );
+  }
+  if (/\.html?$/i.test(edit.path)) {
+    throw new Error(`${edit.path} is a page. A page is never written whole.`);
+  }
+  if (!edit.after.trim()) {
+    throw new Error(
+      `Generated content for ${edit.path} is empty. Publishing an empty ${edit.path} would be worse than leaving it absent.`
+    );
+  }
+  if (source[edit.path] === edit.after) {
+    throw new Error(`${edit.path} is already exactly this, so nothing was published.`);
+  }
+  return { ...source, [edit.path]: edit.after };
+}
+
+/**
  * Everything critically wrong with a whole source map, as one line per path.
  *
  * applyEdit guards the substitution it is given. It cannot guard the pages it
@@ -243,11 +285,14 @@ export const netlifySiteWriter: SiteWriter = {
         );
       }
 
-      const updated = applyEdit(source, edit);
+      const updated =
+        edit.mode === "generated" ? putGeneratedFile(source, edit) : applyEdit(source, edit);
 
       // And nothing is published from a source this edit broke. applyEdit's own
       // guards are about the substitution; this is about the document that
-      // comes out of it.
+      // comes out of it. A generated file is never HTML, so checkStoredSource
+      // skips it — the check still matters here because the deploy publishes
+      // every page beside it.
       const newDamage = criticalFindings(updated);
       if (newDamage.length > 0) {
         throw new Error(
