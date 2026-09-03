@@ -758,6 +758,18 @@ outright.
   on which findings came back — the latter cannot tell "carried on" apart from
   "stopped at the first failure".
 
+  **There was a second one, found on 2026-09-03 before it could bite.**
+  `ops-health.ts` fetched `OPS_PIPELINE_STATUS_URL` with no signal at all, and
+  that URL belongs to a system this project deliberately does not control — the
+  worst kind to wait on forever. It had never hung only because the endpoint had
+  never existed; connecting it is what would have armed it. Now 10s, with the
+  timeout named in the report rather than folded into a generic failure.
+  `test/ops-health.test.ts` asserts a signal is **passed**, since a stub always
+  answers instantly and no assertion about the findings can tell a bounded call
+  from an unbounded one. Worth grepping for the rest: `x.ts`, `facebook.ts` and
+  `netlify.ts` still have none, and they are connectors rather than agents, so
+  they run inside an agent's budget rather than owning one.
+
 - **A queue with no idempotency, fed by an hourly agent, fills up.** The
   LinkedIn partner queue reached 132 items, 131 of them the same post, and the
   partner would have published every copy. One early return caused it: handing
@@ -940,7 +952,7 @@ Two tells, and neither is the md5:
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
-  board stopped calling things failures; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  board stopped calling things failures, 564 before Ops-Health was wired up; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1003,7 +1015,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 564 tests
+npx vitest run            # 573 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 

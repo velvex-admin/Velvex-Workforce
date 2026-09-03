@@ -30,6 +30,21 @@ export interface OpsStatus {
 const ERROR_RATE_WARNING = 0.05;
 const STUCK_CASE_WARNING = 3;
 
+/**
+ * How long to wait for the operations pipeline before giving up on it.
+ *
+ * This agent runs hourly, near the end of the hourly tick, and reaches a URL on
+ * a system this project deliberately holds no control over. A `fetch` with no
+ * signal is not a slow call, it is a call that may never return — and the agent
+ * that hangs is the one that would have reported the problem. Site-Integrity
+ * lost two consecutive ticks to exactly this shape on 2026-08-29, leaving a
+ * `running` status row and no error anywhere.
+ *
+ * Ten seconds is the same budget Site-Integrity gives each page. A status
+ * endpoint that cannot answer in ten seconds is itself the news.
+ */
+const STATUS_FETCH_TIMEOUT_MS = 10_000;
+
 export const opsHealthAgent: AgentDefinition = {
   id: "ops_health",
   name: "Ops-Health Agent",
@@ -115,6 +130,7 @@ export const opsHealthAgent: AgentDefinition = {
         headers: ctx.env.OPS_PIPELINE_STATUS_TOKEN
           ? { Authorization: `Bearer ${ctx.env.OPS_PIPELINE_STATUS_TOKEN}` }
           : {},
+        signal: AbortSignal.timeout(STATUS_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) {
         return [
@@ -126,13 +142,43 @@ export const opsHealthAgent: AgentDefinition = {
           },
         ];
       }
-      status = (await res.json()) as OpsStatus;
+      // Parsed separately from the request, because "the host never answered"
+      // and "the host answered with a login page" send you looking in entirely
+      // different places, and on a first connection the second is likelier.
+      // Reporting both as "could not reach" costs an afternoon.
+      const body = await res.text();
+      try {
+        status = JSON.parse(body) as OpsStatus;
+      } catch {
+        return [
+          {
+            type: "observation",
+            summary: "Operations status endpoint answered, but not with JSON",
+            payload: {
+              httpStatus: res.status,
+              contentType: res.headers.get("content-type"),
+              // Enough to recognise a login page or an error page, not enough
+              // to paste somebody's whole dashboard into the memory table.
+              bodyStarts: body.slice(0, 200),
+              active: true,
+            },
+            dedupeKey: `ops:not-json:${ctx.now.toISOString().slice(0, 13)}`,
+          },
+        ];
+      }
     } catch (err) {
+      const timedOut = err instanceof Error && err.name === "TimeoutError";
       return [
         {
           type: "observation",
-          summary: "Could not reach the operations status endpoint",
-          payload: { error: err instanceof Error ? err.message : String(err) },
+          summary: timedOut
+            ? `Operations status endpoint did not answer within ${STATUS_FETCH_TIMEOUT_MS / 1000}s`
+            : "Could not reach the operations status endpoint",
+          payload: {
+            error: err instanceof Error ? err.message : String(err),
+            timedOut,
+            active: true,
+          },
           dedupeKey: `ops:unreachable:${ctx.now.toISOString().slice(0, 13)}`,
         },
       ];
