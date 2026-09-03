@@ -15,7 +15,7 @@
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { FINANCE_GUARDRAIL } from "../../core/config.js";
-import { state, type FinanceSnapshot } from "../../core/state.js";
+import { STATE_KEYS, state, type FinanceSnapshot } from "../../core/state.js";
 
 import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
@@ -60,6 +60,34 @@ export const financeWatchAgent: AgentDefinition = {
   cadence: "daily",
   observeOnly: true,
   approvedChannels: ["internal"],
+
+  // "Failed" and "paused" were both the wrong word for this agent. It never
+  // broke: it ran, found no snapshot, and said so. What it needs is something
+  // to watch, which is a setup step and not a repair, and the difference
+  // matters because one of them is on a list you work through and the other is
+  // on a list you worry about.
+  requires: [
+    {
+      id: "finance_watch.finance_snapshot",
+      summary: "Revenue, cost and client figures to watch. Nothing pushes them yet.",
+      // The guardrail cannot fire on data that is not there, but the agent
+      // running is what says so out loud once a day.
+      blocking: false,
+      feed: {
+        key: STATE_KEYS.finance,
+        describe: "there is no margin or cost-per-client ratio to guard",
+      },
+      steps: [
+        "POST the figures to /x/<APP_PATH_SECRET>/api/state/finance.snapshot as { periodStart, periodEnd, revenueMinor, directCostMinor, toolingCostMinor?, paypalFeesMinor?, clientsServed }.",
+        "All amounts are in minor units: 14900 is $149.00. A figure in dollars reads as a hundredth of itself and the guardrail silently never fires.",
+        "PayPal is a live Phase 0 integration and is deliberately not re-connected here, so this is a push from that side or a figure you enter yourself.",
+        "Push it whenever a period closes. The guardrail is a ratio, so one honest monthly snapshot is worth more than a daily estimate.",
+      ],
+      note:
+        "The thresholds it checks against are already set in FINANCE_GUARDRAIL in src/core/config.ts. " +
+        "Nothing else about this agent is waiting on anything.",
+    },
+  ],
 
   routineRules: [
     {

@@ -15,6 +15,7 @@
 import { describe, expect, it } from "vitest";
 import { AGENTS } from "../src/agents/registry.js";
 import { isBlocked, runAgent, unmetRequirements, type AgentDefinition } from "../src/core/agent.js";
+import { STATE_KEYS } from "../src/core/state.js";
 import dashboard from "../src/ui/dashboard.ts?raw";
 import api from "../src/routes/api.ts?raw";
 import { fixedJudge } from "./helpers.js";
@@ -187,8 +188,43 @@ describe("the agents that actually have requirements today", () => {
   });
 
   it("leaves every other agent unencumbered", () => {
+    // Six now, not four. finance_watch and lead_pipeline joined on 2026-09-03,
+    // and they are a different KIND of waiting: the first four are waiting on a
+    // credential or a permission, these two are fully configured and waiting on
+    // data nobody pushes. Both belong here, because the owner's question is the
+    // same either way — "why is this agent not doing anything" — and the answer
+    // is a setup step in both cases rather than a repair.
     const withReqs = AGENTS.filter((a) => (a.requires ?? []).length > 0).map((a) => a.id).sort();
-    expect(withReqs).toEqual(["facebook", "linkedin", "ops_health", "social_engagement"]);
+    expect(withReqs).toEqual([
+      "facebook",
+      "finance_watch",
+      "lead_pipeline",
+      "linkedin",
+      "ops_health",
+      "social_engagement",
+    ]);
+  });
+
+  it("declares a feed only where the agent really reads that key", () => {
+    // A feed is resolved by reading the key it names. Naming a key nothing
+    // writes, or misspelling one, produces a permanent "needs setup" badge that
+    // no amount of correct wiring can clear — the failure mode this whole
+    // mechanism exists to avoid, reintroduced one level up.
+    const declared = AGENTS.flatMap((a) =>
+      (a.requires ?? []).flatMap((r) => (r.feed ? [[a.id, r.feed.key] as const] : []))
+    );
+    expect(declared).toEqual([
+      ["lead_pipeline", STATE_KEYS.pipeline],
+      ["finance_watch", STATE_KEYS.finance],
+    ]);
+
+    // A feed requirement must never be blocking: the agent running is what
+    // files the "no data" report that makes the gap visible in the first place.
+    for (const a of AGENTS) {
+      for (const r of a.requires ?? []) {
+        if (r.feed) expect(r.blocking, `${a.id}/${r.id} blocks on a data feed`).toBe(false);
+      }
+    }
   });
 });
 
@@ -196,7 +232,13 @@ describe("it reaches the dashboard", () => {
   it("is served on /api/status per agent, not per run", () => {
     // Per run would vanish the moment a degraded agent had a clean tick, which
     // is exactly when the reminder is easiest to lose.
-    expect(api).toContain("unmetRequirements(agent, env)");
+    //
+    // The route resolves feeds as well as environment now, which needs the
+    // database — so this asserts the batched resolver rather than the env-only
+    // call. The batching is the point: one read for the whole roster, on a
+    // route somebody asked for, never a read per agent on a cron tick.
+    expect(api).toContain("resolveRequirements(AGENTS, env,");
+    expect(api).not.toContain("unmetRequirements(agent, env)");
   });
 
   it("renders a section naming what is needed", () => {

@@ -865,6 +865,50 @@ outright.
   reading red, which costs more than having no board.
 
 
+- **A requirement can be a missing FEED, not a missing credential, and three
+  agents were sitting in that state with no way to say so.** `finance_watch`,
+  `lead_pipeline` and Ops-Health's Phase 0 half are all fully built and fully
+  configured. What they lack is data: a snapshot pushed to `finance.snapshot`,
+  `sales.pipeline`, `ops.pipeline_status`. Every tick they ran, found nothing,
+  filed an honest "no pipeline data to track" observation, and looked on the
+  board exactly like an agent working fine — until one of them also carried a
+  stale `failed` row from a lost terminal write, at which point it looked like
+  an agent on fire. Neither reading was true.
+
+  `AgentRequirement.feed` names the memory key. `check(env)` deliberately
+  **cannot** see the database — it runs before `propose()` for every agent on
+  every tick, and a read there is the subrequest budget that has already killed
+  two agents in this system — so a feed is resolved only where it is displayed:
+  `resolveRequirements()` collects every declared key across the whole roster
+  and reads them in **one** call, from `/api/status`, on a request somebody
+  made. `check` is now optional, and a feed requirement is never `blocking`,
+  because the agent running is what files the "no data" report that makes the
+  gap visible in the first place.
+
+  Two judgements worth keeping. A snapshot that arrives carrying **zero
+  prospects** counts as connected, not missing: "nothing is wired up" and
+  "wired up, nothing in it yet" are different sentences and only the first is a
+  setup step. And a **failed read falls back to the environment-only answer**
+  rather than painting "needs setup" across fifteen agents — a database briefly
+  unreachable is not the same fact as an agent nobody connected, and a board
+  that confuses the two is back to crying wolf.
+
+- **A site rewrite can change the shape of every internal link at once, and the
+  inventory matches links by string.** The old build linked `faq.html`; the
+  build deployed on 2026-09-03 links `/faq`. The source is keyed `/faq.html`
+  either way, so a membership test against the normalised href matches nothing
+  the moment the source is re-seeded from the new folder — and **every page
+  becomes an orphan**, on a site whose navigation links all three of them, in
+  view, on every page. The SEO agent would then propose an internal-links fix a
+  day for a problem the owner can see is not there, which is how an agent
+  teaches its owner to stop reading its findings.
+
+  This is the second time this exact mismatch has bitten; the first is recorded
+  in the header of `src/core/site-inventory.ts`, when the inventory was fetched
+  from the live site instead of derived from the source. `resolveToPage()` now
+  tries the href, then `+ ".html"`, then `/index.html` under it. Caught before
+  the re-seed rather than after, which is the only reason it costs nothing.
+
 ## 10a. The site, and why we hold its source
 
 The site is a Netlify **file deploy** — no repo, no build command — so the SEO
@@ -952,7 +996,7 @@ Two tells, and neither is the md5:
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
-  board stopped calling things failures, 564 before Ops-Health was wired up; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1015,7 +1059,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 573 tests
+npx vitest run            # 584 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1734,6 +1778,83 @@ is fixed in the deployed tree, and it is **weekly**, so its next turn is Monday
 07 September 09:00 UTC. `POST /api/run/growth_strategy` clears it sooner at the
 price of one Opus run.
 
+### OPEN — the site was redeployed by hand and `site.source` is behind it
+
+Measured 2026-09-03 against the live site. **The owner deployed a new build and
+our stored copy is now the old one.** Both halves of that drifted:
+
+| | `site.source` (ours) | live |
+|---|---|---|
+| `/index.html` | 26,614 bytes | ~26,948 |
+| meta description on the home page | **present** | **absent** |
+| internal links | `faq.html` | `/faq` |
+| `/faq.html` | 8,396 | ~8,832 |
+| `/proof-of-concept.html` | 22,184 | ~23,186 |
+
+So the new build **dropped the two meta descriptions the SEO agent inserted on
+29 August**, and the nav was rewritten extensionless. The navigation itself is
+intact — a first pass here read `href="..."` only and missed `href='/faq'` in
+single quotes, and briefly concluded the nav had been deleted. It has not.
+
+**The hazard is the deploy path, not the drift.** A digest deploy publishes the
+whole source map, not the page being edited (section 10). So the next time the
+SEO agent makes any edit at all, it deploys our five stored files and the
+owner's new build is gone. Nothing has fired yet only because the agent has had
+nothing to do.
+
+Site-Integrity will not auto-restore over this — the rule is damage, never
+difference, and a few hundred bytes is a difference — but it is promoting a
+**stale copy** as `site.source.last_good` on every clean pass, so the safety net
+currently restores to a site that has already been replaced.
+
+**The fix is the owner's, and it is one command:**
+
+```
+node scripts/seed-site-source.mjs <the folder they dragged into Netlify> <worker-base>
+```
+
+Re-seed first, then let the agent run. The extensionless-link fix in
+`site-inventory.ts` (section 10) has to be deployed **before** the re-seed, or
+the new hrefs make all three pages read as orphans.
+
+### OPEN — the SEO agent has run out of things it knows how to look for
+
+The owner's read is right and the cause is structural: `findIssues()` in
+`seo-site.ts` looks for exactly **three** things — a missing or wrong-length
+meta description, a missing alt attribute, and a page nothing links to. On a
+five-file site those were fixed on 29 August, so every run since has correctly
+found nothing.
+
+Their proposed fix — give it the memory bank the X agent has — is the one thing
+that will not work, and section 12c already argues why: that layer learns from
+**owner rulings**, and SEO's edits classify routine and auto-apply, so nobody
+ever rules on anything. There is no signal to learn from. Section 12c's own
+conclusion for this agent is that its real feedback is `applyEdit()`'s refusal
+reasons, which is a *procedural* layer, not a semantic one.
+
+**And none of it addresses what the owner actually asked for**, which is being
+findable. Measured on the live site the same day:
+
+- `robots.txt` — **404**
+- `sitemap.xml` — **404**
+- no `<meta name="description">` on the home page
+- no canonical, no JSON-LD, no Organization or Service structured data
+- `<title>Velvex — System Evaluation</title>` on a name that collides with
+  several existing companies
+- the `<h1>` is the slogan, carrying no term anybody searches
+
+Meta descriptions and alt text do not get a site indexed; they change how a
+result reads once it already ranks. The gap between "the SEO agent has nothing
+to do" and "I search Velvex and my site does not come up" is entirely made of
+the list above, and every item on it is deterministic — no model needed.
+
+Building it means letting the agent **create files** (`/sitemap.xml`,
+`/robots.txt`), which `applyEdit()` deliberately cannot do: it edits pages that
+exist, and its refusal to invent one is the guard that stopped the empty-anchor
+incident from being worse. So it needs a new action kind with its own autonomy
+line, and that is the owner's decision rather than a fix to slip in. Proposed
+and awaiting their word.
+
 ### Six agents are paused, and two of those pauses cost real function
 
 Read live from `GET /api/schedules`, 2026-09-03 00:38 UTC. Overrides are the
@@ -1857,7 +1978,9 @@ reading before it is trusted.
   the first place is still not known, and both agents are paused, so neither can
   produce a fresh row to study. The stored rows still read `failed` — nothing
   rewrites history — but the dashboard no longer renders them red, because both
-  agents are paused.
+  agents are paused. `finance_watch` now also carries a **needs-setup** badge
+  naming the snapshot it is waiting for, which outranks both in the node tag, so
+  un-pausing it will not put a red dot back.
 - Historical site snapshots are still in `memory` and are the owner's to keep or
   drop: `site.source.pre-pricing-fix` (102KB) and `site.source.wrecked-20260822`
   (47KB, a copy of the broken site kept as evidence). `site.source.backup` was
@@ -1893,6 +2016,14 @@ Three states, and they are different:
 | **failed** | it ran and something went wrong |
 | **paused** | somebody chose to stop it |
 | **blocked** | it is waiting on the outside world, expectedly, and something specific would end that |
+| **needs setup** | it is fully built and configured, and has nothing to work on |
+
+The fourth was added on 2026-09-03 at the owner's request, and the sentence
+that earned it is theirs: *"that does not mean we should keep it at failed and
+paused at the same time; rather, something like NEEDS SET-UP for me to keep in
+mind that it needs something to work on, not something to fix."* The distinction
+is which list the agent belongs on — one you work through, or one you worry
+about. `finance_watch` had been on the wrong one since 27 August.
 
 `blocking: true` holds the agent back entirely: it does not run, cannot spend a
 token, and writes `blockedBy` to the status board. `blocking: false` means the
@@ -1914,6 +2045,8 @@ gets a dashed amber ring rather than a red one.
 | `facebook` | **yes** | There is no Facebook page. Full strategist and connector are built. |
 | `social_engagement` | no | Read access on any channel. X returns 402 on the free tier; LinkedIn comments need `r_organization_social` from the same review above. |
 | `ops_health` | no | A read-only status URL from the Phase 0 pipeline. It watches this system's own agents regardless, which is the half that matters. |
+| `finance_watch` | no | Revenue, cost and client figures pushed to `finance.snapshot`. The guardrail arithmetic and its thresholds are already written; it has nothing to divide. |
+| `lead_pipeline` | no | A prospect snapshot pushed to `sales.pipeline`. Same shape: the agent is finished, the feed is the missing half. |
 
 `X_READ_ENABLED` was added to the environment for the day the paid tier is
 bought. It is a purchase, not a setup step, so it needs a switch.

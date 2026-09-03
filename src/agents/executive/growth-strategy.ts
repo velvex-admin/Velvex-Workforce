@@ -80,7 +80,10 @@ export const growthStrategyAgent: AgentDefinition = {
       )
       .catch(() => null);
 
-    const window = [...marketing, ...sales].filter((row) => (row.created_at ?? "") >= since);
+    const inWindow = (row: { created_at?: string | null }) => (row.created_at ?? "") >= since;
+    const marketingWindow = marketing.filter(inWindow);
+    const salesWindow = sales.filter(inWindow);
+    const window = [...marketingWindow, ...salesWindow];
 
     if (window.length === 0) {
       return [
@@ -104,10 +107,34 @@ export const growthStrategyAgent: AgentDefinition = {
         `Positioning gaps it named:\n${(intel.gaps ?? []).map((gap) => `- ${gap}`).join("\n") || "- (none)"}`
       : "(no competitive intelligence brief has been filed yet)";
 
+    // What this read CANNOT see, said out loud.
+    //
+    // The window is never empty in practice — fifteen agents file reports and
+    // most of them are about their own activity — so counting entries answers
+    // "did anything happen" and not "is there anything to learn from". This
+    // agent's whole premise is reading marketing and sales together, and with
+    // sales empty it is reading one department while being told it is reading
+    // two. A strategist handed only activity logs will find a pattern in them,
+    // because that is what it is for; naming the gap is what lets it decline.
+    const blindSpots: string[] = [];
+    if (salesWindow.length === 0) {
+      blindSpots.push(
+        "There are no sales or pipeline reports at all in this window, so nothing below is evidence about conversion, " +
+          "lead quality or pipeline movement. Do not infer any of those. This is marketing activity read on its own."
+      );
+    }
+    blindSpots.push(
+      "No audience response data exists anywhere in this system yet: the X read endpoints are not on a paid tier and " +
+        "LinkedIn analytics need an API review that has not happened. A report saying a post was published is not " +
+        "evidence that it was read. Treat published counts as effort, never as performance."
+    );
+
     const analysis = await ctx.claude.complete({
       system: SYSTEM,
       user:
-        `Marketing and sales activity, last 14 days (${window.length} entries):\n${activity}\n\n` +
+        `Marketing and sales activity, last 14 days (${window.length} entries: ` +
+        `${marketingWindow.length} marketing, ${salesWindow.length} sales):\n${activity}\n\n` +
+        `What this read cannot see:\n${blindSpots.map((line) => `- ${line}`).join("\n")}\n\n` +
         `Standing notes and figures:\n${notes || "(none)"}\n\n` +
         `Category read:\n${category}`,
       model: MODEL,
@@ -117,7 +144,13 @@ export const growthStrategyAgent: AgentDefinition = {
       // this is Opus reading fourteen days of activity and writing a strategy
       // memo. max_tokens is a ceiling rather than a spend, so raising it costs
       // nothing unless the tokens are generated.
-      maxTokens: 16000,
+      //
+      // 16000 was the repair for that failure and was never proven, because
+      // this agent is WEEKLY and has not had a turn since. That is the argument
+      // for the larger number rather than against it: one truncation costs a
+      // whole week, the only other pass in this system running at effort "max"
+      // is budgeted at 32000, and the untaken half of a ceiling is free.
+      maxTokens: 32000,
     });
 
     return [
@@ -127,6 +160,8 @@ export const growthStrategyAgent: AgentDefinition = {
         payload: {
           analysis: analysis.text,
           reportsConsidered: window.length,
+          marketingReports: marketingWindow.length,
+          salesReports: salesWindow.length,
           windowDays: 14,
           intelBriefDate: intel?.briefDate ?? null,
         },

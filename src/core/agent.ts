@@ -64,7 +64,9 @@ export function unmetRequirements(
   for (const requirement of agent.requires ?? []) {
     let reason: string | null;
     try {
-      reason = requirement.check(env);
+      // A feed-only requirement has nothing to say about the environment. It
+      // is resolved against the database by resolveRequirements() instead.
+      reason = requirement.check ? requirement.check(env) : null;
     } catch (err) {
       // A check that throws is itself a blocker, and a silent one otherwise.
       reason = `requirement check failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -77,6 +79,76 @@ export function unmetRequirements(
 /** Whether anything unmet is severe enough to hold the agent back entirely. */
 export function isBlocked(agent: Pick<AgentDefinition, "requires">, env: Env): boolean {
   return unmetRequirements(agent, env).some((entry) => entry.requirement.blocking);
+}
+
+/**
+ * Nothing has arrived under this key yet.
+ *
+ * Absent, null, an empty array, an empty object or an empty string all mean the
+ * same thing to the agent waiting on it: there is nothing to work on. Note what
+ * this deliberately does NOT treat as empty — a snapshot that arrived carrying
+ * zero prospects. The feed is connected at that point; the badge says "nothing
+ * is wired up", not "no prospects yet", and those are different sentences.
+ */
+function feedIsEmpty(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "string") return value.trim() === "";
+  if (typeof value === "object") return Object.keys(value as object).length === 0;
+  return false;
+}
+
+/**
+ * Every agent's unmet requirements, with feed requirements resolved against the
+ * database in ONE read for the whole roster.
+ *
+ * This is the display path, not the run path. `unmetRequirements()` stays
+ * env-only and stays on every tick; this costs a single extra subrequest and is
+ * called from /api/status, which somebody asked for.
+ *
+ * A failed read falls back to the env-only answer rather than inventing a
+ * "needs setup" badge across the board. A database that is briefly unreachable
+ * is not the same fact as an agent nobody has connected, and painting the
+ * second onto the first is how a board starts crying wolf.
+ */
+export async function resolveRequirements(
+  agents: ReadonlyArray<Pick<AgentDefinition, "id" | "requires">>,
+  env: Env,
+  db: Supabase
+): Promise<Map<string, Array<{ requirement: AgentRequirement; reason: string }>>> {
+  const resolved = new Map<string, Array<{ requirement: AgentRequirement; reason: string }>>();
+  for (const agent of agents) resolved.set(agent.id, unmetRequirements(agent, env));
+
+  const keys = [
+    ...new Set(
+      agents.flatMap((agent) =>
+        (agent.requires ?? []).flatMap((requirement) =>
+          requirement.feed ? [requirement.feed.key] : []
+        )
+      )
+    ),
+  ];
+  if (keys.length === 0) return resolved;
+
+  const feeds = await state.readMany(db, keys).catch(() => null);
+  if (!feeds) return resolved;
+
+  for (const agent of agents) {
+    const unmet = resolved.get(agent.id) ?? [];
+    for (const requirement of agent.requires ?? []) {
+      if (!requirement.feed) continue;
+      // An env check that already failed has said the more specific thing.
+      if (unmet.some((entry) => entry.requirement.id === requirement.id)) continue;
+      if (!feedIsEmpty(feeds.get(requirement.feed.key))) continue;
+      unmet.push({
+        requirement,
+        reason: `Nothing has been pushed to ${requirement.feed.key} yet, so ${requirement.feed.describe}.`,
+      });
+    }
+    resolved.set(agent.id, unmet);
+  }
+
+  return resolved;
 }
 
 export interface AgentRequirement {
@@ -93,8 +165,30 @@ export interface AgentRequirement {
   steps: string[];
   /** Anything that makes the wait expected rather than suspicious. */
   note?: string;
-  /** Met? Return null when satisfied, or a short reason when not. */
-  check: (env: Env) => string | null;
+  /**
+   * Met, as far as the environment can tell? Return null when satisfied, or a
+   * short reason when not.
+   *
+   * Optional, because not everything an agent waits for is a variable. An
+   * agent can be fully configured and still have nothing to work on.
+   */
+  check?: (env: Env) => string | null;
+  /**
+   * A data feed this requirement waits on, named by the memory key it arrives
+   * under.
+   *
+   * `check` deliberately cannot see the database: it runs before propose() on
+   * every tick for every agent, and a read there would spend the subrequest
+   * budget that has already killed two agents in this system. A feed is
+   * therefore declared here and resolved only where it is displayed, in one
+   * batched read on a route the owner asked for.
+   *
+   * A feed requirement is never blocking. An agent waiting on data should
+   * still run and say so: "no pipeline data to track" is the report that tells
+   * you the wiring is the missing half, and holding the agent back would take
+   * that sentence away too.
+   */
+  feed?: { key: string; describe: string };
 }
 
 export interface AgentDefinition {

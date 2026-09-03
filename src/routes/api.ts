@@ -17,7 +17,7 @@ import {
   staleOverrides,
 } from "../agents/registry.js";
 import type { AgentRuntimeStatusMap, AgentScheduleOverride } from "../core/state.js";
-import { unmetRequirements } from "../core/agent.js";
+import { resolveRequirements } from "../core/agent.js";
 import { connectorStatuses } from "../connectors/registry.js";
 import { compactQueue } from "../connectors/linkedin.js";
 import { STATE_KEYS, state } from "../core/state.js";
@@ -207,6 +207,11 @@ export async function handleApi(
       }
     }
 
+    // One read for the whole roster, on a route somebody asked for. An agent
+    // waiting on a data feed cannot be detected from the environment: it is
+    // fully configured and simply has nothing to work on.
+    const requirements = await resolveRequirements(AGENTS, env, new Supabase(env));
+
     return json({
       environment: env.VX_ENV,
       modelTiers: resolveTiers(env),
@@ -228,7 +233,7 @@ export async function handleApi(
         // Unmet requirements travel with the agent rather than with its last run,
         // because a NON-blocking one still runs — and the whole point is that the
         // reason stays visible months later without anyone having to remember it.
-        requirements: unmetRequirements(agent, env).map((entry) => ({
+        requirements: (requirements.get(agent.id) ?? []).map((entry) => ({
           id: entry.requirement.id,
           summary: entry.requirement.summary,
           blocking: entry.requirement.blocking,

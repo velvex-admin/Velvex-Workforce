@@ -51,15 +51,32 @@ function images(html: string): Array<{ src: string; alt?: string }> {
  * "faq.html" while every lookup asked for "/faq.html", so every page counted
  * zero inbound links and the SEO agent called all three of them orphans.
  */
+function resolveToPage(href: string, paths: Set<string>): string | null {
+  if (!href || href.startsWith("#") || /^[a-z]+:/i.test(href)) return null;
+  const normalised = (href.startsWith("/") ? href : `/${href}`).split(/[?#]/)[0] ?? "";
+  if (normalised === "") return null;
+  if (paths.has(normalised)) return normalised;
+
+  // A site can link extensionlessly ("/faq") while the source is keyed by file
+  // name ("/faq.html"), because Netlify serves both. The site was rewritten
+  // that way on 2026-09-03 and every href on it changed shape at once, which
+  // would have made every page an orphan the moment the source was re-seeded:
+  // three invented "nothing links to this page" findings a day, on pages whose
+  // links are plainly visible in the navigation. An agent that reports things
+  // the owner can see are false is worse than one that reports nothing.
+  const candidates = normalised.endsWith("/")
+    ? [`${normalised}index.html`, `${normalised.slice(0, -1)}.html`]
+    : [`${normalised}.html`, `${normalised}/index.html`];
+  for (const candidate of candidates) {
+    if (paths.has(candidate)) return candidate;
+  }
+  return null;
+}
+
 function internalLinks(html: string, paths: Set<string>): string[] {
   return [...html.matchAll(/<a\b[^>]*href=["']([^"']+)["']/gi)]
-    .map((match) => match[1] ?? "")
-    .map((href) => {
-      if (!href || href.startsWith("#") || /^[a-z]+:/i.test(href)) return "";
-      const normalised = href.startsWith("/") ? href : `/${href}`;
-      return normalised.split(/[?#]/)[0] ?? "";
-    })
-    .filter((path) => path !== "" && paths.has(path));
+    .map((match) => resolveToPage(match[1] ?? "", paths))
+    .filter((path): path is string => path !== null);
 }
 
 /**
