@@ -365,7 +365,14 @@ describe("rows left behind by a run that never ended", () => {
     await runAgent(agentThatProposes([]), coordinator() as never, fakeContext({ db }));
 
     const row = board()["finance_watch"];
-    expect(row?.status).toBe("failed");
+    // "unknown", NOT "failed", and the difference is the whole point. A lost
+    // terminal write says nothing about whether the work succeeded — the run
+    // that left this row was proven to have completed, by a Chief-of-Staff row
+    // from the same runId that had finished beside it. Closing it as a failure
+    // put a red dot on the dashboard for a run that worked, and because a
+    // paused agent never runs again, that dot could never clear itself.
+    expect(row?.status).toBe("unknown");
+    expect(row?.status).not.toBe("failed");
     expect(row?.endedAt).toBeDefined();
     expect(row?.error).toContain("never recorded an ending");
   });

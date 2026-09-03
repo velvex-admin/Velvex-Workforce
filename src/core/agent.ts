@@ -306,12 +306,24 @@ function reconcileStale(board: AgentRuntimeStatusMap, runId: string, now: number
     if (!Number.isFinite(seen) || now - seen < IMPOSSIBLE_RUN_MS) continue;
     board[id] = {
       ...row,
-      status: "failed",
-      phase: "failed",
+      // NOT "failed". A lost ending is a fact about the status write, not about
+      // the work: the comment above records the proof, which is that
+      // marketing_analytics was closed this way beside a Chief-of-Staff row
+      // from the SAME runId that had finished. Marking it failed manufactures a
+      // red dot for a run that completed, and two of those sat on the dashboard
+      // for a week telling the owner something was broken when nothing was.
+      //
+      // A paused agent never runs again, so it can never correct the lie —
+      // which is how finance_watch read "failed" from 26 August onward.
+      //
+      // What is actually true is that we do not know, and the reports the run
+      // filed are the record of what it did.
+      status: "unknown",
+      phase: "unknown",
       endedAt: new Date(now).toISOString(),
       error:
         row.error ??
-        "This run stopped reporting and never recorded an ending. Closed by a later run.",
+        "This run never recorded an ending, so how it finished was not written down. Its reports are the record of what it actually did.",
     };
     closed += 1;
   }

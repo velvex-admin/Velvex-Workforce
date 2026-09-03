@@ -173,6 +173,11 @@ a{color:var(--blue);text-decoration:none}
 .status-tag.working{color:var(--amber)}
 .status-tag.failed{color:var(--red)}
 .status-tag.stalled{color:var(--slate)}
+/* "No ending" is not a failure and must not borrow its colour. The run's work
+   is in its reports; only the record of how it finished went missing. */
+.status-tag.unknown{color:var(--slate);opacity:.8}
+.node.unknown-status .dot{border-color:var(--slate);border-style:dashed}
+.node.unknown-status .dot::after{border-color:var(--slate);opacity:.3;animation:none}
 /* Blocked reads differently from failed on purpose: amber and steady, not red
    and alarming. The agent is fine; the world has not caught up with it yet. */
 .status-tag.blocked{color:var(--amber)}
@@ -734,7 +739,18 @@ function nodeCard(a) {
   const rt = RUNTIME[a.id];
   const stale = runIsStale(rt);
   const isWorking = rt && rt.status === 'running' && !stale;
-  const isFailed = rt && rt.status === 'failed';
+  // Somebody chose to stop a paused agent, so the last thing it did before that
+  // is history, not a live fault — and it can never clear the row itself,
+  // because it never runs again. finance_watch read "failed" from 26 August
+  // onward for exactly that reason. The panel still shows the last run in full;
+  // the dot answers "is something wrong right now", and here the answer is no.
+  // The cadence line under the dot already says "paused", so nothing is hidden.
+  const isFailed = rt && rt.status === 'failed' && !paused;
+  const isUnknown = rt && rt.status === 'unknown' && !paused;
+  // A failure is news while it is current. The identical red dot four days on
+  // says "on fire" about a run that was fixed in code and has simply not had
+  // its next scheduled turn yet, so the tag carries its age.
+  const failedAge = isFailed ? ago(rt.endedAt || rt.startedAt) : '';
   // An agent held back by something outside this system is not a failure and
   // must not read as one. A red dot meaning "LinkedIn wants a registered
   // company" teaches you to stop reading red dots.
@@ -747,6 +763,7 @@ function nodeCard(a) {
     (isWorking ? ' working' : '') +
     (stale ? ' stalled' : '') +
     (hardBlocked ? ' blocked' : '') +
+    (isUnknown && !hardBlocked ? ' unknown-status' : '') +
     (isFailed && !hardBlocked ? ' failed-status' : '');
   const initials = initialsOf(a.name);
   const statusTag = isWorking
@@ -758,8 +775,10 @@ function nodeCard(a) {
         : blockers.length
           ? '<div class="status-tag needs">needs setup</div>'
           : isFailed
-            ? '<div class="status-tag failed">failed</div>'
-            : '';
+            ? '<div class="status-tag failed">failed ' + esc(failedAge) + '</div>'
+            : isUnknown
+              ? '<div class="status-tag unknown">no ending</div>'
+              : '';
   const thought = isWorking && rt.latestThought
     ? '<div class="thought" title="' + esc(rt.latestThought) + '">' + esc(rt.latestThought) + '</div>'
     : stale
@@ -995,9 +1014,14 @@ async function openAgent(id) {
     : rt && rt.status === 'failed'
       ? \`<div class="now-thinking" style="border-color:rgba(193,102,107,.3);background:linear-gradient(135deg,rgba(193,102,107,.12),rgba(193,102,107,.03))">
            <div style="width:14px;height:14px;border-radius:50%;background:var(--red);opacity:.6;margin-top:3px;flex-shrink:0"></div>
-           <div class="text" style="color:var(--red)"><b>last run failed</b>\${esc(rt.error || rt.latestThought || 'no detail')}</div>
+           <div class="text" style="color:var(--red)"><b>last run failed\${rt.endedAt ? ', ' + esc(ago(rt.endedAt)) : ''}</b>\${esc(rt.error || rt.latestThought || 'no detail')}</div>
          </div>\`
-      : '';
+      : rt && rt.status === 'unknown'
+        ? \`<div class="now-thinking" style="border-color:rgba(107,114,128,.3)">
+             <div style="width:14px;height:14px;border-radius:50%;border:2px dashed var(--slate);margin-top:3px;flex-shrink:0"></div>
+             <div class="text" style="color:var(--text-dim)"><b>last run recorded no ending\${rt.endedAt ? ', ' + esc(ago(rt.endedAt)) : ''}</b>The status write that closes a run can be lost without the run itself failing, and when it is, nothing the agent owns can correct the row afterwards. What it actually did is in the activity below.</div>
+           </div>\`
+        : '';
 
   // What this agent needs to be operational.
   //

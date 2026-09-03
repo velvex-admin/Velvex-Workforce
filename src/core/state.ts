@@ -109,7 +109,16 @@ export function overrideIsStale(
  * "idle" once done, and "failed" if it errored.
  */
 export interface AgentRuntimeStatus {
-  status: "running" | "idle" | "failed" | "blocked";
+  /**
+   * What the board knows about this agent right now.
+   *
+   * "unknown" is not a shade of failure. It means the run never recorded an
+   * ending, so how it finished was never written down — which is a fact about
+   * the status write, not about the work. The `reports` table is the record of
+   * what an agent actually did; this map is only a live view of it, and when
+   * the two disagree the reports win.
+   */
+  status: "running" | "idle" | "failed" | "blocked" | "unknown";
   /**
    * Why this agent is not running, when it is waiting on the outside world.
    *
@@ -124,7 +133,7 @@ export interface AgentRuntimeStatus {
     steps: string[];
     note?: string;
   }>;
-  phase: "thinking" | "acting" | "reporting" | "idle" | "failed" | "blocked";
+  phase: "thinking" | "acting" | "reporting" | "idle" | "failed" | "blocked" | "unknown";
   startedAt?: string;
   endedAt?: string;
   runId?: string;

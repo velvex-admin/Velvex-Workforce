@@ -821,6 +821,38 @@ outright.
 
 ---
 
+- **The dashboard called three agents failed and none of them was.** Reported by
+  the owner on 2026-09-03: "most of the agents say that they failed". The
+  `reports` table held exactly three failures in the preceding six days —
+  growth_strategy on `max_tokens 4000`, seo_site on `max_tokens 400`, and
+  competitive_intel hitting its $1.25 cap by design — and the first two were
+  already fixed in code and deployed. Not one red dot matched a live fault.
+
+  Two separate causes, and the second is the one that hides:
+
+  `reconcileStale()` closed a lost row as **`failed`**, in the same function
+  whose own comment records the proof that the run had *completed* — a
+  Chief-of-Staff row from the same runId sitting finished beside it. A lost
+  terminal write is a fact about the status write, not about the work, so the
+  status is now **`unknown`** and says the reports are the record of what the
+  run did. Then: a **paused** agent never runs again, so it can never replace
+  its own row — `finance_watch` wore a red dot from 26 August onward for a run
+  nobody had any evidence went wrong. The node now suppresses `failed` when the
+  agent is paused (the cadence line already says "paused", so nothing is
+  hidden), and a genuine failure carries its **age** — "failed 4d ago" and
+  "failed" are different sentences, and only the first lets you tell a live fire
+  from a fixed bug waiting on next Monday's tick.
+
+  `test/dashboard-status.test.ts` executes the real `nodeCard` against the board
+  rows that were actually on the live system, rather than asserting a substring
+  appears somewhere in the page — a substring test passes happily on this bug.
+  All three assertions were verified to fail on the unfixed code.
+
+  The general rule: **what the dashboard calls wrong and what is actually wrong
+  have to be the same list.** A board that cries wolf teaches its owner to stop
+  reading red, which costs more than having no board.
+
+
 ## 10a. The site, and why we hold its source
 
 The site is a Netlify **file deploy** — no repo, no build command — so the SEO
@@ -907,8 +939,8 @@ Two tells, and neither is the md5:
 
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
-  deadlock was found, 478 before the LinkedIn page work; the current number is
-  in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  deadlock was found, 478 before the LinkedIn page work, 560 before the status
+  board stopped calling things failures; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -971,7 +1003,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 560 tests
+npx vitest run            # 564 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1604,7 +1636,7 @@ connector failure is not a judgement about an idea.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-08-31, 14:45 UTC**. Facts here about live
+the unfinished work, as of **2026-09-03, 00:45 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
@@ -1648,39 +1680,11 @@ say little about what gets rejected. That balances as more rulings land; it is
 not a fault in the layer, and `demote()` will drop either claim if the
 contradictions catch up with the support.
 
-### FIXED IN CODE, NOT YET DEPLOYED — the :30 cron was refused and Site-Integrity stopped running
+### CLOSED — the :30 cron is live and Site-Integrity is running
 
-The hourly split was right and the deploy of it half-failed, in the way that is
-hardest to see.
-
-`wrangler deploy` uploaded the script, then the API refused the sixth cron with
-`code: 10072` — **5 per account on Workers Free** — and, in wrangler's own words,
-"Successful trigger changes were not rolled back". So the new code went live
-against the old cron table: `0 * * * *` now excludes `site_integrity`, and the
-`30 * * * *` it was moved to was never created.
-
-Measured 2026-08-31 10:30 UTC from `runtime.agent_status`: the 10:00 tick ran
-`ops_health`, `x`, `facebook`, `linkedin` — and `site_integrity` last started at
-**2026-08-30T16:00**. Eighteen hours not running, auto-restore unarmed, nothing
-anywhere reporting a fault, because nothing invoked it.
-
-**The fix is a consolidation, since the ceiling is real.** `0 8 * * 1` was the
-line to give up: filtered to the intelligence batch, and intelligence is monthly,
-so it fired every Monday and ran nothing. Five lines again, with `30 * * * *` in
-and `0 8 * * 1` out, and the weekly tick now unfiltered.
-
-**After deploying, verify rather than assume:**
-
-1. No error after the `Deployed ... triggers` line.
-2. `30 * * * *` in the printed cron list, `0 8 * * 1` absent.
-3. Within the hour, `GET /api/state/runtime.agent_status` shows `site_integrity`
-   with a `startedAt` at :30 past.
-4. `GET /api/state/site.source.last_good` starts advancing again.
-
-Until it is deployed, **site_integrity is not running at all.** If the deploy has
-to wait, the one-line stopgap is to drop `exceptAgents: ["site_integrity"]` from
-the `0 * * * *` branch so it at least runs on the main tick, where it was dying
-visibly rather than not running invisibly.
+Deployed with the five-line table. Verified 2026-09-03 00:38 UTC from
+`runtime.agent_status`: `site_integrity` last started **2026-09-03T00:30** and
+`x` at **00:00**, so both hourly ticks are firing and the partition holds.
 
 ### BLOCKED, and recorded in the system — LinkedIn needs a registered company
 
@@ -1703,30 +1707,42 @@ Known and recorded in the requirement itself: `LINKEDIN_ORG_ID` is **127634091**
 and its client id/secret are NOT what the Worker needs — they are used once, by
 the owner, in the OAuth exchange that mints the access token.
 
-### Live schedule overrides, 2026-08-29 17:45 UTC
+### CLOSED — the red dots were the board, not the agents
 
-| Agent | Override | Why |
+Reported 2026-09-03: "most of the agents say that they failed". Measured the
+same hour: **three** failure reports in the preceding six days, all already
+fixed in code (growth_strategy `max_tokens 4000`, seo_site `max_tokens 400`) or
+working as designed (competitive_intel's $1.25 cap). Nothing was failing.
+
+Two causes, both fixed — `reconcileStale()` labelling a lost ending as `failed`,
+and a paused agent being unable to ever clear its own row. Full write-up as a
+trap in section 10. After the fix the only red dot left is `growth_strategy`,
+and it is telling the truth: it failed on 30 August on `max_tokens 4000`, that
+is fixed in the deployed tree, and it is **weekly**, so its next turn is Monday
+07 September 09:00 UTC. `POST /api/run/growth_strategy` clears it sooner at the
+price of one Opus run.
+
+### Six agents are paused, and two of those pauses cost real function
+
+Read live from `GET /api/schedules`, 2026-09-03 00:38 UTC. Overrides are the
+owner's and **must not be cleared on their behalf** — but what each one costs
+belongs on the record:
+
+| Agent | Paused | What the pause costs |
 |---|---|---|
-| `seo_site` | *(cleared 17:44)* | The watched run has been done. See the closed thread below. |
-| — | — | *All three fixes deployed 20:32 UTC, version f1140e90.* |
-| `competitive_intel` | *(cleared 17:44)* | The pause was overriding the monthly cadence. |
-| `site_integrity` | *(cleared earlier)* | Back on hourly, so auto-restore stays armed. |
-| `finance_watch` | **paused** | Set 2026-08-27. Reason not recorded. Ask before clearing. |
-| `x` | hourly | |
-| `chief_of_staff` | daily | |
-| `social_engagement` | weekly | Overrides an hourly cadence in code. Set 2026-08-21. |
+| `facebook` | 2026-08-31 | Nothing. There is no page, and it is `blocking` anyway. |
+| `social_engagement` | 2026-08-31 | Little. X read returns 402 on the free tier, so it has almost nothing to read. |
+| `linkedin` | 2026-08-31 | **Drafting, approval and learning — all of which work.** Only *delivery* is blocked on the company registration. Paused, the page's voice baseline is never used and no ruling is ever learned from, which is the layer the owner asked to switch on. |
+| `ops_health` | 2026-08-31 | **The watchdog.** Its missing Phase 0 status URL is non-blocking; it watches this system's own agents regardless, and that half was working — 81 `observed` reports in the window. Paused, nothing watches the agents. |
+| `finance_watch` | 2026-08-27 | Unknown. Reason never recorded. |
+| `marketing_analytics` | 2026-08-30 | Unknown. Reason never recorded. |
 
-A `paused` override excludes an agent from **every** tick, so it beats the
-cadence in the agent definition, and it still does — clearing somebody's pause
-on their behalf is worse than leaving it. What changed is that it is no longer
-silent. An override now records `builtInCadence`, the agent's cadence in code at
-the moment it was set; when the two have since diverged, `staleOverrides()` in
-`registry.ts` reports it, `GET /api/schedules` returns it under `stale`,
-`runDue` logs it every tick, and the agent's dashboard panel says so in amber.
+The four set on 2026-08-31 carry `builtInCadence`, so `staleOverrides()` can
+report them if the code's cadence later diverges. The two older ones cannot, and
+somebody has to say whether they are still wanted.
 
-The two remaining overrides both predate that field, so neither can be reported
-stale — not knowing is not evidence, and the code deliberately does not guess.
-Somebody has to say whether they are still wanted.
+`x` (hourly) and `chief_of_staff` (daily) also carry overrides; both match the
+cadence in code, so they change nothing.
 
 ### CLOSED — the SEO agent has completed a run
 
@@ -1824,7 +1840,12 @@ reading before it is trusted.
 
 - `finance_watch` and `marketing_analytics` both last ended with "this run
   stopped reporting and never recorded an ending. Closed by a later run."
-  `reconcileStale()` is doing its job; what left them that way is not yet known.
+  `reconcileStale()` was doing its job and then **mislabelling the result as a
+  failure**; that half is fixed (section 10). What lost the terminal write in
+  the first place is still not known, and both agents are paused, so neither can
+  produce a fresh row to study. The stored rows still read `failed` — nothing
+  rewrites history — but the dashboard no longer renders them red, because both
+  agents are paused.
 - Historical site snapshots are still in `memory` and are the owner's to keep or
   drop: `site.source.pre-pricing-fix` (102KB) and `site.source.wrecked-20260822`
   (47KB, a copy of the broken site kept as evidence). `site.source.backup` was
@@ -1913,6 +1934,13 @@ the wrong direction to be wrong when the output is "your credit lasts N days".
 The first test written for this passed on either formula, because its fixture
 spent on every day; `test/spend-ledger.test.ts` now includes a quiet-day case
 that tells them apart.
+
+**First measurement, three days on file (2026-08-31 to 09-02):** $0.3125 total,
+a $0.104 daily average, a $3.13 monthly projection, and 27 December against a $12
+balance. Top spenders: `x` $0.172, `competitive_intel` $0.076, `chief_of_staff`
+$0.065. Note the shape of it — five model-calling runs in three days — because
+six of the fifteen agents were paused for all of it. The projection is of a
+system running at less than half strength, and it will rise when they come back.
 
 **Sonnet 5 was priced wrong here for weeks.** `MODEL_CAPABILITIES` carried
 $3/$15 — Sonnet 4.6's rates — against Sonnet 5's actual $2/$10, overstating every
