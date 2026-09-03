@@ -53,9 +53,12 @@ LINKEDIN_INTEGRATION_ENABLED = "false"
 # agent, not a consequence of the transport.
 LINKEDIN_DIRECT_ENABLED = "false"
 
-# Ops-Health reads the operations pipeline read-only. Left unset on purpose:
-# no Phase 0 credentials are wired into this project.
-OPS_PIPELINE_MONITOR_ENABLED = "false"
+# Ops-Health reads the operations pipeline read-only. On, but inert until
+# OPS_PIPELINE_STATUS_URL is set as a secret: propose() requires BOTH, so
+# switching this on ahead of the endpoint changes nothing and saves a second
+# deploy on the day the URL exists. No Phase 0 credential ever enters this repo
+# — the pipeline offers a URL, this system does not reach into it.
+OPS_PIPELINE_MONITOR_ENABLED = "true"
 
 # Competitive Intelligence reads the open web. This is a spend switch, not a
 # credential: web search runs server side on the model call, so there is nothing
