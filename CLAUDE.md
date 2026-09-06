@@ -1930,16 +1930,22 @@ The stale restore point resolved itself: `site.source.last_good` promoted at
 2026-09-06T15:30Z, so the safety net now restores to the build that is actually
 published rather than to the pre-deploy one.
 
-**What is still open is the pause, not the source.** `seo_site` carries
-`note: "until site.source is re-seeded from v0.3"`, set 2026-09-03. That
-condition is now met. The override is the owner's to clear:
+**The pause stays, and its recorded reason is now the wrong one.** `seo_site`
+carries `note: "until site.source is re-seeded from v0.3"`, set 2026-09-03. That
+condition is met — and the pause is still correct, for a different reason the
+note does not mention: **Netlify is out of credits, so the site cannot be
+updated until they reset** (owner, 2026-09-06).
 
-```
-PUT /x/<APP_PATH_SECRET>/api/schedules/seo_site   {"cadence":"default"}
-```
+This is the trap in a note that names its own exit condition: the condition
+being met reads as permission to clear, and clearing it here would put an agent
+back on a daily cadence against a host that will refuse every deploy. Read the
+override's note as a *record*, never as the current reason, and ask.
 
-Until then the agent cannot re-add the two meta descriptions the new build
-dropped, which is the one piece of its 29 August work that did not survive.
+While it holds, the two meta descriptions the new build dropped stay dropped.
+That is the one piece of the agent's 29 August work that did not survive the
+hand-deploy, and it is a cosmetic loss rather than a functional one: `robots.txt`
+and `sitemap.xml`, which are what actually decide whether the site is found,
+shipped with the build and are live.
 
 **The original instructions, kept because they apply to the next hand-deploy:**
 
