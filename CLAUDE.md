@@ -934,6 +934,46 @@ outright.
   the only form a crawler ever sees. Both return 200 with no redirect, which is
   a duplicate the sitemap now resolves in one direction.
 
+- **Streaming quietly gave up the SDK's retries, and nothing said so.** Every
+  call here goes out streamed, for the 524 reason above. The SDK does retry on
+  its own, but only around the HTTP handshake — and an overload that lands once
+  the stream is open is not a failed handshake. It arrives as an error event
+  inside a **200** response, so the SDK has nothing left to retry and hands the
+  throw to the caller. Growth-Strategy lost its 2026-09-06 09:04 run to exactly
+  that: `{"type":"error","error":{"type":"overloaded_error","message":
+  "Overloaded"},"request_id":"req_011Cemut..."}`. A busy minute cost a **weekly**
+  agent its whole turn, which is the expensive part — a daily agent shrugs this
+  off, a weekly one waits seven days. `send()` in `src/lib/claude.ts` now
+  re-sends transient failures three times with backoff, and the two shapes are
+  matched separately because they arrive differently: a handshake failure
+  carries a `status`, a mid-stream one carries only the payload text.
+  **A 524 is deliberately excluded even though it is a 5xx**, because that one
+  arrives after the model did the work and billed for it, so a retry buys the
+  same answer twice at full price — which is why the list is explicit rather
+  than "any 5xx". `test/transient-retry.test.ts` asserts on the **number of
+  sends**, not on the answer: an answer alone cannot tell "retried twice and
+  succeeded" from "succeeded first time". Both halves were verified by breaking
+  the code each way, once retrying nothing and once retrying everything.
+
+  The general lesson, and it is the reusable one: **when you change how a
+  request is sent, check what the old way was quietly giving you.** Nothing
+  failed at the moment of that change. The cover simply stopped being there.
+
+- **Effort `max` needs its own floor, and 1500 is not it.** `token-budgets`
+  asks whether a model has room to think a little and then answer. Effort `max`
+  is not a little: the thinking is the entire reason for paying for that
+  setting, all of it is billed inside `max_tokens`, and all of it happens before
+  the first token of the answer. Growth-Strategy's `max_tokens: 4000` cleared
+  the 1500 floor by nearly three times and still died on 2026-08-30. The budget
+  is now 32000. What the floor could not do, the roster can:
+  `test/token-budgets.test.ts` **names every agent running at effort `max`** —
+  currently `growth_strategy` and nothing else — so a second one has to be sized
+  deliberately rather than inheriting a number that looked reasonable in place.
+  It asserts on the roster rather than pairing efforts with budgets by regex,
+  because the clever version would pass the day somebody moved a comment between
+  the two lines. Note there is **no sibling to copy from**: the intelligence
+  agent's 32000 budgets run at effort `high`, not `max`.
+
 ## 10a. The site, and why we hold its source
 
 The site is a Netlify **file deploy** — no repo, no build command — so the SEO
@@ -1084,7 +1124,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 598 tests
+npx vitest run            # 607 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1798,10 +1838,31 @@ working as designed (competitive_intel's $1.25 cap). Nothing was failing.
 Two causes, both fixed — `reconcileStale()` labelling a lost ending as `failed`,
 and a paused agent being unable to ever clear its own row. Full write-up as a
 trap in section 10. After the fix the only red dot left is `growth_strategy`,
-and it is telling the truth: it failed on 30 August on `max_tokens 4000`, that
-is fixed in the deployed tree, and it is **weekly**, so its next turn is Monday
-07 September 09:00 UTC. `POST /api/run/growth_strategy` clears it sooner at the
-price of one Opus run.
+and it is telling the truth.
+
+**Corrected 2026-09-06:** that dot is no longer the August budget failure. A
+manual run at **09:04 on 06 September** failed again, on a different cause —
+`overloaded_error`, arriving mid-stream on a 200 — and it is that newer row the
+board is showing. Both causes are now fixed:
+
+| When | Error | Cause | Fixed |
+|---|---|---|---|
+| 08-30 09:02 | `Ran out of output budget (max_tokens 4000)` | effort `max` sized for the answer | budget raised to 32000; roster guard in `token-budgets` |
+| 09-06 09:04 | `overloaded_error` on a 200, with a `request_id` | mid-stream overload the SDK cannot retry | `send()` retries transient failures |
+
+Both traps are in section 10. The agent is **weekly**, so its next scheduled
+turn is Monday 09:00 UTC; `POST /api/run/growth_strategy` clears the dot sooner
+at the price of one Opus run.
+
+Worth knowing: the failed run still reached the approvals queue, which is how it
+was noticed at all. The **pending approval timestamped 2026-09-06 09:04** is
+that failure notice rather than a recommendation, and can be dismissed.
+
+Every growth_strategy run on file is still a **manual** one — a unique `run_id`
+on a Friday, Saturday or Sunday. Since `89edb0c` fitted the cron table inside
+the account's five triggers, Monday 09:00 should be its first genuinely
+scheduled turn. If nothing appears that morning, the cron is still the problem,
+not the agent.
 
 ### OPEN — the site was redeployed by hand and `site.source` is behind it
 

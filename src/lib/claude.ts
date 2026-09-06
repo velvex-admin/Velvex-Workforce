@@ -103,6 +103,60 @@ export interface CompleteResult<T = string> {
 const MAX_CONTINUATIONS = 4;
 
 /**
+ * How many times a request is re-sent when the API says it is BUSY rather than
+ * that the request is wrong.
+ *
+ * The SDK already retries, but only around the HTTP handshake, and every call
+ * in this system is streamed on purpose (see the 524 note on `send()`). An
+ * overload that lands once the stream is open does not arrive as a failed
+ * handshake: it arrives as an error event inside a 200 response, so the SDK has
+ * nothing left to retry and hands it straight to the caller. The run then dies
+ * on a condition that had nothing to do with it. That is not hypothetical.
+ * Growth-Strategy failed on 2026-09-06 with
+ * `{"type":"error","error":{"type":"overloaded_error"...},"request_id":...}`,
+ * which is that mid-stream shape, and a weekly agent that loses its tick to a
+ * busy minute waits another week for the next one.
+ *
+ * So streaming, which was adopted to stop one failure, quietly gave up the
+ * cover for another. This puts it back.
+ */
+const MAX_TRANSIENT_RETRIES = 3;
+
+/** Waits before each re-send. Eleven seconds in total, worst case. */
+const RETRY_BACKOFF_MS = [1_000, 3_000, 7_000];
+
+/**
+ * Whether a failure says something about the API's mood or about our request.
+ *
+ * Only the first kind may be retried, and the list is explicit rather than
+ * "any 5xx" for two reasons. A 400 means the request itself is wrong, so
+ * re-sending it buys the same rejection three more times. And a **524 is
+ * deliberately excluded** even though it is a 5xx: that one arrives after the
+ * model has done the work and been paid for it, so a retry buys the same answer
+ * a second time at full price.
+ */
+export function isTransientApiFailure(err: unknown): boolean {
+  const status = (err as { status?: number } | null | undefined)?.status;
+  if (typeof status === "number") {
+    return status === 429 || status === 500 || status === 502 || status === 503 || status === 529;
+  }
+  // A dropped or refused connection never reached the model, so nothing was
+  // billed and re-sending is free of the double-charge worry above.
+  const name = err instanceof Error ? err.name : "";
+  if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
+
+  // Mid-stream, the condition arrives as the error payload rather than as a
+  // status, so match on what the payload actually says.
+  const message = err instanceof Error ? err.message : String(err);
+  return /overloaded_error|rate_limit_error|"type"\s*:\s*"api_error"/.test(message);
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
  * Thrown when a run has spent its allowance.
  *
  * This exists because of a real incident: a research pass with server tools
@@ -377,6 +431,50 @@ export class Claude {
     return this.tiers[tier];
   }
 
+  /**
+   * One request, re-sent while the failure is the API being busy.
+   *
+   * Streamed, always, and not so anyone can watch it arrive. A non-streaming
+   * request holds one connection open with nothing travelling on it until the
+   * entire answer is ready, and api.anthropic.com sits behind the same roughly
+   * hundred second edge timeout everything else in this system does. A research
+   * pass at effort high, carrying server-side search and a 32000 token budget,
+   * passes that comfortably. The connection was then cut with a 524 AFTER the
+   * model had done the work and billed for it, which is the shape of a failure
+   * that costs money and produces nothing. Streaming keeps bytes moving, so the
+   * connection never sits idle long enough to be reaped. finalMessage() returns
+   * the same complete Message the non-streaming call returned, so nothing
+   * downstream changes.
+   *
+   * The retry around it is the other half of that same decision: see
+   * MAX_TRANSIENT_RETRIES. A failed attempt returns no usage, so nothing is
+   * banked and a retry cannot move the spend ceiling.
+   */
+  private async send(
+    request: BuiltRequest,
+    messages: Anthropic.MessageParam[]
+  ): Promise<CurrentMessage> {
+    for (let retry = 0; ; retry += 1) {
+      try {
+        return (await this.client.messages
+          .stream({ ...request, messages } as unknown as Anthropic.MessageStreamParams)
+          .finalMessage()) as CurrentMessage;
+      } catch (err) {
+        if (retry >= MAX_TRANSIENT_RETRIES || !isTransientApiFailure(err)) throw err;
+        const wait = RETRY_BACKOFF_MS[Math.min(retry, RETRY_BACKOFF_MS.length - 1)] as number;
+        // Worth a line in the tail: a call that only succeeded on its third try
+        // is a different thing from one that succeeded, and the report the
+        // agent files cannot say so.
+        console.warn(
+          `vx03: ${request.model} was unavailable (${
+            err instanceof Error ? err.message.slice(0, 160) : String(err)
+          }); re-sending in ${wait}ms, attempt ${retry + 2} of ${MAX_TRANSIENT_RETRIES + 1}`
+        );
+        await sleep(wait);
+      }
+    }
+  }
+
   async complete<T = string>(args: CompleteArgs): Promise<CompleteResult<T>> {
     const model = args.model ?? this.fallbackModel;
     const capabilities = capabilitiesFor(model);
@@ -414,22 +512,8 @@ export class Claude {
 
       for (let attempt = 0; ; attempt += 1) {
         this.assertWithinBudget();
-        // Streamed, always, and not so anyone can watch it arrive.
-        //
-        // A non-streaming request holds one connection open with nothing
-        // travelling on it until the entire answer is ready, and
-        // api.anthropic.com sits behind the same roughly hundred second edge
-        // timeout everything else in this system does. A research pass at
-        // effort high, carrying server-side search and a 32000 token budget,
-        // passes that comfortably. The connection was then cut with a 524
-        // AFTER the model had done the work and billed for it, which is the
-        // shape of a failure that costs money and produces nothing. Streaming
-        // keeps bytes moving, so the connection never sits idle long enough to
-        // be reaped. finalMessage() returns the same complete Message the
-        // non-streaming call returned, so nothing downstream changes.
-        response = (await this.client.messages
-          .stream({ ...request, messages } as unknown as Anthropic.MessageStreamParams)
-          .finalMessage()) as CurrentMessage;
+        // Streamed, and retried. Both reasons are on send().
+        response = await this.send(request, messages);
 
         if (response.stop_reason === "refusal") {
           throw new ModelError(

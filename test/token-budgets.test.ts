@@ -18,6 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 import { SHORT_ANSWER_MAX_TOKENS } from "../src/core/models.js";
+import { AGENTS } from "../src/agents/registry.js";
 
 import seoSite from "../src/agents/marketing/seo-site.ts?raw";
 import objectionFaq from "../src/agents/sales/objection-faq.ts?raw";
@@ -115,5 +116,45 @@ describe("what a thinking model is given room for", () => {
         calls
       );
     }
+  });
+});
+
+// The same rule one tier up, which is where it bit next.
+//
+// The floor above asks whether a model has room to think a little and then
+// answer. Effort "max" is not a little: the thinking is the entire reason for
+// paying for that setting, all of it is billed inside max_tokens, and all of it
+// happens before the first token of the answer. So a budget that reads as
+// generous beside the answer can still be gone before the answer starts.
+//
+// Growth-Strategy proved it on 2026-08-30: Opus 5, effort max, max_tokens 4000,
+// "Ran out of output budget on claude-opus-5 (max_tokens 4000)". That budget
+// cleared the 1500 floor by nearly three times and was still nowhere near
+// enough, so the floor alone does not cover this case.
+//
+// Asserted against the agent roster rather than by pairing efforts with budgets
+// in the source text. A regex over adjacent lines would be the clever version
+// and it would be worth less: it would pass the day someone moved a comment
+// between the two, which is the shape of test this repo has been burned by
+// twice already.
+describe("what effort max has to be given room for", () => {
+  /** Three times the budget that failed, and still a bounded ceiling. */
+  const DEEP_FLOOR = 12_000;
+
+  it("names every agent that runs at effort max", () => {
+    // Not decoration. A new agent set to max is a new call that can die the way
+    // this one did, and the roster is the only place that fact is visible. When
+    // this list changes, size that agent's budget on purpose, then change it
+    // here. There is deliberately no sibling to copy from: nothing else in the
+    // system runs at max.
+    const atMax = AGENTS.filter((agent) => agent.effort === "max")
+      .map((agent) => agent.id)
+      .sort();
+    expect(atMax).toEqual(["growth_strategy"]);
+  });
+
+  it("gives the one max-effort call room for the thinking as well", () => {
+    const undersized = numericBudgets(growthStrategy).filter((n) => n < DEEP_FLOOR);
+    expect(undersized).toEqual([]);
   });
 });

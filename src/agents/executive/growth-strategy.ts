@@ -148,8 +148,10 @@ export const growthStrategyAgent: AgentDefinition = {
       // 16000 was the repair for that failure and was never proven, because
       // this agent is WEEKLY and has not had a turn since. That is the argument
       // for the larger number rather than against it: one truncation costs a
-      // whole week, the only other pass in this system running at effort "max"
-      // is budgeted at 32000, and the untaken half of a ceiling is free.
+      // whole week, the largest pass in this system is budgeted at 32000 (the
+      // intelligence agent's, at effort "high" since it was measured), and the
+      // untaken half of a ceiling is free. Note that this is the ONLY call in
+      // the system running at effort "max", so it has no sibling to copy.
       maxTokens: 32000,
     });
 
