@@ -44,9 +44,16 @@ PostgREST, and a thin wrapper around the Anthropic Messages API.
 on the owner's machine, the one that gets tested and deployed. A Claude session
 is assigned its own scratch branch name each time and pushes fail with 403
 regardless (section 11), so that name never matters: what matters is that work
-reaches `claude/vx03-operations-layer-7rq5ya` locally, by bundle. Note that
-`origin` is far behind it and always will be, so never resolve a question about
-"current state" by reading origin.
+reaches `claude/vx03-operations-layer-7rq5ya` locally, by bundle. `origin` is
+only ever as current as the owner's last push. It sat *months* behind for most
+of this project's life, and on 2026-09-06 they pushed it level again — so it is
+no longer a fiction, and it is not authoritative either. The tree on their
+machine is. **Ask what the head is rather than assuming in either direction.**
+A session that assumes origin is current works on a stale tree; a session that
+assumes it is stale re-does work already done. Both happened on 2026-09-06, and
+the tell that caught the first was the **test count** — the owner's, not the
+session's: "you are saying 434 tests, but every deployment I do gives over 500".
+That is section 11's version tell, arriving from the other end.
 **Live Worker:** `https://velvex-vx03.a99339744.workers.dev`
 **Cloudflare account id:** `cb58bfa682b8997a987de0637c7a69bc`
 **Supabase project ref:** `ttwudgdwusorwscegtnz`
@@ -250,7 +257,8 @@ The owner has no Facebook page. The agent returns `[]` on every tick until
 
 ## 7. Scheduling — three concepts people confuse
 
-**Cron** (`wrangler.toml`) is the engine. Three schedules only:
+**Cron** (`wrangler.toml`) is the engine. **Five schedules**, which is the
+entire account allowance — a sixth is refused, see section 9:
 
 | Cron | Fires |
 |---|---|
@@ -1061,7 +1069,8 @@ Two tells, and neither is the md5:
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
-  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them; the current
+  number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1108,10 +1117,18 @@ do not try it.
 2. The owner pulls it through their own Worker:
    ```
    curl -s "<worker>/x/<APP_PATH_SECRET>/api/state/transfer.<key>" \
-     | python3 -c "import sys,json,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)['value']))" \
+     | python3 -c "import sys,json,base64; v=json.load(sys.stdin)['value']; sys.stdout.buffer.write(base64.b64decode(v['value'] if isinstance(v,dict) else v))" \
      > /tmp/x.tar.gz
    md5sum /tmp/x.tar.gz     # verify before extracting
    ```
+   **The payload is nested twice, and the obvious one-liner does not run.** A
+   PUT of `{"value": "<base64>"}` stores that whole object as the row's
+   `detail`, and the GET returns the detail under `value` again — so the base64
+   is at `['value']['value']`. Reaching for `['value']` yields a dict and dies
+   on `argument should be a bytes-like object, not 'dict'`. The unwrap above
+   accepts either shape, so it survives a row written the other way. This is
+   the only route code leaves a session by, and a recipe that does not run is
+   worse than no recipe.
 3. `tar xzf`, test, commit, push, deploy.
 4. **Delete the transfer row afterward.**
 
@@ -1374,8 +1391,11 @@ Four stages, and the order matters:
 3. **Discovery and triage.** Opus 5 at effort `medium`, **with** a schema and
    **no** tools. It does two things the expensive pass should not be paid for:
    proposes candidates, and decides whether the week was material at all.
-4. **Composing pass.** Opus 5 at effort `max`, **with** the schema and **no**
-   tools. Only reached if the week was material.
+4. **Composing pass.** Opus 5 at effort `high`, **with** the schema and **no**
+   tools. Only reached if the week was material. It ran at `max` once; the
+   measurement in section 10 is what lowered it — 5m32s and $0.64 for that pass
+   alone, which put a $1.25-capped run at $1.39 and left no room in the cron
+   window. Raise it again only against a new measurement.
 
 **A quiet week writes no brief.** If nothing on the watchlist moved, no
 candidate is pending, and triage says the category did not shift, the run stops
@@ -1757,7 +1777,7 @@ connector failure is not a judgement about an idea.
 ## 12a. RIGHT NOW — the open threads (keep this section current; delete a thread once it is closed)
 
 Everything else in this file is durable. This section is not: it is the state of
-the unfinished work, as of **2026-09-03, 00:45 UTC**. Facts here about live
+the unfinished work, as of **2026-09-06, 17:00 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
@@ -2009,11 +2029,11 @@ title/H1 question. Those are edits to pages rather than new machine files, so
 the existing anchored path already covers them mechanically — what is missing is
 a decision about wording, not a mechanism.
 
-### Six agents are paused, and two of those pauses cost real function
+### Seven agents are paused, and three of those pauses cost real function
 
-Read live from `GET /api/schedules`, 2026-09-03 00:38 UTC. Overrides are the
-owner's and **must not be cleared on their behalf** — but what each one costs
-belongs on the record:
+Read live from `GET /api/schedules`, 2026-09-03 00:38 UTC, with `seo_site`
+added from a later read the same day. Overrides are the owner's and **must not
+be cleared on their behalf** — but what each one costs belongs on the record:
 
 | Agent | Paused | What the pause costs |
 |---|---|---|
@@ -2023,6 +2043,7 @@ belongs on the record:
 | `ops_health` | 2026-08-31 | **The watchdog.** Its missing Phase 0 status URL is non-blocking; it watches this system's own agents regardless, and that half was working — 81 `observed` reports in the window. Paused, nothing watches the agents. |
 | `finance_watch` | 2026-08-27 | Unknown. Reason never recorded. |
 | `marketing_analytics` | 2026-08-30 | Unknown. Reason never recorded. |
+| `seo_site` | 2026-09-03 | **Every site edit, and the sitemap staying current.** Its recorded exit condition — the re-seed — is met, and the pause is still correct for a reason the note does not carry: Netlify is out of credits. See the closed `site.source` thread above, and read that note as a record rather than as the current reason. |
 
 The four set on 2026-08-31 carry `builtInCadence`, so `staleOverrides()` can
 report them if the code's cadence later diverges. The two older ones cannot, and
@@ -2115,13 +2136,19 @@ The two hourly ticks are a partition, asserted against the real roster in
 adding it to the other would silently stop arming auto-restore — and that
 failure looks like nothing at all.
 
-**Expect six cron lines on deploy now, not five.** That is the version tell in
-section 11 and it changed with this.
+**Corrected: it is five cron lines, not six.** This note said six, which was
+the plan before the account ceiling was met — Workers Free allows five per
+account (section 9), so `30 * * * *` was paid for by dropping `0 8 * * 1`. The
+count is therefore unchanged by this work and is **not** a version tell on its
+own any more. Read *which* lines, as section 11 says: `30 * * * *` present and
+`0 8 * * 1` absent is the current table.
 
-**One loose end, unchanged:** `/faq.html` in `site.source` is 8,396 bytes, up
-from 8,221 at 15:17 on 2026-08-29. Something edited the protected pricing page in
-that window and the 21:10 promotion baked it into the restore point. Worth
-reading before it is trusted.
+**The loose end this note carried is now moot.** It flagged `/faq.html` in
+`site.source` growing from 8,221 to 8,396 bytes on 2026-08-29 with nothing
+explaining it. The 2026-09-06 re-seed replaced the whole map from the owner's
+build folder, so that byte count no longer exists — `/faq.html` is 8,339 and
+its provenance is the owner's own deploy. Nothing was ever established about
+the 175 bytes, and there is no longer anything to establish it from.
 
 ### Thread 4 — leftovers
 
