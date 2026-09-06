@@ -1864,7 +1864,7 @@ the account's five triggers, Monday 09:00 should be its first genuinely
 scheduled turn. If nothing appears that morning, the cron is still the problem,
 not the agent.
 
-### OPEN — the site was redeployed by hand and `site.source` is behind it
+### CLOSED — `site.source` was re-seeded and now matches the live build
 
 The owner deployed a new build around 2026-09-01 and supplied the four source
 files on 09-03. **Our stored copy is the pre-deploy one.**
@@ -1909,7 +1909,39 @@ difference, and a few hundred bytes is a difference — but it is promoting a
 **stale copy** as `site.source.last_good` on every clean pass, so the safety net
 currently restores to a site that has already been replaced.
 
-**The fix is the owner's, and it is one command:**
+**Done. Verified 2026-09-06, 16:0x UTC** — everything above this line is the
+state before the re-seed and is kept only because the reasoning still applies
+next time.
+
+| Page | `site.source` | served | delta |
+|---|---|---|---|
+| `/index.html` | 27,462 | 27,955 | +493 |
+| `/faq.html` | 8,339 | 8,832 | +493 |
+| `/proof-of-concept.html` | 22,693 | 23,186 | +493 |
+
+**A constant delta across three files of very different sizes is the proof**, and
+it is a better one than any single comparison: Netlify injects a fixed block into
+every served page, so drift would show as three different numbers. Both copies
+carry `v1.0`, neither carries a meta description, and `/robots.txt` and
+`/sitemap.xml` are now in the stored map and both return 200 live — so the SEO
+agent's generated files shipped too.
+
+The stale restore point resolved itself: `site.source.last_good` promoted at
+2026-09-06T15:30Z, so the safety net now restores to the build that is actually
+published rather than to the pre-deploy one.
+
+**What is still open is the pause, not the source.** `seo_site` carries
+`note: "until site.source is re-seeded from v0.3"`, set 2026-09-03. That
+condition is now met. The override is the owner's to clear:
+
+```
+PUT /x/<APP_PATH_SECRET>/api/schedules/seo_site   {"cadence":"default"}
+```
+
+Until then the agent cannot re-add the two meta descriptions the new build
+dropped, which is the one piece of its 29 August work that did not survive.
+
+**The original instructions, kept because they apply to the next hand-deploy:**
 
 ```
 node scripts/seed-site-source.mjs <the folder they dragged into Netlify> <worker-base>
