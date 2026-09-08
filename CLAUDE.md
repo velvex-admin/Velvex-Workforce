@@ -266,7 +266,7 @@ entire account allowance — a sixth is refused, see section 9:
 | `30 * * * *` | hourly, half past — **Site-Integrity alone**, on its own subrequest budget |
 | `0 7 * * *` | 07:00 UTC daily |
 | `0 8 1 * *` | 08:00 UTC on the 1st — **monthly**, where intelligence now runs |
-| `0 9 * * 1` | 09:00 UTC Mondays — weekly, **all of it**, unfiltered |
+| `0 9 * * 1` | 09:00 UTC weekly, **all of it**, unfiltered — **observed firing Sundays** |
 
 **The weekly cadence used to run on two ticks, and giving that up was forced.**
 A cron invocation gets 15 minutes of wall clock for *everything it runs*, and
@@ -982,6 +982,54 @@ outright.
   the two lines. Note there is **no sibling to copy from**: the intelligence
   agent's 32000 budgets run at effort `high`, not `max`.
 
+- **Giving an idle agent something to do can arm a hazard that was dormant, and
+  the shipping change is not where it will be noticed.** `site.source` had been
+  stale against the live site since the owner's hand deploy, and the digest-deploy
+  hazard was written down and understood: the next SEO edit would publish our
+  whole stored map over their new build. It sat harmless for two days for one
+  reason only — the agent had nothing to edit. Then `findSiteFileIssues()`
+  shipped, and on the very next daily tick the agent would have found
+  `sitemap.xml` missing from the stale map, written it in, and deployed all five
+  old files over the new site. The change was correct, tested, and reviewed; the
+  thing it broke was a *precondition somewhere else* that nothing in the diff
+  mentioned.
+
+  Caught with about eight hours to spare, and only because the deploy was being
+  checked for something else. The check that found it is worth repeating: when
+  an agent gains a new reason to act, ask what its **other** preconditions are
+  assuming, especially any "this is safe because it never runs" reasoning
+  recorded elsewhere. Grep section 12a for the agent's name before shipping a
+  change that makes it busier.
+
+  The stop-gap was a schedule pause with the reason in its `note`, which is the
+  right shape for this: reversible, visible on the dashboard, and it says on the
+  record what has to be true before it is cleared.
+
+- **`runDue` recorded what a tick spent and `runOne` did not, so every "Run
+  once" was free as far as the ledger knew.** Found while checking what a
+  Growth-Strategy run costs before adding retries to it. `growth_strategy`
+  completed a full Opus run at effort `max` on 2026-09-05 and does not appear
+  in the ledger for that day, or any day: it is weekly, so nearly every run it
+  has ever had was started by hand. The dashboard's Run-once button is exactly
+  how an expensive agent gets exercised while it is being fixed and how a weekly
+  one gets tried without waiting a week — which is to say the runs the ledger
+  missed are disproportionately the expensive ones. So "$2.23/month, credit to
+  2027-02-16" was answering **low**, in the one direction that matters when the
+  output is how long the money lasts. `recordRunSpend()` is now shared by both
+  entry points. Expect the projection to rise as manual runs start landing in
+  it; that is the measurement improving, not the cost.
+
+- **Verify a deploy against the deployed artifact, not the deploy output.** The
+  SEO agent's last run before the re-seed logged "nothing to do this tick",
+  which is exactly what a *missing* feature looks like — and reading it that way
+  would have meant re-shipping work that was already live. Pulling the live
+  Worker script and grepping it for `findSiteFileIssues`, `putGeneratedFile` and
+  `urlset` settled it in one call: the code was deployed, and the quiet run had
+  simply happened minutes BEFORE the deploy. `runtime.agent_status` carries
+  `startedAt`, so the ordering was checkable. This is the same lesson as the
+  fetch-timeout misdiagnosis in this section: the bundle is the fact, a log line
+  is an inference.
+
 ## 10a. The site, and why we hold its source
 
 The site is a Netlify **file deploy** — no repo, no build command — so the SEO
@@ -1069,7 +1117,7 @@ Two tells, and neither is the md5:
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
-  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them; the current
+  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them and before the manual-run ledger fix; the current
   number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
@@ -1141,7 +1189,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 607 tests
+npx vitest run            # 608 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1878,11 +1926,27 @@ Worth knowing: the failed run still reached the approvals queue, which is how it
 was noticed at all. The **pending approval timestamped 2026-09-06 09:04** is
 that failure notice rather than a recommendation, and can be dismissed.
 
-Every growth_strategy run on file is still a **manual** one — a unique `run_id`
-on a Friday, Saturday or Sunday. Since `89edb0c` fitted the cron table inside
-the account's five triggers, Monday 09:00 should be its first genuinely
-scheduled turn. If nothing appears that morning, the cron is still the problem,
-not the agent.
+**That prediction was tested on 2026-09-07 and it did not hold.** Monday 09:00
+UTC came and went with no growth_strategy run at all, and the evidence now says
+the earlier reading was wrong on both halves: the 09:00 runs were **not** manual,
+and the tick lands on **Sunday**.
+
+The tell is the start second. Cron invocations in this system begin at `:00:3x`
+— `x` at 09:00:31, `content` at 07:00:32, `lead_pipeline` at 07:00:33, all
+read live from `runtime.agent_status`. A run started by hand lands on an
+arbitrary second. growth_strategy's last run began at **2026-09-06T09:00:37**,
+which is the cron signature, and 2026-08-30 09:02 sits exactly seven days before
+it. The 08-21 11:10, 08-23 13:38 and 09-05 08:59 runs are the manual ones, and
+they look nothing like this.
+
+So `0 9 * * 1` is firing on Sundays. The cause is not established — Cloudflare's
+day-of-week handling is the obvious suspect — and it is **two observations plus
+one silent Monday**, so one more Sunday would settle it. It has not been changed:
+the schedule is regular and weekly either way, and touching a cron line risks the
+partial-update refusal in section 9 over a day nobody depends on. What it does
+cost is reasoning, and it already has — this note is the second time a session
+has told the owner to expect a Monday tick. Read the tick from
+`runtime.agent_status`, not from the cron literal.
 
 ### CLOSED — `site.source` was re-seeded and now matches the live build
 

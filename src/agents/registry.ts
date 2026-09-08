@@ -203,40 +203,57 @@ export async function runDue(
     results.push(await runAgent(agent, chiefOfStaff, ctx));
   }
 
-  // Record what the tick cost, but only when it cost something.
-  //
-  // Most hourly ticks make no model call at all — the strategists wake, find
-  // their shelves stocked and return — so this write happens on the ticks that
-  // actually spent rather than on every one. That matters: an invocation has
-  // roughly fifty subrequests for everything it runs, and this system has
-  // already lost an agent to spending them on bookkeeping.
-  //
+  // What the tick cost. See recordRunSpend for why it is shared with runOne.
+  await recordRunSpend(results, ctx);
+
+  return results;
+}
+
+/**
+ * Fold what a run spent into the ledger, on the runs that spent something.
+ *
+ * Shared by the tick and by a single run started by hand, and it is shared
+ * because it was not. `runDue` folded and `runOne` did not, so every run
+ * started from the dashboard's "Run once" button — which is how an expensive
+ * agent gets exercised while it is being fixed, and how the weekly ones get
+ * tried without waiting a week — spent real money the ledger never saw. It
+ * shows in the data: growth_strategy completed a full Opus run at effort max
+ * on 2026-09-05 and that day's ledger entry names only chief_of_staff. So
+ * "what does this cost" was answering low, in the one direction that matters
+ * when what it feeds is "your credit lasts until February".
+ *
+ * The write is skipped when nothing was spent. Most hourly ticks make no model
+ * call at all — the strategists wake, find their shelves stocked and return —
+ * and an invocation has roughly fifty subrequests for everything it runs. This
+ * system has already lost an agent to spending them on bookkeeping.
+ */
+async function recordRunSpend(results: AgentRunResult[], ctx: RunContext): Promise<void> {
   // The number is measured, not modelled: runAgent snapshots the Claude
-  // client's spend either side of the run. Before this existed it was computed
-  // and thrown away, so "what does this cost to run" had no answer anywhere.
+  // client's spend either side of the run. Before the ledger existed it was
+  // computed and thrown away, so "what does this cost to run" had no answer.
   const spending = results
     .filter((r) => r.costUsd > 0)
     .map((r) => ({ agentId: r.agentId, costUsd: r.costUsd, modelCalls: r.modelCalls }));
-  if (spending.length > 0) {
-    try {
-      const ledger = await readLedger(ctx.db, ctx.now);
-      await writeLedger(ctx.db, recordSpend(ledger, spending, ctx.now));
-    } catch (err) {
-      // Bookkeeping must never take a tick down with it. Same rule as the
-      // status board and the failure report.
-      ctx.log("could not record this tick's spend", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  if (spending.length === 0) return;
 
-  return results;
+  try {
+    const ledger = await readLedger(ctx.db, ctx.now);
+    await writeLedger(ctx.db, recordSpend(ledger, spending, ctx.now));
+  } catch (err) {
+    // Bookkeeping must never take a run down with it. Same rule as the status
+    // board and the failure report.
+    ctx.log("could not record this run's spend", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 export async function runOne(id: AgentId, ctx: RunContext): Promise<AgentRunResult> {
   const agent = getAgent(id);
   if (!agent) throw new Error(`No agent with id "${id}"`);
-  return runAgent(agent, chiefOfStaff, ctx);
+  const result = await runAgent(agent, chiefOfStaff, ctx);
+  await recordRunSpend([result], ctx);
+  return result;
 }
 
 /**

@@ -134,15 +134,31 @@ describe("what it says about a balance", () => {
 });
 
 describe("where the ledger is written", () => {
-  it("is recorded from runDue, so every tick is covered by one place", () => {
+  it("is recorded from one place, so every path is covered by it", () => {
     expect(registry).toContain("recordSpend");
     expect(registry).toContain("writeLedger");
   });
 
-  it("cannot take a tick down with it", () => {
+  it("covers a single run started by hand, not only a tick", () => {
+    // This was the gap. runDue folded its results into the ledger and runOne
+    // did not, so every "Run once" from the dashboard spent real money the
+    // ledger never saw — and "Run once" is precisely how an expensive agent
+    // gets exercised while it is being fixed, and how a weekly one gets tried
+    // without waiting a week. growth_strategy completed a full Opus run at
+    // effort max on 2026-09-05 and that day's entry names only chief_of_staff.
+    //
+    // Asserted on the source because the alternative is standing up the whole
+    // runner: what has to stay true is that both entry points reach the same
+    // helper, and that there is exactly one of it.
+    expect(registry).toMatch(/async function recordRunSpend\(/);
+    expect([...registry.matchAll(/await recordRunSpend\(/g)]).toHaveLength(2);
+    expect(registry).toMatch(/runOne[\s\S]*?await recordRunSpend\(\[result\], ctx\)/);
+  });
+
+  it("cannot take a run down with it", () => {
     // Same rule as the status board and the failure report: bookkeeping that
     // throws must not kill the invocation that was doing real work.
-    expect(registry).toMatch(/could not record this tick's spend/);
+    expect(registry).toMatch(/could not record this run's spend/);
   });
 
   it("stays below the broadcast floor", () => {
