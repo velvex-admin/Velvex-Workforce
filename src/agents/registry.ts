@@ -171,7 +171,35 @@ export async function runDue(
   ctx: RunContext,
   filter: BatchFilter = {}
 ): Promise<AgentRunResult[]> {
-  const overrides = await readSchedules(ctx.db).catch(() => ({}));
+  // Paused has to mean paused, including on the tick where the database blinks.
+  //
+  // This read used to be `.catch(() => ({}))`, and an empty override map does
+  // not mean "no pauses" — it means every agent falls back to its built-in
+  // cadence and RUNS. On 2026-09-14 that is exactly what happened: Supabase
+  // started answering 504 on the memory table, this read was one of the
+  // casualties, and linkedin, facebook, ops_health and social_engagement all
+  // woke up and ran on ticks where the owner had paused every one of them. The
+  // pauses were still sitting in the database the whole time.
+  //
+  // That is the worst direction for this failure to go. A pause is the one
+  // control the owner has over an agent that spends money, publishes in
+  // public, or deploys the site, and a transient database timeout must not be
+  // able to lift it. So the tick now fails CLOSED: no override map, no run.
+  // Skipping a tick costs one hour; running fifteen agents somebody stopped
+  // costs whatever they do. Nothing is thrown, because a throw escaping here
+  // kills the whole invocation (section 10), and the Supabase client already
+  // retries a read like this before giving up.
+  let overrides: AgentScheduleMap;
+  try {
+    overrides = await readSchedules(ctx.db);
+  } catch (err) {
+    ctx.log(
+      "could not read the schedule overrides, so no agent ran on this tick — " +
+        "a pause must not be lifted by a database failure",
+      { error: err instanceof Error ? err.message : String(err) }
+    );
+    return [];
+  }
   for (const entry of staleOverrides(overrides)) {
     ctx.log(
       `${entry.agentId}: schedule override "${entry.override.cadence}" was set when its cadence in code was "${entry.override.builtInCadence}"; it is now "${entry.builtInCadence}". The override is still in force.`

@@ -791,9 +791,27 @@ export async function handleApi(
     if (request.method === "PUT" || request.method === "POST") {
       const value = await request.json().catch(() => null);
       if (value === null) return json({ error: "Body must be JSON" }, 400);
+      // Salience 4, deliberately BELOW the broadcast floor of 6.
+      //
+      // Section 12c settled this rule for lessons and the same arithmetic
+      // applies here: exactly two readers sweep memory untagged — Growth-
+      // Strategy at minSalience 6 limit 30, and Chief-of-Staff at minSalience 6
+      // limit 25 — so anything written at 6 or above is read, and paid for, by
+      // agents that never asked for it. This route writes whatever anybody
+      // pushes, and what gets pushed here is big: six copies of the site source
+      // at roughly 100KB each, and every code-transfer bundle. At salience 7
+      // all of it sorted straight to the top of those two reads, which is how
+      // one PostgREST call ended up dragging more than half a megabyte across
+      // the wire twice a day.
+      //
+      // Nothing is lost by dropping below the floor. The feeds pushed here
+      // (finance.snapshot, sales.pipeline, ops.pipeline_status) are retrieved
+      // BY KEY, where salience is not consulted at all, and the broadcast
+      // readers only ever render `row.content` — so all those two were getting
+      // was a line reading "- transfer.ops5: state pushed to transfer.ops5".
       await state.write(db, key, value, `state pushed to ${key}`, {
         scope: "global",
-        salience: 7,
+        salience: 4,
         tags: ["state"],
       });
       return json({ key, written: true });

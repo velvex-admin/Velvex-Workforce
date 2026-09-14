@@ -1019,6 +1019,78 @@ outright.
   entry points. Expect the projection to rise as manual runs start landing in
   it; that is the measurement improving, not the cost.
 
+- **A failed read of the override map is not "nothing is paused", it is every
+  agent running.** `runDue` read the schedule overrides with
+  `.catch(() => ({}))`, and an empty map means every agent falls back to its
+  built-in cadence. On 2026-09-14 Supabase began answering **504** on the
+  `memory` table, that read was among the casualties, and `linkedin`,
+  `facebook`, `ops_health` and `social_engagement` all woke up and ran on ticks
+  where the owner had paused every one of them — with the pauses still sitting
+  in the database, unread, the whole time. The owner saw it from the other end:
+  *"agents like LinkedIn have failed when i already put them on pause"*.
+
+  A pause is the only control the owner has over an agent that spends money,
+  publishes in public or deploys the site, so a transient database timeout must
+  not be able to lift it. The tick now fails **closed**: no override map, no
+  run, and a logged reason. Skipping a tick costs an hour; running fifteen
+  agents somebody stopped costs whatever they do. It does not throw, because a
+  throw escaping there kills the whole invocation.
+
+  The general rule, and it is the one worth carrying: **when a read fails, ask
+  what its empty value means.** `unmetRequirements` falls back to the
+  environment-only answer because "the database blinked" is not "nobody
+  connected this agent" — that fallback is safe in the permissive direction.
+  This one was the same shape and the opposite direction, and nothing in the
+  code said which was which.
+
+- **The database client had no timeout and no retry, and every agent makes
+  several calls per tick.** Forty runs failed over three days — all 504, 34 of
+  them on `memory`, across `x`, `linkedin`, `site_integrity` and
+  `chief_of_staff` — because one slow answer was a dead agent. `request()` in
+  `src/lib/supabase.ts` now carries `AbortSignal.timeout(20_000)` and retries
+  twice. This is the third instance of the no-signal trap in this section, and
+  the biggest: Site-Integrity and Ops-Health each own one call, this one is on
+  the path of all of them.
+
+  **The half that needed care is which calls may be sent twice.** A 504 is a
+  gateway giving up, not a transaction rolling back: the statement may well have
+  committed before the timeout was reported. So `retryableRequest()` re-sends
+  only a **GET**, which changes nothing, and a **POST carrying `on_conflict=`**,
+  where the second write lands on the same key as the first. A plain insert is
+  never re-sent — two copies of a failure report is the quiet version of the bug
+  that put 131 copies of one post in the LinkedIn partner queue. And the retry
+  count is two rather than something generous because **every attempt costs a
+  subrequest**, from the budget that has already killed two agents here.
+
+- **The `/api/state` route wrote everything at salience 7, which is above the
+  broadcast floor.** Section 12c settled the arithmetic for lessons and the same
+  applies to anything pushed by hand: exactly two readers sweep memory untagged,
+  Growth-Strategy at `minSalience: 6` and Chief-of-Staff at the same, so a row
+  at 7 is read and paid for by agents that never asked for it. What gets pushed
+  through that route is **big** — six copies of the site source at ~100KB each
+  and every code-transfer bundle — so more than half a megabyte sorted straight
+  to the top of both reads, twice a day, on a free-tier database. Measured
+  2026-09-14: **1.1MB of `detail` across 156 rows, 660KB of it site-source
+  copies at salience 7.** Now written at **4**. Nothing is lost: the feeds
+  (`finance.snapshot`, `sales.pipeline`, `ops.pipeline_status`) are retrieved
+  BY KEY, where salience is not consulted, and the broadcast readers render
+  `row.content` only — so all those two ever got was a line reading
+  `- transfer.ops5: state pushed to transfer.ops5`.
+
+  Existing rows keep the salience they were written with, so this helps new
+  writes only. Clearing the spent `transfer.*` rows took 133KB off immediately;
+  the historical `site.source.*` snapshots are the owner's to keep or drop.
+
+- **`len()` counts characters and `wc -c` counts bytes, and this file's
+  integrity check is in bytes.** The site pages are dense with em dashes, which
+  are three bytes each in UTF-8, so a Python `len()` over `site.source` reads
+  about a thousand short on `/index.html` — enough to look exactly like drift
+  against the recorded sizes. It nearly got reported as one on 2026-09-08.
+  Measure with `len(s.encode())`, and remember the served-minus-stored delta is
+  a constant **492** across all three pages precisely because Netlify injects a
+  fixed block: three different numbers would be drift, one number repeated is
+  the injection.
+
 - **Verify a deploy against the deployed artifact, not the deploy output.** The
   SEO agent's last run before the re-seed logged "nothing to do this tick",
   which is exactly what a *missing* feature looks like — and reading it that way
@@ -1117,7 +1189,7 @@ Two tells, and neither is the md5:
 - The **test count**. It is the cheapest version check in this repo. 175 is the
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
-  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them and before the manual-run ledger fix; the current
+  board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work; the current
   number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
@@ -1189,7 +1261,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 608 tests
+npx vitest run            # 619 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -2040,6 +2112,75 @@ node scripts/seed-site-source.mjs <the folder they dragged into Netlify> <worker
 Re-seed first, then let the agent run. The extensionless-link fix in
 `site-inventory.ts` (section 10) has to be deployed **before** the re-seed, or
 the new hrefs make all three pages read as orphans.
+
+### OPEN — Supabase started timing out, and it lifted every pause on the way
+
+Reported 2026-09-14: *"multiple agents have failed, and it seems like an issue
+from Supabase... agents like LinkedIn have failed when i already put them on
+pause"*. Both halves were real and they are different faults.
+
+**Measured the same hour.** Forty failed runs, **every one a 504**, none before
+2026-09-12 in a window reaching back to 08-26. By table: `memory` 34,
+`reports` 3, `pending_approvals` 3. By agent: `x` 15, `linkedin` 13,
+`site_integrity` 11, `chief_of_staff` 1 — the four that read most. Interactive
+reads at the time ran 0.4–1.3s, so this is a busy database rather than a broken
+one, and the fix is to survive it rather than to chase it.
+
+**Why the paused agents ran** is the `.catch(() => ({}))` trap, now in section
+10. The overrides were never lost — `GET /api/schedules` still listed all eight
+pauses throughout. The tick simply could not read them and treated that as
+permission.
+
+**What was done:** the three code fixes in section 10 (fail-closed overrides, a
+timeout and safe retry on the client, salience 4 on `/api/state`), plus the
+spent `transfer.*` rows cleared, which took **133KB** out of the table with no
+deploy.
+
+**What is still the owner's call:** roughly **459KB** of historical site
+snapshots — `site.source.pre-pricing-fix` (102KB), `site.source.backup`
+(103KB), `site.source.pre-v03` (103KB), `site.source.pre-v01-fix` (103KB),
+`site.source.wrecked-20260822` (48KB). `site.source` and
+`site.source.last_good` are live and must stay. Clearing the rest would take the
+table from ~1.1MB to roughly 400KB. There is no DELETE route, so clearing means
+`PUT ""`.
+
+**Watch rather than assume fixed.** The retry converts a single 504 into a
+survivable one; it does not make the database faster. If 504s continue after the
+deploy, the next lever is the snapshots above, then the `reports` table, which
+nothing prunes and which `select=*` reads 200 rows of at a time.
+
+### CLOSED — the v0.1 label and the missing intro price
+
+Both fixed in `site.source` on 2026-09-08 and waiting on Netlify capacity; the
+corrected files are with the owner for their folder.
+
+- `/faq.html` and `/proof-of-concept.html` carried `v0.1` in the footer, and
+  proof-of-concept carried `Veĺa v0.1` twice more. Four replacements, all
+  length-neutral. **No page ever carried the six old node names** — measured,
+  zero hits — so only the version string was ever stale.
+- `/faq.html` now states the introductory $149 rate and the 10-seat cap
+  alongside the $999. It previously answered "What does a Velvex diagnostic
+  cost?" with $999 alone, which is the phrasing failure section 1 forbids
+  agents, on the page they copy from.
+
+**One number to expect until that deploy lands:** `/faq.html` grew 8,339 →
+8,555 bytes, so stored-vs-served reads **276**, not the usual 492. That is the
+pending change, not drift, and it returns to 492 once deployed.
+
+**Where the wrong claim came from, and it was not the agent.** Growth-Strategy
+reported that the homepage was the stale page and proof-of-concept the current
+one — exactly backwards. It was repeating `intel.position`, the owner's own
+standing statement, which said so verbatim and which **outranks anything the
+agent reads on the web**. True when written on 2026-08-29; made false by the
+v0.3 deploy two days later. That paragraph also told agents *not* to report
+version numbers, which silenced the one finding that would have caught it.
+Rewritten 2026-09-08, both answered questions preserved. **When an agent says
+something confidently wrong about the business, read `intel.position` before
+reading the agent.**
+
+Still open and cheap: `business.ts` promises every writing agent a
+"five-minute executive audio briefing" that appears nowhere on the site, and the
+site spells the engine **Veĺa** while `intel.position` spells it **Vela**.
 
 ### OPEN — the SEO agent has run out of things it knows how to look for
 
