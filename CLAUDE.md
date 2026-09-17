@@ -2525,7 +2525,12 @@ say whether they are still wanted.
 `x` (hourly) and `chief_of_staff` (daily) also carry overrides; both match the
 cadence in code, so they change nothing.
 
-### CLOSED — the digest sent one email in two days, and could not say why
+### CLOSED — hardening the digest, on a premise that turned out to be wrong
+
+**Read the correction two threads below before trusting the framing here.** The
+"one email in two days" this thread is built on was the owner looking in the
+wrong mailbox. The code changes are real, tested and deployed; the fault they
+were written for was never demonstrated.
 
 Reported by the owner 2026-09-17: *"was supposed to send an email for me every
 12 hours and it had only sent one all of this time."* The thread above closes
@@ -2603,56 +2608,60 @@ guarantee was verified to fail with its fix removed — the catch-up rule, the
 failure record, the connect bound, the delivered-vs-recorded split and the
 subject stamp were each reverted in turn to confirm a test noticed.
 
-### OPEN — the digest is accepted by Gmail and does not arrive, and older mail vanished too
+### CLOSED — the digest was arriving the whole time; the mailbox was the wrong one
 
-Owner, 2026-09-17, after the catch-up fix deployed: *"I did not get anything on
-the 17th of september"*. Both of that day's digests are recorded as sent
-(`05:01`, `17:01`, `last_error` null) and neither arrived.
+**CORRECTED 2026-09-17 — it was arriving all along.** The owner: *"I opened
+a99339744 email address rather than the domain's address. It was sending the
+whole time I just did not notice."* Every digest reached
+`OPS_DIGEST_GMAIL_USER`. Nothing was lost, nothing was deleted, and the
+mailbox is fine.
 
-**What is established, so nobody re-derives it:**
+**Everything the previous version of this thread asserted about vanished mail
+was wrong**, and the way it went wrong is the part worth keeping. The chain:
+the owner reported one email; a Gmail search in a mailbox a session COULD read
+returned nothing, which was the correct result for the wrong mailbox and was
+read as corroboration; and from there "accepted by Gmail but never delivered"
+followed, then "mail is being deleted". Three inferences, each reasonable given
+the last, and the first premise was a mailbox mix-up.
 
-- **Gmail accepted both messages.** Not inferred from the absence of an error:
-  `worker-mailer`'s `send()` returns a promise its background loop settles only
-  after `body()` reads a 2xx from the server, and a timeout rejects. Its
-  `toUsers()` also normalises a string recipient correctly, so the envelope was
-  not malformed. The SMTP transaction completed.
-- **`ops.digest.last_sent` advancing means exactly that and no more.** It is
-  written after `send()` resolves, so it is evidence of a completed SMTP
-  transaction, never of delivery. The thread above treats it as proof of
-  sending, which is right, and it was read here as proof of *arrival*, which is
-  wrong. **Do not report a digest as delivered on the strength of that row.**
-- **Mail that had already arrived and been read is now gone**, including the
-  09-15 test sends the owner replied to. `subject:Ops-Health in:anywhere`
-  returns nothing — and `in:anywhere` covers Spam, Trash, All Mail and Sent. A
-  hyphen-as-exclusion quirk was suspected and ruled out: `subject:Security-alert`
-  matches "Security alert" in a comparable mailbox, so the query is sound.
-- **VX-03 cannot be doing it.** Its entire mail surface is one outbound SMTP
-  send — no Gmail API, no IMAP, no read and no delete path. Grep for it before
-  doubting this. Whatever removes mail from that mailbox is outside this repo,
-  which also means **it is not a digest problem**: the same thing would eat
-  anything else delivered there, and Phase 0 uses that mailbox for client
-  delivery.
+**What was actually verified, and still holds:** Gmail accepted every message
+(`worker-mailer` settles `send()` only after the body reads a 2xx), the
+envelope was well-formed, and this repo's whole mail surface is one outbound
+SMTP send with no read or delete path. Those facts were right. The conclusion
+drawn from them was not.
 
-**What was changed here**, because it is useful whatever the cause:
-`OPS_DIGEST_TO` now separates the destination from the authenticated account,
-defaulting to it. `from` must stay the authenticated account or Gmail rewrites
-or refuses it. Pointing the digest at a second mailbox makes the next send a
-real experiment — arriving elsewhere isolates the fault to that one mailbox,
-not arriving anywhere moves it back to the transport — and the run now logs
-`accepted by smtp.gmail.com for <recipient>`, so the trail says where it aimed.
+**So how much of the fix below was needed is UNKNOWN, and should be read that
+way.** The "four slots, one email" count came from the owner's report, and
+`ops.digest.last_sent` keeps only the newest success — so there may never have
+been a missed slot. The catch-up rule, the SMTP bounds and the error recording
+are now **hardening against failures this repo has hit repeatedly elsewhere,
+not repairs of a demonstrated fault.** They are inert while the digest is
+healthy, and their standing cost is one memory read per hourly tick. Do not
+cite them as evidence the digest was broken.
 
-**The generalised lesson, and it cost a wrong report to the owner:** a
-self-addressed message is the hardest kind to diagnose, because the sending
-account, the receiving account and the audit trail are the same thing. When a
-system's only evidence of success comes from the component under suspicion,
-route the evidence somewhere that component does not control.
+**Two lessons, and the second is the expensive one:**
 
-**Still to check, and none of it is in this repo:** the mailbox's filters
-(Settings → Filters and Blocked Addresses, for any "Delete it"), what holds
-Gmail API access to it (Google Account → Security → third-party access, and
-Settings → Accounts → Grant access), and — most decisive for a Workspace
-account — the Admin console's **Email Log Search**, which reports a message's
-final disposition rather than its acceptance.
+- **A search that returns nothing is evidence only if you can prove you
+  searched the right place.** The session searched the mailbox it had a
+  connector for, not the mailbox the digest was addressed to, and never
+  reconciled those two facts. When the tool reaches a different scope than the
+  question, the null result is about the tool.
+- **A user's report is an observation, not a measurement.** "I only got one"
+  was taken as ground truth and three layers of inference were stacked on it.
+  The cheap check — *which mailbox are you looking at* — was never asked, and
+  it would have ended this in one line. Ask what was observed and where, before
+  building a theory that explains it.
+
+**Still true and still worth having:** `OPS_DIGEST_TO` separates the
+destination from the authenticated account. It defaults to the sending account
+and is **not set**, so behaviour is unchanged. Its value is diagnostic — a
+self-addressed digest makes "Gmail accepted it" and "it arrived" impossible to
+separate from outside, which is exactly the ambiguity that let this run as far
+as it did.
+
+**The owner's actual want, still open and not a code problem:** a push
+notification on their phone when a digest lands. That is adding the Workspace
+account to the phone's mail app, nothing in this repo.
 
 ### CLOSED — the SEO agent has completed a run
 
