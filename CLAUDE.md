@@ -386,7 +386,7 @@ the file.
 | `LINKEDIN_ORG_ID`, `LINKEDIN_ACCESS_TOKEN` | direct company-page posting — not yet supplied |
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | not yet supplied |
 | `OPS_PIPELINE_STATUS_URL`, `OPS_PIPELINE_STATUS_TOKEN` | Ops-Health reading the Phase 0 pipeline — **both are set** |
-| `OPS_DIGEST_GMAIL_USER`, `OPS_DIGEST_GMAIL_APP_PASSWORD` | Ops-Health's twice-daily email digest, sent over Gmail SMTP — not yet supplied, see 12a |
+| `OPS_DIGEST_GMAIL_USER`, `OPS_DIGEST_GMAIL_APP_PASSWORD` | Ops-Health's twice-daily email digest, sent over Gmail SMTP — **supplied 2026-09-15**, and proven by a real send rather than by a clean deploy (`ops.digest.last_sent` only advances after `mailer.send()` resolves). See 12a |
 
 To check what the live Worker actually believes, call
 `GET /x/<APP_PATH_SECRET>/api/status` and read `connectors[].missing`. That is
@@ -1316,7 +1316,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 652 tests
+npx vitest run            # 670 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -2411,7 +2411,11 @@ pipeline has no live traffic yet, confirmed directly against Supabase,
 `content-range: */0`), so a healthy zero is the honest answer, not a fake one.
 Re-check once real cases exist that the counts move.
 
-### CLOSED — Ops-Health twice-daily email digest, verified sending 2026-09-15
+### CLOSED — Ops-Health twice-daily email digest, built and sent 2026-09-15
+
+**Read the thread below this one before trusting the word "verified" here.** One
+forced send was verified. The schedule was not, and it was the schedule that
+failed.
 
 Same request, same session: the owner wants a standing signal without opening
 the dashboard — one email every 12 hours, whether or not anything is wrong,
@@ -2498,7 +2502,7 @@ owner's and must not be cleared on their behalf:
 | `linkedin` | 2026-08-31 | **Drafting, approval and learning — all of which work.** Only *delivery* is blocked on the company registration. Paused, the page's voice baseline is never used and no ruling is ever learned from, which is the layer the owner asked to switch on. |
 | `finance_watch` | 2026-08-27 | Unknown. Reason never recorded. |
 | `marketing_analytics` | 2026-08-30 | Unknown. Reason never recorded. |
-| `seo_site` | 2026-09-03 | **Every site edit, and the sitemap staying current.** Its recorded exit condition — the re-seed — is met, and the pause is still correct for a reason the note does not carry: Netlify is out of credits. See the closed `site.source` thread above, and read that note as a record rather than as the current reason. |
+| ~~`seo_site`~~ | — | Was paused 2026-09-03; was un-paused on 2026-09-17 and is back on `daily`. Kept here struck through rather than deleted because this table is a snapshot of that day, and the row above it is the lesson: a pause whose note names its own exit condition outlives the condition. |
 
 The three still carrying `builtInCadence` let `staleOverrides()` report them if
 the code's cadence later diverges. The two oldest cannot, and somebody has to
@@ -2506,6 +2510,84 @@ say whether they are still wanted.
 
 `x` (hourly) and `chief_of_staff` (daily) also carry overrides; both match the
 cadence in code, so they change nothing.
+
+### CLOSED — the digest sent one email in two days, and could not say why
+
+Reported by the owner 2026-09-17: *"was supposed to send an email for me every
+12 hours and it had only sent one all of this time."* The thread above closes
+on "verified sending", and that verdict was true and insufficient — it proved
+one **forced** send worked, which is not the same fact as the schedule working.
+
+**Measured before touching anything.** `ops.digest.last_sent` held
+`2026-09-17T05` on a row created `2026-09-15T14:50` — the QA route's forced
+send, which stored a slot of `2026-09-15T05` because it overrode `ctx.now`.
+Between those two the cron tick fired at **every** digest hour: `ops_health`'s
+own report rows land at 17:00:59, 05:00:56, 17:00:57 and 05:01:10. So the
+invocation reached the digest four times and one email came out. Note what the
+row cannot tell you — it keeps only the LAST success, so it proves when the
+newest send happened, never how many were missed. The owner's count is the
+evidence there.
+
+**Why nobody could say more than that, which is the actual defect.** The
+failure path reported through `ctx.log`, and on a cron run `ctx.log` appends to
+an array `scheduled()` collects and never prints. The reason for each miss was
+computed, formatted, and dropped on the floor. A feature whose entire purpose
+is that silence is never the signal was failing silently.
+
+**Three faults, all fixed:**
+
+- **No catch-up.** The hour check was exact and the slot id hour-granular, so
+  one bad minute at 05:00 bought twelve hours of silence. `digestDue()` is now
+  a pure exported rule: send on a digest hour, or on ANY hourly tick when the
+  last success is older than `OVERDUE_HOURS` (13). A missed 05:00 goes out at
+  06:00, and the next digest hour re-anchors the rhythm on its own rather than
+  drifting an hour per cycle. A catch-up covers the gap it is catching up on,
+  capped at 36 hours, so the checks from the silence are in the email that ends
+  it. A key that was never written does **not** catch up: a fresh deploy should
+  land its first email on a real digest hour.
+- **Nothing retried, nothing bounded.** The SMTP connect is retried once, and
+  connect and send are bounded at 15s and 20s. This was the fourth instance in
+  this repo of the no-signal trap and the worst placed, opening a raw socket at
+  the very end of a cron invocation. The **send is deliberately not retried**:
+  past the connect, a failure may have left a message Gmail already accepted,
+  and re-sending what may have landed is how the LinkedIn partner queue reached
+  131 copies of one post. For the same reason a delivered digest whose
+  bookkeeping write fails is logged as exactly that, never as "never went out"
+  — the record does not get to revise what happened, and `markSent()` tries
+  twice because losing that write costs a duplicate email.
+- **Failures were invisible.** They now reach `console` (which outlives the
+  invocation and is what `wrangler tail` shows), `ops.digest.last_error`
+  (readable at `GET /api/state/ops.digest.last_error`, no deploy needed), and
+  the next digest that actually arrives, which opens with what the gap was.
+  Nothing clears that error row — a later success writes a newer timestamp to
+  the sent row and the notice goes quiet by comparison, one subrequest cheaper
+  than clearing it.
+
+**A second cause, invisible from the sending end, and possibly the whole of
+what the owner saw.** Gmail threads on subject, and every digest had a
+byte-identical one. A week of them collapses into a single conversation that
+reads as one email — from the inbox, indistinguishable from the sends never
+happening. The subject now carries the send timestamp after the verdict, where
+a phone truncates, so the verdict is not paid for. **Both causes were fixed
+because the evidence cannot separate them**, and each is a real fault.
+
+**What it costs, stated plainly:** one memory read on every hourly tick, where
+it used to cost nothing on ten of twelve — the overdue rule cannot be evaluated
+without knowing when the last send was. A send hour still makes the same two
+reads it always did, because both keys come back in one `state.readMany`.
+
+**The generalised lesson, and this repo has now paid for it three times:** a
+log written into an array nobody prints is not a log, and a `catch` that writes
+one is a `catch` that discards the evidence. `writeStatus()` swallowing its own
+errors produced a three-day lie; an unguarded `receiveReport()` inside a catch
+block killed whole invocations; this one lost the only explanation for four
+missed emails. **When you write a failure to a log, follow that log to where it
+is read. If nothing reads it, the failure is not recorded.**
+
+18 new tests (27 in `test/ops-digest.test.ts`, 670 in the suite). Every new
+guarantee was verified to fail with its fix removed — the catch-up rule, the
+failure record, the connect bound, the delivered-vs-recorded split and the
+subject stamp were each reverted in turn to confirm a test noticed.
 
 ### CLOSED — the SEO agent has completed a run
 
