@@ -2222,6 +2222,25 @@ what reaches public copy: a useful sentence in `content` rather than a title
 (short, or it inflates both broadcast prompts every tick), and channel tags on
 the write so the strategists retrieve it at `minSalience: 5`.
 
+### CLOSED — `seo_site` un-paused, and put back on daily
+
+The owner un-paused it at **2026-09-17 13:41** and set it to `hourly`. It ran
+the same minute and executed two meta-description edits, on `/index.html` and
+`/proof-of-concept.html` — the two the 09-06 hand-deploy had dropped.
+`/faq.html` is protected, so its edit queued rather than applying.
+
+**Returned to its built-in `daily` the same day, by clearing the override
+rather than setting one.** Hourly was worth undoing for two reasons. It puts a
+page-fetching, model-calling agent onto the `0 * * * *` tick, whose ~50
+subrequest budget is what killed Site-Integrity twice and forced the
+`30 * * * *` split. And every run that finds something is a full site deploy,
+so hourly makes an hourly deploy path out of an agent that only ever needed to
+check once a day.
+
+Its old pause note — "no Netlify deploy capacity" — is now obsolete twice over:
+the capacity is back, and the override is gone. Nothing is left to read as a
+current reason.
+
 ### OPEN — Supabase started timing out, and it lifted every pause on the way
 
 Reported 2026-09-14: *"multiple agents have failed, and it seems like an issue
@@ -2260,8 +2279,23 @@ nothing prunes and which `select=*` reads 200 rows of at a time.
 
 ### CLOSED — the v0.1 label and the missing intro price
 
-Both fixed in `site.source` on 2026-09-08 and waiting on Netlify capacity; the
-corrected files are with the owner for their folder.
+Both fixed in `site.source` on 2026-09-08, and **live since 2026-09-17**.
+
+They shipped as a side effect rather than deliberately, and that is the part
+worth keeping. The owner un-paused `seo_site` at 13:41; it inserted two meta
+descriptions; and a site edit is a **whole-source digest deploy**, so everything
+else sitting in `site.source` went out with it. Verified on the served pages the
+same hour: `149` present on `/faq`, zero occurrences of `v0.1`, and a meta
+description on the homepage naming seven engines and six dimensions.
+
+This is the trap in section 10 about an idle agent gaining a reason to act,
+arriving from the other direction: un-pausing an agent ships everything already
+queued in its data, not only what it does next. Here that was wanted. It will
+not always be. **Before un-pausing an agent that deploys, read what its source
+map is currently holding.**
+
+That also settles the Netlify question: **credits are back**, because the deploy
+succeeded rather than failing.
 
 - `/faq.html` and `/proof-of-concept.html` carried `v0.1` in the footer, and
   proof-of-concept carried `Veĺa v0.1` twice more. Four replacements, all
@@ -2272,9 +2306,9 @@ corrected files are with the owner for their folder.
   cost?" with $999 alone, which is the phrasing failure section 1 forbids
   agents, on the page they copy from.
 
-**One number to expect until that deploy lands:** `/faq.html` grew 8,339 →
-8,555 bytes, so stored-vs-served reads **276**, not the usual 492. That is the
-pending change, not drift, and it returns to 492 once deployed.
+**That deploy has landed**, so `/faq.html`'s stored-vs-served delta is back to
+the usual **492**. A reading of 276 would now be drift rather than a pending
+change.
 
 **Where the wrong claim came from, and it was not the agent.** Growth-Strategy
 reported that the homepage was the stale page and proof-of-concept the current
