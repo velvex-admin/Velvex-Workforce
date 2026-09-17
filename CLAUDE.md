@@ -42,8 +42,9 @@ PostgREST, and a thin wrapper around the Anthropic Messages API.
 **Repo:** `velvex-admin/Velvex-Workforce`
 **Branch of record:** `claude/vx03-operations-layer-7rq5ya` — this is the branch
 on the owner's machine, the one that gets tested and deployed. A Claude session
-is assigned its own scratch branch name each time and pushes fail with 403
-regardless (section 11), so that name never matters: what matters is that work
+is assigned its own scratch branch name each time and pushes have usually failed
+with 403 (section 11 — though one succeeded on 2026-09-17, so try it before
+assuming), so that name rarely matters: what matters is that work
 reaches `claude/vx03-operations-layer-7rq5ya` locally, by bundle. `origin` is
 only ever as current as the owner's last push. It sat *months* behind for most
 of this project's life, and on 2026-09-06 they pushed it level again — so it is
@@ -1206,8 +1207,20 @@ input the agent really emits.
 
 ## 11. Getting code onto the owner's machine
 
-The Claude GitHub App has **read-only** access to this repo, so pushes from a
-Claude session fail with 403. **This is a plan limitation, not a
+> **CORRECTION, 2026-09-17 — a push from a Claude session SUCCEEDED.** From the
+> Claude Code remote environment, `git push -u origin
+> claude/vx03-operations-layer-7rq5ya` pushed `19f4b1e`, confirmed present on
+> GitHub through the API rather than by reading the push output. So what
+> follows is no longer unconditionally true: **try the push first.** The whole
+> bundle route below exists because push was believed impossible, and sessions
+> have spent hours on it — assuming 403 without trying pays that cost for
+> nothing. What has NOT changed: the environment differs between sessions, so a
+> 403 is still a possible answer rather than a misconfiguration to debug, and
+> everything below still applies when it happens. And a push only moves the
+> branch — **it does not deploy.** The owner still runs `npx wrangler deploy`.
+
+The Claude GitHub App has historically had **read-only** access to this repo, so
+pushes from a Claude session have usually failed with 403. **This is a plan limitation, not a
 misconfiguration:** the owner is on Claude Pro, and write access to a repository
 requires an organisation or enterprise subscription. Do not spend a session
 retrying it, and do not send the owner to the GitHub App install page as though
