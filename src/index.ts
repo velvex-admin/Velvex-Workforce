@@ -28,6 +28,7 @@ import { handleIntegration } from "./routes/integrations.js";
 import { dashboardHtml } from "./ui/dashboard.js";
 import { runDue, type BatchFilter } from "./agents/registry.js";
 import type { RunCadence } from "./core/agent.js";
+import { maybeSendOpsDigest } from "./core/ops-digest.js";
 
 /** Constant-time string comparison. */
 function secretEquals(a: string, b: string): boolean {
@@ -203,6 +204,24 @@ export default {
       );
     } catch (err) {
       console.error(`vx03 ${cadence} run failed`, err);
+    }
+
+    // Cheap on every tick that isn't one of its two digest hours (a single
+    // getUTCHours() check, no subrequest), so it costs nothing to leave
+    // unconditional here rather than filtering by which cron line fired.
+    // See src/core/ops-digest.ts.
+    // Guarded here rather than inside the digest. Its two Supabase reads sit
+    // above its own try, and `memory` and `reports` are the exact tables that
+    // answered 504 for three days in September — so a database blink at 05:00
+    // would throw out of this handler and kill the invocation, which is the
+    // trap section 10 records twice. Nothing follows this line, and runDue has
+    // already reported, so swallowing here loses nothing that was not already
+    // safe. It does NOT cover a hang: the SMTP socket is still unbounded, and
+    // that is noted in section 12a for whoever finishes the digest.
+    try {
+      await maybeSendOpsDigest(ctx);
+    } catch (err) {
+      console.error("vx03 ops digest failed", err);
     }
   },
 } satisfies ExportedHandler<Env>;

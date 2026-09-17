@@ -46,6 +46,10 @@ export interface Env {
   APP_PATH_SECRET?: string;
   ANTHROPIC_API_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  /** Gmail address the Ops-Health digest sends from and to (same mailbox). */
+  OPS_DIGEST_GMAIL_USER?: string;
+  /** A Gmail App Password (16 chars, Google Account > Security > App passwords) — not the login password. */
+  OPS_DIGEST_GMAIL_APP_PASSWORD?: string;
 
   // --- inactive integrations: unset on purpose ----------------------------
   FACEBOOK_PAGE_ID?: string;

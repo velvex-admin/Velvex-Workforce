@@ -34,3 +34,11 @@ LINKEDIN_PARTNER_TOKEN=
 # Phase 0 credentials are wired into this project.
 OPS_PIPELINE_STATUS_URL=
 OPS_PIPELINE_STATUS_TOKEN=
+
+# Ops-Health's twice-daily email digest, sent over Gmail SMTP (see
+# src/core/ops-digest.ts's header comment for why not Cloudflare Email
+# Service). OPS_DIGEST_GMAIL_APP_PASSWORD is a Gmail App Password (Google
+# Account > Security > 2-Step Verification > App passwords) — the regular
+# login password is rejected outright by Gmail's SMTP.
+OPS_DIGEST_GMAIL_USER=
+OPS_DIGEST_GMAIL_APP_PASSWORD=

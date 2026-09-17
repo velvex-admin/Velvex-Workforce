@@ -17,6 +17,16 @@ workers_dev = true
 [observability]
 enabled = true
 
+# Ops-Health's twice-daily digest (src/core/ops-digest.ts) sends over Gmail
+# SMTP via the `worker-mailer` package (raw TCP sockets, no other deps) —
+# NOT Cloudflare Email Service. Cloudflare gates Email Sending to arbitrary
+# recipients behind the Workers Paid plan, and the free workaround (a
+# verified destination address) needs Email Routing enabled on the sending
+# domain, which takes over that domain's MX records — velvexbi.com's MX
+# already points at Google Workspace (adam@velvexbi.com, the real mailbox),
+# so that would have broken real mail. Gmail SMTP costs nothing extra and
+# reuses the same Workspace mailbox already in place for Phase 0.
+
 # ---------------------------------------------------------------------------
 # Non-secret configuration.
 # Secrets are NEVER put here — see .dev.vars.example and DEPLOY.md.

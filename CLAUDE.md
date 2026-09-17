@@ -382,6 +382,8 @@ the file.
 | `LINKEDIN_PARTNER_TOKEN` | partner queue — not yet supplied |
 | `LINKEDIN_ORG_ID`, `LINKEDIN_ACCESS_TOKEN` | direct company-page posting — not yet supplied |
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | not yet supplied |
+| `OPS_PIPELINE_STATUS_URL`, `OPS_PIPELINE_STATUS_TOKEN` | Ops-Health reading the Phase 0 pipeline — **both are set** |
+| `OPS_DIGEST_GMAIL_USER`, `OPS_DIGEST_GMAIL_APP_PASSWORD` | Ops-Health's twice-daily email digest, sent over Gmail SMTP — not yet supplied, see 12a |
 
 To check what the live Worker actually believes, call
 `GET /x/<APP_PATH_SECRET>/api/status` and read `connectors[].missing`. That is
@@ -1101,6 +1103,39 @@ outright.
   `startedAt`, so the ordering was checkable. This is the same lesson as the
   fetch-timeout misdiagnosis in this section: the bundle is the fact, a log line
   is an inference.
+
+- **Cloudflare blocks a Worker's `fetch()` to another Worker's bare
+  `*.workers.dev` address, and the failure looks exactly like the destination
+  answering 404.** Hit 2026-09-15 wiring `OPS_PIPELINE_STATUS_URL` up to a real
+  endpoint for the first time. `ops-health.ts` got `res.ok === false` at
+  `res.status === 404` from a URL that answered `200` correctly to every
+  `curl` test run against it directly — same URL, same token, same code path,
+  different caller. A one-off diagnostic (temporarily logging the response
+  body on the non-ok path, reverted once this was understood) showed the real
+  body: `error code: 1042`, Cloudflare's own edge page for exactly this case,
+  arriving with a `404` status instead of a distinct one — which is what made
+  it read as an ordinary auth or routing miss rather than a platform
+  restriction. `wrangler tail` could not have caught this either way: Node
+  fully-buffers stdout once it is not a TTY, so a tail piped to a file or
+  captured by a backgrounded process shows nothing until the process exits
+  cleanly enough to flush, which a killed `wrangler tail` does not reliably
+  do — a script(1) pseudo-tty didn't unblock it either, because there was
+  truly nothing arriving to log: the destination Worker's own `fetch` handler
+  never ran.
+
+  The fix is a **Custom Domain**, not a code change: `velvex-status` (the
+  Worker `OPS_PIPELINE_STATUS_URL` points at) added
+  `routes = [{ pattern = "ops-status.velvexbi.com", custom_domain = true }]`
+  to its `wrangler.toml`, on a zone already owned on this same Cloudflare
+  account. `OPS_PIPELINE_STATUS_URL` holds that hostname, never the
+  `workers.dev` one. Worth knowing narrowly for any future feed wired the same
+  way (`finance.snapshot`, `sales.pipeline`): if the source ever becomes
+  another Worker on this account rather than a plain server, it needs a real
+  domain too, not its `workers.dev` address — a Service Binding
+  (`[[services]]`) is Cloudflare's other documented way around this for
+  same-account Worker-to-Worker calls, and would fit if the source ever stops
+  being "hand a URL to something we don't control" and becomes "our own second
+  Worker" the way `velvex-status` effectively already is.
 
 ## 10a. The site, and why we hold its source
 
@@ -2234,25 +2269,132 @@ title/H1 question. Those are edits to pages rather than new machine files, so
 the existing anchored path already covers them mechanically — what is missing is
 a decision about wording, not a mechanism.
 
-### Seven agents are paused, and three of those pauses cost real function
+### CLOSED — Ops-Health is unpaused and its Phase 0 half is live
 
-Read live from `GET /api/schedules`, 2026-09-03 00:38 UTC, with `seo_site`
-added from a later read the same day. Overrides are the owner's and **must not
-be cleared on their behalf** — but what each one costs belongs on the record:
+The owner asked, 2026-09-15, for Ops-Health to be reconnected now that the
+Phase 0 pipeline (`velvex-pipeline`) is operational. Two separate things were
+done:
+
+1. **Unpaused.** `PUT /api/schedules/ops_health {"cadence":"default"}` cleared
+   the override; it is back on its built-in hourly cadence.
+2. **The Phase 0 status URL exists now.** `velvex-pipeline` already had a
+   sibling read-only Worker, `velvex-status` (client-facing case status page,
+   separate Supabase project, no shared bindings with this repo — see its own
+   `wrangler.toml` header). It gained a second route, `GET /ops/status`,
+   bearer-token-guarded, computing `errorRate`/`stuckCases` straight from
+   `case_logs` and `cases` — no new capture, no schema change on the pipeline
+   side. `OPS_PIPELINE_STATUS_URL` and `OPS_PIPELINE_STATUS_TOKEN` are both set
+   here as secrets. **The hard constraint in section 3 still holds**: nothing
+   in this repo touches `velvex-pipeline`'s code or database directly: this
+   agent only ever fetches a URL, exactly as `requires` already described.
+
+**A real trap surfaced while wiring this, worth its own entry — see section
+10's new "Cloudflare blocks Worker-to-Worker fetches over `*.workers.dev`"
+below.** The short version: `OPS_PIPELINE_STATUS_URL` cannot point at another
+script's `*.workers.dev` address; it needs a custom domain. `velvex-status` now
+also answers at `ops-status.velvexbi.com` (a Custom Domain on the `velvexbi.com`
+zone, same Cloudflare account) for exactly this reason — that hostname is what
+`OPS_PIPELINE_STATUS_URL` actually holds, not the `workers.dev` one.
+
+Verified live, 2026-09-15: `POST /api/run/ops_health` →
+*"Operations pipeline healthy: 0.0% error rate, 0 stuck cases"*. That reads
+correctly as **connected, not yet exercised** — `cases` is empty right now (the
+pipeline has no live traffic yet, confirmed directly against Supabase,
+`content-range: */0`), so a healthy zero is the honest answer, not a fake one.
+Re-check once real cases exist that the counts move.
+
+### CLOSED — Ops-Health twice-daily email digest, verified sending 2026-09-15
+
+Same request, same session: the owner wants a standing signal without opening
+the dashboard — one email every 12 hours, whether or not anything is wrong,
+so silence is never the only signal. Built as `src/core/ops-digest.ts`,
+piggybacking on the existing hourly cron tick (checks `getUTCHours()` first,
+zero subrequests spent on the other ten of every twelve ticks) rather than
+asking for a sixth cron trigger, which the account does not have (section 9).
+Fires at **05:00 and 17:00 UTC** (08:00/20:00 Amman, UTC+3) and pulls the last
+12 hours of `ops_health`'s own `reports` rows, always sending — "all clear",
+"N issue(s)", or "no monitoring data" if the agent didn't run at all.
+
+**First attempt was Cloudflare Email Service, and it's the wrong tool here —
+don't reach for it again for this project.** `send_email` binding, `env.EMAIL.send()`,
+no API key: clean, until the actual send failed with `sender_not_configured`.
+Checked against Cloudflare's own pricing docs: **Email Sending to arbitrary
+recipients requires the Workers Paid plan** (this account is on Free). There is
+a free path — sending to a *verified destination address* doesn't need the
+paid plan — but it requires Email Routing enabled on the sending domain, and
+Email Routing takes over that domain's MX records. `velvexbi.com`'s MX already
+points at Google Workspace (`adam@velvexbi.com`, the real mailbox) — enabling
+it would have broken real mail, confirmed via Cloudflare's own community
+threads on this exact conflict, not attempted.
+
+**Settled on Gmail SMTP instead**, reusing the same Workspace mailbox Phase 0
+already uses for client delivery, via the `worker-mailer` npm package (raw TCP
+sockets through `cloudflare:sockets`, zero other dependencies, MIT). Needs
+`OPS_DIGEST_GMAIL_USER` (the Gmail address) and `OPS_DIGEST_GMAIL_APP_PASSWORD`
+(a Gmail **App Password** — the regular login password is rejected outright by
+Gmail's SMTP, the exact same lesson already hit once building Phase 0's
+delivery email, see the Gmail App Password trap in the Form 2 build notes for
+that project). Code is written, typechecked, tested (7 new tests,
+`test/ops-digest.test.ts`, mocking `worker-mailer` rather than stubbing fetch
+since it never touches HTTP) and deployed — **it no-ops safely and logs why**
+until those two secrets are set, so shipping it early cost nothing. Once the
+owner supplied an App Password same day: both secrets set via `wrangler secret
+put`, no redeploy needed for the secrets themselves.
+
+**Verified with a real send, not just a clean deploy.** A temporary route
+(`POST /api/test/ops-digest`, forced `ctx.now` to a digest hour so the gate
+wouldn't skip it) exercised the actual Gmail SMTP path on demand instead of
+waiting for the clock — removed again right after, along with the test-only
+`worker-mailer` mock it had forced into `test/run-stream.test.ts` (that file
+imports `routes/api.ts` for real, which no longer touches `ops-digest.ts` now
+that the route is gone). `GET /api/state/ops.digest.last_sent` reading back
+`"2026-09-15T05"` afterward is the proof that matters: that write only
+happens inside the `try` block *after* `mailer.send()` resolves without
+throwing, so it is evidence the SMTP transaction completed, not just that the
+HTTP route didn't crash. 626 tests passing throughout.
+
+**Redesigned same day, after the owner saw the first version land ("all
+clear") and asked for it to be readable in the first five seconds.** The
+original was a plain sentence plus a bullet list — correct, but nothing told
+you the verdict without reading it. `buildDigestEmail()` in
+`src/core/ops-digest.ts` now composes a proper HTML email: a big colour-coded
+banner right under the header (green ✓/"ALL CLEAR", red ⚠/"N ISSUES FOUND",
+amber ⚠/"NO MONITORING DATA" — no preamble above it), issues (if any) pulled
+into their own callout ahead of the full check log rather than requiring a
+scan of every line, and the subject leading with an icon and the verdict
+rather than "Velvex Ops-Health" — a phone notification truncates long before
+the sender name would say anything. `deliverDigest()` split out of
+`maybeSendOpsDigest()` as the actual "connect, send, close" over Gmail SMTP,
+reusable by tests and by the temporary QA routes described below without
+duplicating that logic.
+
+**Verified visually, not just functionally** — a real design request needs a
+real look, not just a passing test. Two temporary routes did this: `GET
+/api/test/ops-digest-preview?status=clear|issues|no_data` rendered the HTML
+with synthetic data (no send, for structure/markup checking), and `POST
+/api/test/ops-digest-send?status=...` sent a real email for each of the three
+states over the real Gmail path, so the redesign could be checked in an
+actual inbox rather than trusted from source. Both removed immediately after
+(along with `buildSampleDigest()` in `routes/api.ts` and the two `_...ForPreview`
+test-only exports from `ops-digest.ts`), confirmed gone by both routes 404ing
+post-redeploy. 628 tests passing throughout — 2 more than before, covering the
+issues-callout ordering and the subject's icon-first shape.
+
+Six agents remain paused, none of them touched by this. Overrides are the
+owner's and must not be cleared on their behalf:
 
 | Agent | Paused | What the pause costs |
 |---|---|---|
 | `facebook` | 2026-08-31 | Nothing. There is no page, and it is `blocking` anyway. |
 | `social_engagement` | 2026-08-31 | Little. X read returns 402 on the free tier, so it has almost nothing to read. |
 | `linkedin` | 2026-08-31 | **Drafting, approval and learning — all of which work.** Only *delivery* is blocked on the company registration. Paused, the page's voice baseline is never used and no ruling is ever learned from, which is the layer the owner asked to switch on. |
-| `ops_health` | 2026-08-31 | **The watchdog.** Its missing Phase 0 status URL is non-blocking; it watches this system's own agents regardless, and that half was working — 81 `observed` reports in the window. Paused, nothing watches the agents. |
 | `finance_watch` | 2026-08-27 | Unknown. Reason never recorded. |
 | `marketing_analytics` | 2026-08-30 | Unknown. Reason never recorded. |
 | `seo_site` | 2026-09-03 | **Every site edit, and the sitemap staying current.** Its recorded exit condition — the re-seed — is met, and the pause is still correct for a reason the note does not carry: Netlify is out of credits. See the closed `site.source` thread above, and read that note as a record rather than as the current reason. |
 
-The four set on 2026-08-31 carry `builtInCadence`, so `staleOverrides()` can
-report them if the code's cadence later diverges. The two older ones cannot, and
-somebody has to say whether they are still wanted.
+The three still carrying `builtInCadence` let `staleOverrides()` report them if
+the code's cadence later diverges. The two oldest cannot, and somebody has to
+say whether they are still wanted.
 
 `x` (hourly) and `chief_of_staff` (daily) also carry overrides; both match the
 cadence in code, so they change nothing.
@@ -2430,7 +2572,6 @@ gets a dashed amber ring rather than a red one.
 | `linkedin` | no | A registered legal entity, before LinkedIn will grant the Community Management API. Drafting, approval and learning all work without it; only delivery of an approved post is blocked, and those wait in the partner queue. |
 | `facebook` | **yes** | There is no Facebook page. Full strategist and connector are built. |
 | `social_engagement` | no | Read access on any channel. X returns 402 on the free tier; LinkedIn comments need `r_organization_social` from the same review above. |
-| `ops_health` | no | A read-only status URL from the Phase 0 pipeline. It watches this system's own agents regardless, which is the half that matters. |
 | `finance_watch` | no | Revenue, cost and client figures pushed to `finance.snapshot`. The guardrail arithmetic and its thresholds are already written; it has nothing to divide. |
 | `lead_pipeline` | no | A prospect snapshot pushed to `sales.pipeline`. Same shape: the agent is finished, the feed is the missing half. |
 
