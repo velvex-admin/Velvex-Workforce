@@ -18,6 +18,7 @@ import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { MODELS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 import { STATE_KEYS, state } from "../../core/state.js";
+import { ideationFreeze } from "../../core/ideation.js";
 
 const MODEL = MODELS.reasoning;
 
@@ -33,7 +34,72 @@ You are given the last two weeks of agent reports, the standing notes, and the n
 
 Where a shift is prompted by the intelligence brief rather than by our own numbers, say so, and say which of the two you would trust more if they disagreed. Category movement and our own performance are different kinds of evidence.
 
+If the owner has written notes back to you, they are the highest-ranking thing in this prompt. They outrank the reports, the standing notes and the brief, and where a note contradicts what the data appears to show, the note is right and the data is being misread. The owner is describing their own business from inside it; you are inferring it from activity logs. Say plainly when a note has changed your reading, and never repeat a conclusion a note has already corrected.
+
 Nothing you propose happens without the owner approving it, so be direct rather than hedged. No em dashes. No filler.`;
+
+/**
+ * How many of the owner's notes to carry, newest first.
+ *
+ * Bounded for the reason section 12c bounds carried questions: an additive
+ * memory costs more every cycle and grows more confident while it does it.
+ * Five is roughly a quarter of a year at this agent's weekly cadence, which is
+ * long enough that a standing fact is still in front of the model and short
+ * enough that a note about a channel that has since changed falls out.
+ */
+const MAX_OWNER_NOTES = 5;
+
+interface OwnerNote {
+  at: string;
+  about: string;
+  text: string;
+}
+
+/**
+ * What the owner wrote in the note box when they ruled on this agent's
+ * recommendations.
+ *
+ * This existed and nothing read it. `decision_note` is written by
+ * `POST /api/approvals/:id/(approve|reject)` and, before this, exactly one
+ * agent in the system ever read it back: competitive-intel, and only for
+ * candidate rejections. So the owner had been answering a weekly strategy memo
+ * into a field with no reader. Measured on 2026-09-15, two notes were sitting
+ * there:
+ *
+ *   2026-09-04  "LinkedIn is currently paused as it still needs proper set-up
+ *                and the same goes to Facebook. The only operational channel is
+ *                X. If you also noticed any sales we have done they were only
+ *                tests not real sales..."
+ *   2026-09-15  "LinkedIn will be paused for 30 days minimum... We have not
+ *                filled any seats from the first 10 clients offer..."
+ *
+ * The first one is the shape of the cost. The agent had read fourteen sales
+ * entries and reasoned about conversion from them; the owner replied that they
+ * were tests, not sales; and the next run read the same fourteen rows and made
+ * the same mistake, because the correction was never anywhere it could see.
+ *
+ * Failures here are swallowed. A note is context, and an agent that refuses to
+ * think because it could not read one is worse than one that thinks without it
+ * — which is the permissive direction, and it is the safe one HERE for the
+ * reason section 10 gives: the empty value means "the owner has said nothing",
+ * and an agent proposing a strategy shift the owner then declines costs a
+ * rejection, not a publish, a deploy or a dollar.
+ */
+async function ownerNotes(ctx: RunContext): Promise<OwnerNote[]> {
+  const rows = await ctx.db
+    .listApprovals("all", 40, "growth_strategy")
+    .catch(() => []);
+
+  return rows
+    .filter((row) => (row.decision_note ?? "").trim().length > 0)
+    .sort((a, b) => ((a.decided_at ?? "") < (b.decided_at ?? "") ? 1 : -1))
+    .slice(0, MAX_OWNER_NOTES)
+    .map((row) => ({
+      at: (row.decided_at ?? row.created_at ?? "").slice(0, 10),
+      about: row.title ?? "(untitled)",
+      text: (row.decision_note ?? "").trim(),
+    }));
+}
 
 export const growthStrategyAgent: AgentDefinition = {
   id: "growth_strategy",
@@ -68,6 +134,18 @@ export const growthStrategyAgent: AgentDefinition = {
     const marketing = await ctx.db.listReports({ batch: "marketing", limit: 120 });
     const sales = await ctx.db.listReports({ batch: "sales_management", limit: 80 });
     const memory = await ctx.db.readMemory({ minSalience: 6, limit: 30 });
+    const ownersNotes = await ownerNotes(ctx);
+
+    // Logged because the owner asked the question directly: "I am putting
+    // optional notes... and am not sure if it reads them". A trail line naming
+    // the date of the newest note is a checkable answer on the dashboard,
+    // where the question was asked. Silence would have been the old behaviour.
+    ctx.log(
+      ownersNotes.length === 0
+        ? "no notes from the owner on file"
+        : `read ${ownersNotes.length} note(s) from the owner, newest ${ownersNotes[0]!.at}`,
+      { notes: ownersNotes.map((note) => note.at) }
+    );
 
     // The newest intelligence brief, as a pointer rather than the document: the
     // whole brief is in intel_briefs and reading it here would put several pages
@@ -129,9 +207,41 @@ export const growthStrategyAgent: AgentDefinition = {
         "evidence that it was read. Treat published counts as effort, never as performance."
     );
 
+    // Highest-ranking block in the prompt, and placed FIRST for that reason:
+    // this is the owner correcting the agent in their own words, and the two
+    // notes on file are both corrections of things the reports made it believe.
+    const fromOwner =
+      ownersNotes.length === 0
+        ? "(the owner has not written anything back yet)"
+        : ownersNotes
+            .map(
+              (note) =>
+                `- ${note.at}, ruling on "${note.about}":\n  "${note.text}"`
+            )
+            .join("\n");
+
+    // The freeze is the owner's instruction too, and it changes what a useful
+    // answer looks like this fortnight rather than merely informing it.
+    const freeze = ideationFreeze(ctx.now);
+    if (freeze) {
+      ctx.log(`new growth ideas are frozen until ${freeze.until}`, {
+        daysLeft: freeze.daysLeft,
+      });
+    }
+    const freezeLine = freeze
+      ? `NEW GROWTH IDEAS ARE FROZEN until ${freeze.until} (${freeze.daysLeft} day(s) left).\n${freeze.reason}\n` +
+        `The channel strategists have stopped proposing them and will keep drafting and publishing on their existing slots. ` +
+        `So do not propose new campaigns, new formats, new series or new channels this run. What is useful instead: read the ` +
+        `directions already approved and say which of them is actually being carried out, which has quietly lapsed, and what ` +
+        `would have to be true to tell whether any of them worked. A shift that reduces the number of open directions counts ` +
+        `as a shift.`
+      : "";
+
     const analysis = await ctx.claude.complete({
       system: SYSTEM,
       user:
+        `What the owner has told you, newest first. This outranks everything below it:\n${fromOwner}\n\n` +
+        (freezeLine ? `${freezeLine}\n\n` : "") +
         `Marketing and sales activity, last 14 days (${window.length} entries: ` +
         `${marketingWindow.length} marketing, ${salesWindow.length} sales):\n${activity}\n\n` +
         `What this read cannot see:\n${blindSpots.map((line) => `- ${line}`).join("\n")}\n\n` +
@@ -166,6 +276,10 @@ export const growthStrategyAgent: AgentDefinition = {
           salesReports: salesWindow.length,
           windowDays: 14,
           intelBriefDate: intel?.briefDate ?? null,
+          // So a later run, and the owner, can tell whether a given memo was
+          // written with a note in front of it or before one existed.
+          ownerNotesRead: ownersNotes.length,
+          ideationFrozenUntil: freeze?.until ?? null,
         },
         rationale: `Read across ${marketing.length} marketing and ${sales.length} sales reports together.`,
         dedupeKey: `growth:${ctx.now.toISOString().slice(0, 10)}`,

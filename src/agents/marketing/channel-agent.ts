@@ -42,6 +42,7 @@ import {
 } from "../../core/config.js";
 import { flag, type Env } from "../../env.js";
 import { dedupeKey } from "../../core/proposal-key.js";
+import { ideationFreeze } from "../../core/ideation.js";
 import {
   demote,
   learningContext,
@@ -309,6 +310,11 @@ async function draftForChannel(
   const notes = memory.map((row) => `- ${row.key}: ${row.content}`).join("\n") || "(none)";
   const posts = history.recentPosts.join("\n") || "(nothing published on this channel yet)";
 
+  // Growth ideas are the half of this call the owner froze. Drafting is not
+  // frozen and publishing is not frozen: the channel keeps its three slots a
+  // week. See src/core/ideation.ts for the counts that earned it.
+  const frozen = ideationFreeze(ctx.now);
+
   // Only while this system has published nothing here. After that the page's
   // real history is richer and current, and carrying a frozen baseline beside it
   // would compete with it — the additive-memory failure this repo has paid for
@@ -342,7 +348,11 @@ Learning from past posts DOES NOT MEAN copying or paraphrasing them. It means:
 
 Creativity is the point. If a draft could sit inside the "recent posts" list below without anyone noticing it is new, rewrite it.
 
-Draft exactly one post, plus zero to three growth ideas that would need the owner's approval before they run.
+${
+    frozen
+      ? `Draft exactly one post. Do NOT propose any growth ideas this run: return growth_ideas as an empty array.\n\nNew growth ideas are frozen until ${frozen.until} (${frozen.daysLeft} day(s) left). ${frozen.reason} This is the owner's instruction and it is not a gap for you to fill: an idea proposed now is dropped before it reaches them, so proposing one spends tokens and changes nothing. Put the whole of this run into the draft.`
+      : `Draft exactly one post, plus zero to three growth ideas that would need the owner's approval before they run.`
+  }
 
 Every draft must:
 - pick a pillar from: ${CONTENT_PILLARS.join(", ")}
@@ -351,7 +361,7 @@ Every draft must:
 - open differently from the openings in the recent posts below
 ${spec.maxLength ? `- fit within ${spec.maxLength} characters` : ""}
 
-Growth ideas are things you would try if allowed: engaging a specific external account, a new post format, a campaign concept, a series. Each carries a risk rating. Never suggest paid promotion at low risk; it is always high.
+${frozen ? "" : `Growth ideas are things you would try if allowed: engaging a specific external account, a new post format, a campaign concept, a series. Each carries a risk rating. Never suggest paid promotion at low risk; it is always high.`}
 
 Respond only with the JSON object described by the schema.`;
 
@@ -361,7 +371,7 @@ ${baseline}
 Standing notes tagged ${spec.channel}:
 ${notes}
 ${learned ? `\n${learned}\n` : ""}
-Now draft one new post and, if you see it, propose one to three growth ideas.`;
+Now draft one new post${frozen ? ", and return growth_ideas as an empty array" : ", and, if you see it, propose one to three growth ideas"}.`;
 
   const result = await ctx.claude.complete<StrategyResult>({
     model: REASONING_MODEL,
@@ -748,7 +758,22 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         dedupeKey: `draft:${spec.id}:${result.draft.pillar}:${result.draft.format}:${ctx.now.toISOString().slice(0, 10)}`,
       });
 
-      for (const idea of (result.growth_ideas ?? []).slice(0, 3)) {
+      // The prompt already asks for none while the freeze is on, so this is the
+      // second line rather than the first. It is here because a model told to
+      // return an empty array sometimes does not, and the failure that would
+      // cause is silent: a proposal reaching the queue during a freeze looks
+      // exactly like a proposal the owner asked for. The instruction shapes the
+      // call; this decides what leaves the agent.
+      const freeze = ideationFreeze(ctx.now);
+      const ideas = freeze ? [] : (result.growth_ideas ?? []).slice(0, 3);
+      if (freeze && (result.growth_ideas ?? []).length > 0) {
+        ctx.log(
+          `dropped ${result.growth_ideas!.length} growth idea(s): new ideas are frozen until ${freeze.until}`,
+          { until: freeze.until, daysLeft: freeze.daysLeft }
+        );
+      }
+
+      for (const idea of ideas) {
         proposals.push({
           type: "campaign_direction",
           summary: `${spec.channel} growth idea: ${idea.title}`,

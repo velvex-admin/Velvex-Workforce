@@ -21,6 +21,7 @@ import { resolveRequirements } from "../core/agent.js";
 import { connectorStatuses } from "../connectors/registry.js";
 import { compactQueue } from "../connectors/linkedin.js";
 import { STATE_KEYS, state } from "../core/state.js";
+import { ideationFreeze } from "../core/ideation.js";
 import { readLedger, summarise } from "../core/spend.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
 import { resolveTiers } from "../core/models.js";
@@ -220,6 +221,11 @@ export async function handleApi(
       intelligence,
       connectors: connectorStatuses(env),
       voiceProfile: DEFAULT_VOICE.source,
+      // Reported even when null. A control nobody can see is how this system
+      // lost eighteen hours to an orphaned cron line: the agent stopped doing
+      // something and nothing anywhere said why. `null` here is a positive
+      // answer — no freeze is in force — rather than an absent field.
+      ideationFreeze: ideationFreeze(new Date()),
       agents: AGENTS.map((agent) => ({
         id: agent.id,
         name: agent.name,

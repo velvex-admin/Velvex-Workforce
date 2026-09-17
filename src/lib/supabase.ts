@@ -296,13 +296,25 @@ export class Supabase {
     return rows[0] ?? null;
   }
 
-  async listApprovals(status: ApprovalRow["status"] | "all" = "pending", limit = 100) {
+  /**
+   * `agentId` filters in PostgREST rather than in the caller. An agent reading
+   * back its own rulings wants a handful of its own rows, and fetching 100
+   * rows of everybody else's to discard 95 of them spends the one thing this
+   * Worker is actually short of: an invocation's ~50 subrequests carry the
+   * whole response body, so the cost of a wide read is paid on the wire.
+   */
+  async listApprovals(
+    status: ApprovalRow["status"] | "all" = "pending",
+    limit = 100,
+    agentId?: AgentId
+  ) {
     const params = new URLSearchParams({
       select: "*",
       order: "created_at.desc",
       limit: String(limit),
     });
     if (status !== "all") params.set("status", `eq.${status}`);
+    if (agentId) params.set("agent_id", `eq.${agentId}`);
     return this.request<ApprovalRow[]>(`pending_approvals?${params}`);
   }
 
