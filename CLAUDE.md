@@ -49,6 +49,9 @@ only ever as current as the owner's last push. It sat *months* behind for most
 of this project's life, and on 2026-09-06 they pushed it level again — so it is
 no longer a fiction, and it is not authoritative either. The tree on their
 machine is. **Ask what the head is rather than assuming in either direction.**
+**As of 2026-09-17 origin IS current** - the owner pushed `5eb308f` and the
+digest commit from their own terminal, so for the first time origin carries
+everything that is deployed. Fetch it before assuming drift.
 A session that assumes origin is current works on a stale tree; a session that
 assumes it is stale re-does work already done. Both happened on 2026-09-06, and
 the tell that caught the first was the **test count** — the owner's, not the
@@ -1093,6 +1096,23 @@ outright.
   fixed block: three different numbers would be drift, one number repeated is
   the injection.
 
+- **A field can be written by the UI and read by nothing, and that failure is
+  silent from both ends.** The dashboard says a rejection note "the agent will
+  read next tick", and `POST /api/approvals/:id/(approve|reject)` stores it as
+  `decision_note`. Before 2026-09-17 exactly ONE agent ever selected that column
+  back: competitive-intel, for candidate rejections only. So the owner had been
+  answering Growth-Strategy's weekly memo into a write-only field, and had to
+  ask whether it was read at all. The cost is visible in the notes: on 09-04 the
+  agent reasoned about conversion from fourteen sales rows, the owner replied
+  "they were only tests not real sales", and the next run read the same rows and
+  repeated itself. **A correction that does not reach the next run is not a
+  correction, it is a complaint.** `ownerNotes()` now reads the newest five,
+  ranked above the reports and stated as outranking them. Verified live
+  2026-09-17: the run logged `read 2 note(s) from the owner, newest 2026-09-15`
+  and the memo opened by naming what those notes changed. **Grep for a column's
+  readers before trusting a UI affordance**; `grep -rn decision_note src/` was
+  the whole investigation.
+
 - **Verify a deploy against the deployed artifact, not the deploy output.** The
   SEO agent's last run before the re-seed logged "nothing to do this tick",
   which is exactly what a *missing* feature looks like — and reading it that way
@@ -1296,7 +1316,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 619 tests
+npx vitest run            # 652 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1330,6 +1350,7 @@ src/
     intel.ts            the brief document, its schema, and page diffing
     learning.ts         episodes, lessons, and the forgetting rules (pure)
     spend.ts            the measured spend ledger and what it implies for a balance
+    ideation.ts         the growth-idea freeze window: two dates, self-expiring
     learning-store.ts   reading/writing a learning record, forming lessons, and
                         back-filling rulings made before the layer existed
   agents/
@@ -1593,8 +1614,14 @@ highest-value move — a gap outranks a reinforcement, and observed outranks
 inferred — and the rest stay in the document. The brief itself is routine and
 files without asking. Watchlist movement is one routine observation.
 
-An approved move is written to `memory` at salience 9 under `positioning.<date>`,
-which is how it reaches the writing agents' context. Nothing publishes it.
+An approved move is written to `memory` at salience 9 under `positioning.<date>`.
+**It does NOT reach the writing agents, and this file said it did until
+2026-09-17.** Measured: only two agents sweep memory untagged, Chief-of-Staff
+and Growth-Strategy, and all three prompt builders render `row.content` only.
+The channel strategists filter `tags: [channel]`, which this row does not carry,
+and the Content Agent reads no memory at all. So an approved position reaches
+two readers, as a one-line title, and nothing that writes public copy. Fixing
+that is open work, not a settled design. Nothing publishes it either way.
 
 ### The loop back: what the owner tells it
 
@@ -1641,7 +1668,8 @@ Three things happen, in this order:
 2. `assessAnswer()` runs one Opus call at effort `medium` and says what the
    answer changes, including whether the brief was wrong.
 3. That assessment is **queued**, not executed. The owner approves it (it becomes
-   a positioning note at salience 9, which is how it reaches the writing agents)
+   a positioning note at salience 9, which reaches Chief-of-Staff and
+   Growth-Strategy but NOT the writing agents - see the correction above)
    or rejects it. Nothing publishes either way.
 
 On the dashboard this is the amber card at the top of a brief, with the answer
@@ -2147,6 +2175,52 @@ node scripts/seed-site-source.mjs <the folder they dragged into Netlify> <worker
 Re-seed first, then let the agent run. The extensionless-link fix in
 `site-inventory.ts` (section 10) has to be deployed **before** the re-seed, or
 the new hrefs make all three pages read as orphans.
+
+### OPEN until 2026-09-29 — ideation is frozen, and it expires on its own
+
+Owner, 2026-09-15: *"freeze the ideation level for 14 days... we have more ideas
+than posts and no way to know which is working and which is not."*
+
+**Measured the same day.** 2026-08-30 to 09-15: 28 growth ideas approved against
+8 posts published; 55 approved `campaign_direction` items across the whole queue
+since 08-21. No post this system has made has reported an impression back, so
+none of the 55 has been scored.
+
+`src/core/ideation.ts` holds the window (`2026-09-15` to `2026-09-29`,
+exclusive). Strategists propose zero growth ideas: the prompt asks for an empty
+array and the loop drops any that return anyway. Drafting and publishing are
+untouched. Growth-Strategy is not frozen; it is asked instead which approved
+directions are actually being carried out.
+
+Two dates in the source rather than a row in `memory`, because a control behind
+a database read is the `.catch(() => ({}))` trap in section 10. And it expires
+by itself - `seo_site` sat paused past its own stated exit condition and
+`finance_watch` since August for a reason nobody recorded. To extend it, change
+`until` and move the `AFTER` date in the test; do not delete the expiry test.
+
+### OPEN — an approved strategy or position reaches nobody who writes
+
+Found 2026-09-17 while scanning Growth-Strategy. Both `strategy.<date>` and
+`positioning.<date>.<kind>` write the substance to `detail` and a title to
+`content`, at salience 9. The full retrieval map, read from the source:
+
+| Reader | Query |
+|---|---|
+| Chief-of-Staff | `minSalience: 6, limit: 25`, untagged |
+| Growth-Strategy | `minSalience: 6, limit: 30`, untagged |
+| Channel strategists | `tags: [channel], minSalience: 5, limit: 12` |
+| Everyone else | by key |
+
+All three prompt builders render `row.content` only. So those rows reach two
+agents as a one-line title, and no channel strategist matches their tags at all.
+The intelligence loop's last step - approved position to public copy - is not
+connected. Growth-Strategy's own `execute` never claimed otherwise; the
+intelligence agent's comment and section 12b both did, and are now corrected.
+
+Two things would close it, and they are the owner's call because they change
+what reaches public copy: a useful sentence in `content` rather than a title
+(short, or it inflates both broadcast prompts every tick), and channel tags on
+the write so the strategists retrieve it at `minSalience: 5`.
 
 ### OPEN — Supabase started timing out, and it lifted every pause on the way
 
