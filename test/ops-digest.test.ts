@@ -51,6 +51,7 @@ function ctxWith(opts: {
   lastSent?: string | null;
   lastError?: { at: string; error: string };
   withCreds?: boolean;
+  to?: string;
 }) {
   const writes: Array<{ key: string; content: string; salience?: number }> = [];
   const memoryRows = [
@@ -62,7 +63,11 @@ function ctxWith(opts: {
     env:
       opts.withCreds === false
         ? {}
-        : { OPS_DIGEST_GMAIL_USER: "adam@velvexbi.com", OPS_DIGEST_GMAIL_APP_PASSWORD: "test-app-password" },
+        : {
+            OPS_DIGEST_GMAIL_USER: "adam@velvexbi.com",
+            OPS_DIGEST_GMAIL_APP_PASSWORD: "test-app-password",
+            ...(opts.to ? { OPS_DIGEST_TO: opts.to } : {}),
+          },
     now: new Date(opts.now),
     db: {
       async listReports() {
@@ -373,6 +378,22 @@ describe("maybeSendOpsDigest — recovery", () => {
     expect(sent).toHaveLength(1);
     expect(attempts).toBe(2); // retried, because losing it costs a duplicate email
     expect(errorKey(writes)).toHaveLength(0);
+  });
+
+  it("delivers to OPS_DIGEST_TO when set, while still sending as the authenticated account", async () => {
+    // Self-addressed mail is the hardest kind to diagnose: sender and recipient
+    // being one mailbox means "Gmail accepted it" and "it is in the inbox"
+    // cannot be separated from outside.
+    const { ctx } = ctxWith({ now: "2026-09-16T05:00:00Z", reports: [], to: "elsewhere@example.com" });
+    await maybeSendOpsDigest(ctx);
+    expect(sent[0]!.to).toBe("elsewhere@example.com");
+    expect((sent[0] as unknown as { from: { email: string } }).from.email).toBe("adam@velvexbi.com");
+  });
+
+  it("falls back to the sending account when no separate recipient is configured", async () => {
+    const { ctx } = ctxWith({ now: "2026-09-16T05:00:00Z", reports: [] });
+    await maybeSendOpsDigest(ctx);
+    expect(sent[0]!.to).toBe("adam@velvexbi.com");
   });
 
   it("bounds a hanging SMTP socket rather than burning the rest of the tick", async () => {

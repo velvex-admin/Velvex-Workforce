@@ -46,8 +46,20 @@ export interface Env {
   APP_PATH_SECRET?: string;
   ANTHROPIC_API_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
-  /** Gmail address the Ops-Health digest sends from and to (same mailbox). */
+  /** Gmail address the Ops-Health digest authenticates as, and sends FROM. */
   OPS_DIGEST_GMAIL_USER?: string;
+  /**
+   * Where the digest is delivered. Optional; defaults to OPS_DIGEST_GMAIL_USER.
+   *
+   * Exists because self-addressed mail is the hardest kind to diagnose: when the
+   * sending account and the receiving account are the same, "Gmail accepted it"
+   * and "it is in the inbox" cannot be told apart from outside, and anything
+   * acting on that one mailbox takes the evidence with it. Pointing this at a
+   * different address makes a send verifiable somewhere the sender does not
+   * control. The FROM address must stay the authenticated account — Gmail
+   * rewrites or refuses anything else.
+   */
+  OPS_DIGEST_TO?: string;
   /** A Gmail App Password (16 chars, Google Account > Security > App passwords) — not the login password. */
   OPS_DIGEST_GMAIL_APP_PASSWORD?: string;
 

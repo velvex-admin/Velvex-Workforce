@@ -475,6 +475,9 @@ async function deliverDigest(
     throw new Error("OPS_DIGEST_GMAIL_USER/OPS_DIGEST_GMAIL_APP_PASSWORD not set");
   }
 
+  // FROM must remain the authenticated account; only the destination moves.
+  const recipient = env.OPS_DIGEST_TO?.trim() || user;
+
   // Connect is the retryable half: nothing has been handed to Gmail yet, so a
   // second attempt cannot produce a second email. A refused or dropped TCP
   // connection is also the most likely transient failure here, and the one
@@ -514,10 +517,13 @@ async function deliverDigest(
   // catch-up rule will carry the next one anyway.
   try {
     await withTimeout(
-      mailer.send({ from: { name: "Velvex Ops-Health", email: user }, to: user, ...email }),
+      mailer.send({ from: { name: "Velvex Ops-Health", email: user }, to: recipient, ...email }),
       SMTP_SEND_TIMEOUT_MS,
       "SMTP send"
     );
+    // Recorded because "the Worker sent it" and "it arrived" are different
+    // facts, and the first is worthless without knowing where it was aimed.
+    note(`accepted by ${SMTP_HOST} for ${recipient}`);
   } finally {
     // The mail is already out by this point, so a failure to hang up politely
     // must not become the error the caller sees.

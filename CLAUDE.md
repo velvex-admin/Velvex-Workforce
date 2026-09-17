@@ -387,7 +387,8 @@ the file.
 | `LINKEDIN_ORG_ID`, `LINKEDIN_ACCESS_TOKEN` | direct company-page posting — not yet supplied |
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` | not yet supplied |
 | `OPS_PIPELINE_STATUS_URL`, `OPS_PIPELINE_STATUS_TOKEN` | Ops-Health reading the Phase 0 pipeline — **both are set** |
-| `OPS_DIGEST_GMAIL_USER`, `OPS_DIGEST_GMAIL_APP_PASSWORD` | Ops-Health's twice-daily email digest, sent over Gmail SMTP — **supplied 2026-09-15**, and proven by a real send rather than by a clean deploy (`ops.digest.last_sent` only advances after `mailer.send()` resolves). See 12a |
+| `OPS_DIGEST_GMAIL_USER`, `OPS_DIGEST_GMAIL_APP_PASSWORD` | Ops-Health's twice-daily email digest — the account it authenticates as and sends FROM. **Supplied 2026-09-15.** |
+| `OPS_DIGEST_TO` | Optional. Where the digest is delivered; defaults to `OPS_DIGEST_GMAIL_USER`. Set it to a DIFFERENT mailbox — see 12a. `ops.digest.last_sent` advancing proves Gmail returned 2xx, which is **not** proof it arrived, and a self-addressed digest makes those two impossible to tell apart. |
 
 To check what the live Worker actually believes, call
 `GET /x/<APP_PATH_SECRET>/api/status` and read `connectors[].missing`. That is
@@ -2601,6 +2602,57 @@ is read. If nothing reads it, the failure is not recorded.**
 guarantee was verified to fail with its fix removed — the catch-up rule, the
 failure record, the connect bound, the delivered-vs-recorded split and the
 subject stamp were each reverted in turn to confirm a test noticed.
+
+### OPEN — the digest is accepted by Gmail and does not arrive, and older mail vanished too
+
+Owner, 2026-09-17, after the catch-up fix deployed: *"I did not get anything on
+the 17th of september"*. Both of that day's digests are recorded as sent
+(`05:01`, `17:01`, `last_error` null) and neither arrived.
+
+**What is established, so nobody re-derives it:**
+
+- **Gmail accepted both messages.** Not inferred from the absence of an error:
+  `worker-mailer`'s `send()` returns a promise its background loop settles only
+  after `body()` reads a 2xx from the server, and a timeout rejects. Its
+  `toUsers()` also normalises a string recipient correctly, so the envelope was
+  not malformed. The SMTP transaction completed.
+- **`ops.digest.last_sent` advancing means exactly that and no more.** It is
+  written after `send()` resolves, so it is evidence of a completed SMTP
+  transaction, never of delivery. The thread above treats it as proof of
+  sending, which is right, and it was read here as proof of *arrival*, which is
+  wrong. **Do not report a digest as delivered on the strength of that row.**
+- **Mail that had already arrived and been read is now gone**, including the
+  09-15 test sends the owner replied to. `subject:Ops-Health in:anywhere`
+  returns nothing — and `in:anywhere` covers Spam, Trash, All Mail and Sent. A
+  hyphen-as-exclusion quirk was suspected and ruled out: `subject:Security-alert`
+  matches "Security alert" in a comparable mailbox, so the query is sound.
+- **VX-03 cannot be doing it.** Its entire mail surface is one outbound SMTP
+  send — no Gmail API, no IMAP, no read and no delete path. Grep for it before
+  doubting this. Whatever removes mail from that mailbox is outside this repo,
+  which also means **it is not a digest problem**: the same thing would eat
+  anything else delivered there, and Phase 0 uses that mailbox for client
+  delivery.
+
+**What was changed here**, because it is useful whatever the cause:
+`OPS_DIGEST_TO` now separates the destination from the authenticated account,
+defaulting to it. `from` must stay the authenticated account or Gmail rewrites
+or refuses it. Pointing the digest at a second mailbox makes the next send a
+real experiment — arriving elsewhere isolates the fault to that one mailbox,
+not arriving anywhere moves it back to the transport — and the run now logs
+`accepted by smtp.gmail.com for <recipient>`, so the trail says where it aimed.
+
+**The generalised lesson, and it cost a wrong report to the owner:** a
+self-addressed message is the hardest kind to diagnose, because the sending
+account, the receiving account and the audit trail are the same thing. When a
+system's only evidence of success comes from the component under suspicion,
+route the evidence somewhere that component does not control.
+
+**Still to check, and none of it is in this repo:** the mailbox's filters
+(Settings → Filters and Blocked Addresses, for any "Delete it"), what holds
+Gmail API access to it (Google Account → Security → third-party access, and
+Settings → Accounts → Grant access), and — most decisive for a Workspace
+account — the Admin console's **Email Log Search**, which reports a message's
+final disposition rather than its acceptance.
 
 ### CLOSED — the SEO agent has completed a run
 
