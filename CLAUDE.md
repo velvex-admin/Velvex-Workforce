@@ -1330,7 +1330,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 670 tests
+npx vitest run            # 677 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1978,6 +1978,51 @@ the unfinished work, as of **2026-09-06, 17:00 UTC**. Facts here about live
 settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
+
+### OPEN — the terminal position: repo half shipped, site half handed over
+
+From the 2026-08-28 competitive brief, ranked first of its seven
+recommendations. The brief's own tie-breaker chose it: it asked who the
+Executive Ledger is written for, and the owner answered the same day at
+`intel.position` — "the operating business itself... not the capital allocator
+sitting across from them" — and the brief routes that answer to "the
+terminal-diagnostic gap is the priority to prove".
+
+**The claim, and why it is not the one already on the site.** `isNot` in
+`business.ts` and the `#distinction` block on the homepage both say "not
+consulting", "not an open-ended advisory relationship". Those are *semantic*
+denials and the brief measured them as table stakes: For The TECH Of It
+publishes almost the identical sentence at $1,497, and Level Up runs its own
+"This Is Not" list. What cannot be copied is the **absence itself** — a
+provider carrying delivery revenue cannot call its diagnostic terminal,
+because the finding that recommends more work is the finding that pays them.
+Level Up credits its $2,500 AUD fee against delivery; Value Builder routes its
+free score into an advisor network. Velvex has nothing downstream, so it can
+write the sentence and they cannot.
+
+**Done and on the branch:** `BUSINESS.terminal` in `src/core/business.ts`, wired
+into `BUSINESS_CONTEXT` as a "What happens after:" line, with 5 tests in
+`test/business-context.test.ts` (677 in the suite). This was not optional
+decoration: `BUSINESS_CONTEXT` closes with "if something is not stated here, do
+not invent it", so until that field existed **every writing agent was forbidden
+from using the strongest differentiator the business has.** Each new test was
+verified to fail with the wiring removed.
+
+**Handed to the owner, not applied:** the `#terminal` section for
+`/index.html` and two `/faq.html` edits. They are site copy, and the site lives
+in the owner's Netlify folder, not this repo.
+
+**Two things learned about the site while building it, worth keeping.**
+`.di` is `opacity:0` and only `.di.vis` lifts it, and the observer in
+`site.js` watches `.rv` only — which reads like every bullet in
+`#distinction` is invisible. It is not: there is a **second, inline script at
+the bottom of `index.html`** ("DISTINCTION STAGGER") doing
+`document.querySelectorAll('.di')`, unscoped, so any `.di` anywhere on that
+page reveals. Rendered in Chromium against `site.source` to confirm, rather
+than reasoned from the CSS — the CSS alone said the opposite. The practical
+consequence: a new section may reuse the `.dgrid`/`.neg`/`.pos`/`.di` markup
+and needs no JS change, but **only on `index.html`**, because that script is
+inline there and not in `site.js`.
 
 ### CLOSED — X was deadlocked, and the learning layer has now run
 

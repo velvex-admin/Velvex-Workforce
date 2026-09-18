@@ -102,6 +102,42 @@ export const BUSINESS = {
   turnaround: "Delivered within 24 hours of an accepted intake.",
   guarantee: "Money-back guarantee, with structured follow-up at 30, 90 and 180 days.",
 
+  /**
+   * The structural fact the positioning rests on. This is NOT the same claim as
+   * "a consulting firm..." or "an open-ended advisory relationship" in `isNot`
+   * above, and the difference is the whole point.
+   *
+   * Those are semantic denials, and the 2026-08-28 competitive brief measured
+   * them as table stakes: For The TECH Of It publishes almost the identical
+   * sentence ("The diagnostic is a flat rate deliverable not a consulting
+   * engagement") at $1,497, and Level Up Professional Services runs its own
+   * "This Is Not" list naming a scorecard. Declaring what you are not no longer
+   * distinguishes anything in this category.
+   *
+   * What cannot be copied is the absence itself. A provider carrying delivery
+   * revenue cannot credibly call its own diagnostic terminal, because the
+   * finding that recommends more work is the finding that pays them, and every
+   * buyer eventually works that out. Level Up credits its $2,500 AUD fee
+   * against the delivery engagement; Value Builder System gives its score away
+   * and routes it into a certified advisor network. Velvex has nothing
+   * downstream to sell, so it can write this sentence and they cannot.
+   *
+   * It has to live HERE, not only on the site, because BUSINESS_CONTEXT closes
+   * with "if something is not stated here, do not invent it". Until this field
+   * existed, every writing agent was forbidden from using the strongest
+   * differentiator the business has.
+   */
+  terminal:
+    "Velvex has no delivery arm and sells nothing downstream of the Ledger: no delivery " +
+    "engagement, no advisor referral, no fee credited toward later work, no retainer. The " +
+    "three prioritised recommendations are executed by the client or by anyone they choose, " +
+    "never by Velvex. The structured follow-up at 30, 90 and 180 days is a check on the " +
+    "Ledger rather than a next step, and the money-back guarantee sits on the Ledger itself " +
+    "rather than on work Velvex is paid to deliver afterwards. State this absence " +
+    "structurally rather than resting on the label: \"we do not sell the work the Ledger " +
+    "recommends\" is a sentence a provider who credits a diagnostic fee against delivery " +
+    "cannot write.",
+
   /** Findings are tagged. Worth agents knowing, because it is the credibility claim. */
   evidenceStandard:
     "Every finding is tagged as observed fact, inference or assumption, and every assumption " +
@@ -121,6 +157,8 @@ What it is not: ${BUSINESS.isNot.join("; ")}.
 Who it is for: ${BUSINESS.audience}
 
 What a client receives: ${BUSINESS.deliverable}
+
+What happens after: ${BUSINESS.terminal}
 
 Price: an introductory rate of $${BUSINESS.introPriceUsd} per engagement, for the first ${BUSINESS.introSeats} clients only, after which pricing returns to the standing $${BUSINESS.priceUsd}. Never state one of those two figures without the other, and offer to confirm whether intro seats remain rather than committing either way. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
 

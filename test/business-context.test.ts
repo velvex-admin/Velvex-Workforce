@@ -68,3 +68,56 @@ describe("the vocabulary every writing agent is handed", () => {
     expect(BUSINESS_CONTEXT).toContain("superseded");
   });
 });
+
+// Declaring what you are not is table stakes in this category, measured on
+// 2026-08-28: For The TECH Of It publishes "The diagnostic is a flat rate
+// deliverable not a consulting engagement" at $1,497, and Level Up runs its own
+// "This Is Not" list. `isNot` therefore carries nothing a competitor cannot
+// copy by lunchtime.
+//
+// What no provider with delivery revenue can write is that it sells nothing
+// downstream, because the finding that recommends more work is the finding that
+// pays them. Level Up credits its $2,500 AUD fee against the delivery
+// engagement; Value Builder routes its free score into an advisor network.
+// That absence is the differentiator, and it only reaches public copy if it is
+// in BUSINESS_CONTEXT — the block closes with "if something is not stated here,
+// do not invent it", so an agent that cannot read it here is forbidden from
+// saying it.
+describe("the terminal position", () => {
+  const afterLine = BUSINESS_CONTEXT.split("\n").find((line) =>
+    line.startsWith("What happens after:")
+  );
+
+  it("reaches the model at all", () => {
+    expect(afterLine).toBeDefined();
+  });
+
+  it("states the structural absence, not only the absence of a consulting title", () => {
+    // `isNot` already says "consulting" and "open-ended advisory relationship".
+    // Neither is this claim. The delivery arm is the thing that cannot be copied.
+    expect(afterLine).toContain("no delivery arm");
+    expect(afterLine).toContain("we do not sell the work the Ledger recommends");
+  });
+
+  it("names all four things that do not happen downstream", () => {
+    for (const absent of [
+      "no delivery engagement",
+      "no advisor referral",
+      "no fee credited toward later work",
+      "no retainer",
+    ]) {
+      expect(afterLine).toContain(absent);
+    }
+  });
+
+  it("frames the 30/90/180 follow-up as a check rather than a next step", () => {
+    // A follow-up that reads as a next step re-opens the relationship the
+    // terminal claim just closed, which is the one way this copy defeats itself.
+    expect(afterLine).toContain("30, 90 and 180 days is a check on the Ledger");
+    expect(afterLine).toContain("rather than a next step");
+  });
+
+  it("puts the guarantee on the artefact rather than on downstream work", () => {
+    expect(afterLine).toContain("guarantee sits on the Ledger itself");
+  });
+});
