@@ -1979,6 +1979,44 @@ settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
 
+### OPEN — separation caption added to /proof-of-concept, not yet published
+
+From the same 2026-08-28 brief: the "number, then a band, then a label" shape
+is now table stakes among free exit-readiness scorecards (internationalexit-
+strategy publishes bands at 80-100/60-79/40-59/under-40; arxbrokers offers a
+five-minute scored version), so it stopped being able to carry the
+differentiation on its own.
+
+**Re-verified before touching anything, both against the live pages and
+against this file:** the ordering ask was already satisfied — `/proof-of-
+concept` leads with the Executive Brief, then "II. Structural Reading", and
+the homepage's four-stage methodology already sequences Structural Reading
+before Survivability Scoring and Health State. No page was reordered.
+
+**What was missing:** `method.html` already has a full "Number And Label"
+section (`#separation`) stating VSL produces the number with no label and VHM
+alone assigns the state — but the one place the raw score, band, and label
+actually sit together, the score dial on `/proof-of-concept`, showed them with
+no acknowledgment of that split. That is exactly the shape a free quiz can now
+also produce.
+
+**Done:** one caption line added next to the badge row on `/proof-of-concept`,
+pointing to `method.html#separation`. Nothing removed, nothing reordered.
+`tsc --noEmit` clean, `vitest` 677/677. Committed and pushed to
+`claude/vx03-operations-layer-7rq5ya` (rebased cleanly onto the
+`Close the site-publish thread` commit below — no file overlap, same commit
+this note sits beside).
+
+**Not done, and cannot be done from this session:** the site is a Netlify file
+deploy with no API read access (§10a) — publishing means the owner drags
+`~/Velvex-Workforce/site` into Netlify, and re-seeding means running
+`node scripts/seed-site-source.mjs site https://velvex-vx03.a99339744.workers.dev/x/<APP_PATH_SECRET>`
+with the real secret, which this session does not have. Until that happens,
+`/proof-of-concept` on the live site does not carry the caption yet, and
+`site.source` does not either. Close this thread the same way the one below
+was closed: publish, re-seed, then verify the caption and its `method.html#separation`
+link actually render on the live page.
+
 ### CLOSED — three site changes merged, published and re-seeded 2026-09-18
 
 From the 2026-08-28 competitive brief, ranked first of its seven
