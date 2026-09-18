@@ -2071,11 +2071,15 @@ Re-read it rather than trusting the folder's age.
 
 **The framework names, as supplied by the owner 2026-09-18:** VEF is the
 **Velvex Eligibility Framework**, VDL the **Velvex Diagnostic Language**, VSL
-the **Velvex Scoring Logic**, VHM the **Velvex Health Model**. All four are
-spelled out on `/method.html`. **VCVP is still unexpanded** — nothing on file
-says what those letters stand for, so the page describes its role (it governs
-use, and cannot be validated against cases by design) without guessing the
-words. Do not invent them; ask.
+the **Velvex Scoring Logic**, VHM the **Velvex Health Model**. VCVP is the **Velvex Calibration & Validation
+Protocol**. All five are spelled out on `/method.html`.
+
+The VCVP name reads as a contradiction beside "cannot be validated against
+cases by design", so the page answers that in the same breath: it is the
+standard the other frameworks are held to rather than a claim about a
+business, so there is no outcome it predicts and nothing to test it against.
+Keep that clause if the section is ever rewritten — the full name invites the
+question.
 
 **The `.di` stagger script is inline in `index.html` only** (recorded below), so
 `/method.html` carries its own copy. Any future page using the
