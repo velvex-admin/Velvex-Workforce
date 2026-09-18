@@ -1979,6 +1979,112 @@ settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
 
+### CLOSED — the buy-side positioning gap is dead, and the category already sells it
+
+Ruled **2026-09-18** against the four pages read end to end, plus two the brief
+never looked at.
+
+The 2026-08-28 brief proposed a gap — "the operational diligence a business runs
+on itself before an allocator runs it on them" — and flagged it as a hypothesis
+rather than an opening, because the entire buy-side read that cycle was search
+snippet and four pages went unopened. **The opening is dead as pitched: refuted,
+not merely unproven.**
+
+**Every snippet the brief relied on is confirmed verbatim**, so the brief was not
+wrong about the buy-side; its caution was about coverage, not accuracy:
+
+| Source | What it actually says |
+|---|---|
+| dealroom | ODD "assesses the functional strengths that determine whether a target can execute its business plan and **scale under new ownership**" |
+| hebbia | it tests whether infrastructure, team and systems "support **your** three-to-five-year growth plan" and finds "where the business will break under higher volumes" |
+| papermark | "Operational diligence — Often internal or operational consultants", listed under *often internal*, and the one workstream with no line in the deal budget |
+| carta | "Operational due diligence assesses how the business actually runs", framed as "A CFO's framework" — the fund's CFO |
+
+**The buy-side artefact is structurally adversarial to the operator, which is a
+stronger finding than "not third-party" and is the half worth keeping.**
+Dealroom: "Management sometimes paints a rosier picture than reality or holds
+back info about operational flaws. It's your job to validate their claims and
+find issues they're not volunteering." Papermark's ODD output includes "Plan to
+upgrade 20-40% of senior leadership in the first 12-18 months." Hebbia tests
+against *the buyer's* growth plan, not the operator's. That artefact cannot be
+handed to the operator, because part of it is a plan to remove the reader.
+*(observed)*
+
+**What killed it is what those four pages cannot say.** Four buy-side vendor
+pages would not mention an operator-facing product even if one existed, so their
+silence is not evidence of absence — reading it as such would have been the same
+snippet-grade reasoning the brief already flagged. Two operator-facing pages,
+also read end to end:
+
+- **Eckfeldt, Exit Readiness Assessment** — "Buyers aren't just evaluating
+  financials—they're stress-testing whether your business can run without you,
+  **scale under new ownership**, and survive scrutiny… This assessment scores six
+  dimensions." Sold to the founder, pre-transaction, scored, delivered as a
+  document, and borrowing dealroom's exact phrase. *(observed)*
+- **CrossCountry, Sell-Side Health Check** — a "proprietary framework that
+  ensures the business… withstands the rigor of diligence", run "12-18 months
+  before going to market". *(observed)*
+
+The category is **exit readiness / sell-side readiness**, it is mature, and the
+proposed gap statement is its marketing copy. That both examples are
+advisor-funded — a CEPA coaching practice and a transactions consultancy — is
+*inferred* from two instances rather than established, but it is the same
+conflict the brief already names for founder-facing scorecards.
+
+**The brief's own routing rule and the evidence agree, which is why this ranked
+last and should now be dropped rather than carried.** `intel.position` settles
+that the Ledger is addressed to the operating business, never to allocators
+directly. Re-addressing is not optional here: borrow the allocator as the
+standard of judgement and the reader is preparing for someone else's verdict.
+It also imports a transaction gate — exit readiness fires 12-18 months before a
+sale, which narrows the buying moment from *any scaling decision* to *an
+intended transaction*, on ground incumbents already hold through the deal
+relationship. *(inferred)*
+
+**Nothing survives as a standalone page**, so none was drafted. The residual
+difference — not transaction-gated, 24 hours, paid by nobody in the deal — is a
+differentiation claim belonging to the terminal-diagnostic position, not an
+opening of its own.
+
+**One thing this turned up that is not about the gap, and is the owner's call.**
+`src/core/business.ts` still states `audience: "… Distribution is institutional:
+B2B enterprises and capital allocators"`, and `db/seeds/intel-position.md`
+repeats it. That contradicts `intel.position`'s "addressed to the operating
+business itself, never to capital allocators directly". Note the contrast with
+the open thread on approved positions reaching nobody who writes: those rows
+reach two agents as a one-line title, whereas `BUSINESS_CONTEXT` is rendered in
+full into the system prompt of **every** agent that writes anything. So this is
+the one path that does reach every writer, which is exactly why a contradiction
+sitting in it matters more than the retrieval gap does. *(observed)* Not
+changed — `intel.position` outranks the site, so which of the two is wrong is a
+decision about the product, not an edit to make on anyone's behalf.
+
+**Two things deliberately not done.** The six URLs were **not** added to
+`intel.watchlist`: a watchlist is configured now, and adding to it is the
+candidate approval flow's job, not a session's. And the 2026-08-28 brief was
+**not** rewritten to drop the thread — a filed brief is the brief that was
+written, and revising `watchNext` after the fact would make the library a
+reconstruction instead of a record.
+
+**What closes it inside the system, which needs the owner because a session has
+no `APP_PATH_SECRET`.** `intel.settled` is the standing list the next scan is
+told to skip. It is a `string[]` at `detail.value`, so unlike the LinkedIn queue
+it *is* writable through the state route. Read it first, append rather than
+replace, and keep it under `MAX_SETTLED` (12):
+
+```
+BASE="https://velvex-vx03.a99339744.workers.dev/x/<APP_PATH_SECRET>"
+curl -s "$BASE/api/state/intel.settled"          # read what is there first
+curl -X PUT "$BASE/api/state/intel.settled" -H 'Content-Type: application/json' \
+  --data-binary @- <<'JSON'
+{ "value": ["<existing entries, newest first>",
+  "Buy-side ODD is bought by the buyer and adversarial to the operator; the operator-facing equivalent already exists as exit readiness / sell-side readiness. The 2026-08-28 allocator-register gap is refuted, not open."] }
+JSON
+```
+
+Until that lands, the next monthly scan re-opens this thread and pays to look at
+it again.
+
 ### OPEN — separation caption added to /proof-of-concept, not yet published
 
 From the same 2026-08-28 brief: the "number, then a band, then a label" shape
