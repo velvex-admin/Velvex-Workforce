@@ -1979,7 +1979,7 @@ settings go stale — a note in a document is not a setting. Verify against
 `GET /api/schedules`, `GET /api/status` and `GET /api/memory` before acting on
 anything below.
 
-### OPEN — three site changes merged into one folder, awaiting one publish
+### CLOSED — three site changes merged, published and re-seeded 2026-09-18
 
 From the 2026-08-28 competitive brief, ranked first of its seven
 recommendations. The brief's own tie-breaker chose it: it asked who the
@@ -2008,9 +2008,54 @@ not invent it", so until that field existed **every writing agent was forbidden
 from using the strongest differentiator the business has.** Each new test was
 verified to fail with the wiring removed.
 
-**Handed to the owner, not applied:** the site copy. The site lives in the
-owner's Netlify folder, not this repo, so a session can prepare it but cannot
-publish it.
+**PUBLISHED AND VERIFIED 2026-09-18, ~12:05 UTC.** All four pages answer 200,
+`/method` is live and in the sitemap, the homepage carries `#terminal`,
+`/proof-of-concept` shows Observed 3 / Inferred 15 / Assumed 7, `/faq` carries
+the delivery-arm sentence, and `site.source` was re-seeded to the same 8 files
+— confirmed byte-for-byte against the published folder, all eight md5s.
+
+**The served-minus-stored delta is now 485 on the three original pages and 481
+on `/method`.** It has been 492, then 440/291/440, and now this. The number
+tracks Netlify's injected block AND its href rewriting, which is
+size-dependent, so it changes whenever either does. **Stop using a specific
+delta as an integrity check.** The durable version: a delta repeated across
+pages of very different sizes is the injection; the honest check is to diff
+live against stored and confirm every changed line is a Netlify transform
+(the injected comment, `hosting-provider`/`netlify-deploy` metas, rewritten
+`href=`/`class=` attributes, the stripped verification line). That is cheap and
+does not rot.
+
+**Getting there cost three avoidable failures, all worth recording.**
+
+- **A `.tar.gz` cannot be opened on ChromeOS by double-clicking.** The owner
+  put the archive inside their site folder and dragged the folder, publishing
+  the archive as a file at `/velvex-site.tar.gz` and reverting the site to
+  their stale local copy — which was missing `proof-of-concept.html` entirely,
+  so a real page 404'd. **Send a `.zip` when a file has to reach ChromeOS.**
+- **A failed `git pull` does not stop the `wrangler deploy` after it.** This is
+  section 11's transfer trap arriving as a *pull* rather than a fetch: local
+  `site/` edits from a parallel session blocked the merge, the tree stayed at
+  `1a77166`, and the deploy in the same paste shipped it — so `BUSINESS.terminal`
+  was NOT live despite a clean-looking deploy. Nothing regressed, but nothing
+  gained either. **Never put `wrangler deploy` in the same unconditional paste
+  as a `git pull`, and read the test count before deploying.**
+- **`<PLACEHOLDER>` in a shell command is a redirection.** A paste containing
+  `<APP_PATH_SECRET>` dies on `syntax error near unexpected token`. Fill real
+  values in, or use a variable the owner sets on the line above.
+
+**The folder to seed from is `~/Velvex-Workforce/site`, not wherever the owner
+extracted an archive.** The repo copy is byte-identical to what is published,
+and it is inside the Linux container — the ChromeOS/Linux filesystem split in
+section 11 means an extracted folder in ChromeOS Downloads is invisible to
+`find` unless Downloads was shared with Linux. That one line would have
+replaced a round of path-hunting.
+
+**Expect one lagging signal rather than worrying about it:**
+`site.source.last_good` still held the **7-file** pre-merge set at 12:09
+(saved 11:30:54, before `/method.html` existed). Site-Integrity promotes a new
+restore point on its next clean pass at `30 * * * *`, so it self-corrects
+within the hour. Until it does, an auto-restore would put back a site without
+`/method.html`.
 
 **THE COLLISION, 2026-09-18, and the rule it produces.** Three sessions ran in
 parallel on three site changes. Each produced a COMPLETE FOLDER, and a Netlify
