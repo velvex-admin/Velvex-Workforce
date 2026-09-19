@@ -2114,6 +2114,18 @@ carries the old footer — so an SEO-agent deploy before that would publish
 `site.source` over both changes. That is the digest-deploy hazard in §10, and it
 is the reason these two threads have to close together rather than separately.
 
+**CORRECTION, later the same day: they did not close together.** The owner
+published and the caption thread closed on its own, because the folder they
+dragged was the one that existed before these two commits. So `site.source` and
+the live site now both carry the caption and the OLD footer, consistent with
+each other, and the repo `site/` folder is **ahead of both by four pages** —
+`/faq`, `/index`, `/method`, `/proof-of-concept`. Nothing is at risk while that
+holds: the SEO agent deploys `site.source`, not the repo, so a tick cannot
+publish a half-state. What it does mean is that these changes need their own
+drag and their own re-seed, and that the rule above is the real lesson rather
+than the pairing: **a session must not edit site copy while the owner is
+mid-publish**, because the folder they are holding goes stale under them.
+
 **Two things deliberately not done.** The six URLs were **not** added to
 `intel.watchlist`: a watchlist is configured now, and adding to it is the
 candidate approval flow's job, not a session's. And the 2026-08-28 brief was
@@ -2140,7 +2152,7 @@ JSON
 Until that lands, the next monthly scan re-opens this thread and pays to look at
 it again.
 
-### OPEN — separation caption added to /proof-of-concept, not yet published
+### CLOSED — separation caption published and re-seeded 2026-09-19
 
 From the same 2026-08-28 brief: the "number, then a band, then a label" shape
 is now table stakes among free exit-readiness scorecards (internationalexit-
@@ -2168,17 +2180,37 @@ pointing to `method.html#separation`. Nothing removed, nothing reordered.
 `Close the site-publish thread` commit below — no file overlap, same commit
 this note sits beside).
 
-**Not done, and cannot be done from this session:** the site is a Netlify file
-deploy with no API read access (§10a) — publishing means the owner drags
-`~/Velvex-Workforce/site` into Netlify, and re-seeding means running
-`node scripts/seed-site-source.mjs ./site "$BASE"` with `BASE` set on the line
-above to the worker URL plus the real `APP_PATH_SECRET` — written that way
-because a literal `<APP_PATH_SECRET>` in a paste is a shell redirection, the
-trap recorded in the thread below. This session does not hold the secret. Until that happens,
-`/proof-of-concept` on the live site does not carry the caption yet, and
-`site.source` does not either. Close this thread the same way the one below
-was closed: publish, re-seed, then verify the caption and its `method.html#separation`
-link actually render on the live page.
+**PUBLISHED AND VERIFIED 2026-09-19.** All six live paths answer 200,
+`/proof-of-concept` carries the caption, and its link resolves to
+`/method#separation` — Netlify rewrote `method.html#separation` on the way out,
+which is Pretty URLs doing what it always does, and `/method` answers 200.
+`site.source` was then re-seeded from `./site` and verified byte-for-byte
+against all 8 files.
+
+**A wasted round, and the cause is worth keeping.** The owner dragged a folder
+and reported it done, but it was the PREVIOUS day's folder — seven of eight
+files byte-identical, `proof-of-concept.html` short by exactly the 191 bytes of
+the caption. Nothing in the drag says which version you dropped. **The cheap
+check before trusting a publish is a diff of the dragged folder against the
+repo**, or one `grep` for the new string in the file about to be dragged; both
+were run here only after the live page came back without it.
+
+**Two things that read as faults and were not.** "I could not see any crons
+after deployment" is not evidence of a missing cron table — `wrangler` prints
+the triggers after the upload line and it scrolls. The durable check is
+`runtime.agent_status`: `site_integrity` at `12:30:45`, `x` and `ops_health` at
+`12:00:4x`, `chief_of_staff`/`lead_pipeline`/`seo_site` at `07:01` all on the
+same day is three of the five lines firing, at the `:00:4x` second that marks a
+cron rather than a hand-run. And the **test count could not confirm the
+`business.ts` deploy at all** — it was 677 before `a83422a` and 677 after, so
+§11's version tell is blind across those commits. What confirmed it was `HEAD`
+being read as `a83422a` at deploy time.
+
+**"Drag the folder" needed saying literally.** The owner asked whether to open
+the folder and take one file out. A Netlify file deploy replaces the whole site
+with exactly what is dropped, so dropping one file would have left a one-page
+site and 404'd everything else. Say *the folder icon itself, from outside it,
+and Netlify should report 8 files* — not "drag the folder".
 
 ### CLOSED — three site changes merged, published and re-seeded 2026-09-18
 
