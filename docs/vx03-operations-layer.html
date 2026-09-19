@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VX-03 Operations Layer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* The established VX-03 palette: slate-biased neutrals with a gold rule, so
+     this reads as the daylight version of the architecture document rather
+     than a different product. */
+  :root {
+    --ground: #F6F7F8;
+    --surface: #FFFFFF;
+    --raised: #EFF1F3;
+    --border: #DCDFE4;
+    --border-soft: #E7E9ED;
+    --text: #171A21;
+    --dim: #5A606D;
+    --faint: #858B99;
+    --gold: #7A6231;
+    --gold-rule: #B4915B;
+    --green: #2F6B4C;
+    --amber: #8E5A16;
+    --red: #A03A40;
+    --blue: #3D628F;
+    --shadow: 0 1px 2px rgba(23, 26, 33, .05), 0 8px 24px -16px rgba(23, 26, 33, .25);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14171F;
+      --surface: #1C2029;
+      --raised: #20242E;
+      --border: #2A2F3B;
+      --border-soft: #232832;
+      --text: #EDEAE2;
+      --dim: #9297A6;
+      --faint: #5C6170;
+      --gold: #C4A26B;
+      --gold-rule: #8A754F;
+      --green: #6FA787;
+      --amber: #C98A3E;
+      --red: #C1666B;
+      --blue: #7597C4;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 28px -18px rgba(0, 0, 0, .8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #14171F;
+    --surface: #1C2029;
+    --raised: #20242E;
+    --border: #2A2F3B;
+    --border-soft: #232832;
+    --text: #EDEAE2;
+    --dim: #9297A6;
+    --faint: #5C6170;
+    --gold: #C4A26B;
+    --gold-rule: #8A754F;
+    --green: #6FA787;
+    --amber: #C98A3E;
+    --red: #C1666B;
+    --blue: #7597C4;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 28px -18px rgba(0, 0, 0, .8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 56px 28px 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 52px;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .16em;
+    color: var(--gold);
+  }
+
+  h1 {
+    font-family: Fraunces, Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(30px, 5vw, 40px);
+    line-height: 1.12;
+    letter-spacing: -.015em;
+    margin: 10px 0 0;
+    text-wrap: balance;
+  }
+
+  h2 {
+    font-family: Fraunces, Georgia, serif;
+    font-weight: 600;
+    font-size: 21px;
+    letter-spacing: -.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h3 { font-size: 15px; font-weight: 600; margin: 0; }
+
+  p { margin: 0; max-width: 68ch; color: var(--dim); }
+  p.lead { color: var(--text); font-size: 17px; max-width: 62ch; }
+  strong { color: var(--text); font-weight: 600; }
+
+  section { display: flex; flex-direction: column; gap: 18px; }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-head .marker {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--faint);
+    letter-spacing: .08em;
+  }
+
+  /* Status ledger */
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 1px;
+    background: var(--border-soft);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .ledger div {
+    background: var(--surface);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .ledger .k {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--faint);
+  }
+  .ledger .v { font-size: 14.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .v.ok { color: var(--green); }
+  .v.wait { color: var(--amber); }
+  .v.stop { color: var(--red); }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--red);
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .callout.gold { border-left-color: var(--gold-rule); }
+  .callout h3 { color: var(--text); }
+
+  a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    background: var(--raised);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 560px; }
+  th {
+    text-align: left;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    color: var(--faint);
+    font-weight: 500;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--border-soft); color: var(--dim); vertical-align: top; }
+  td.name { color: var(--text); font-weight: 500; white-space: nowrap; }
+  td.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    padding: 2px 9px 2px 7px;
+    border-radius: 20px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .pill.live { color: var(--green); }
+  .pill.wait { color: var(--amber); }
+  .pill.off  { color: var(--faint); }
+
+  /* The autonomy flow. Encoded as a real chain because the order genuinely
+     matters — vetoes resolve before allowances. */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .flow .step {
+    padding: 14px 18px;
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .flow .step:last-child { border-bottom: none; }
+  .flow .step .n {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--gold);
+    border: 1px solid var(--gold-rule);
+    border-radius: 3px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+  }
+  .flow .step .body { display: flex; flex-direction: column; gap: 2px; }
+  .flow .step .t { font-weight: 600; font-size: 14px; color: var(--text); }
+  .flow .step .d { font-size: 13px; color: var(--dim); }
+  .flow .step.terminal { background: var(--raised); }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .split { grid-template-columns: 1fr; } }
+  .box {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .box .label {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+  }
+  .box.routine { border-left: 3px solid var(--green); }
+  .box.routine .label { color: var(--green); }
+  .box.approval { border-left: 3px solid var(--amber); }
+  .box.approval .label { color: var(--amber); }
+
+  ul { margin: 0; padding-left: 20px; color: var(--dim); display: flex; flex-direction: column; gap: 7px; }
+  li { max-width: 66ch; }
+  li strong { color: var(--text); }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+    font-size: 13px;
+    color: var(--faint);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+</style>
+
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Internal — Velvex — Not client facing</div>
+    <h1>VX-03 Operations Layer</h1>
+    <p class="lead" style="margin-top:14px">Thirteen agents across marketing, sales management and executive oversight, coordinated by a Chief-of-Staff. Deployed and running. Routine work executes and gets logged; anything new waits for you.</p>
+    <div class="ledger" style="margin-top:24px">
+      <div><span class="k">Worker</span><span class="v ok">deployed</span></div>
+      <div><span class="k">Database</span><span class="v ok">connected</span></div>
+      <div><span class="k">Readiness</span><span class="v ok">ready</span></div>
+      <div><span class="k">Agents</span><span class="v">13</span></div>
+      <div><span class="k">Tests</span><span class="v ok">95 passing</span></div>
+      <div><span class="k">Channels live</span><span class="v wait">X only</span></div>
+    </div>
+  </header>
+
+  <section>
+    <div class="section-head"><span class="marker">01</span><h2>What this is</h2></div>
+    <p>A single Cloudflare Worker running thirteen agents against a Supabase database. No agent framework, no ORM — plain <code>fetch</code> against PostgREST and a thin wrapper over the Messages API. The whole system is one deployable artifact.</p>
+    <p>The dashboard is served at <code>/x/&lt;APP_PATH_SECRET&gt;/</code>. There is no authentication by explicit decision: access control is an unguessable URL. The single choke point for adding real auth later is <code>authorize()</code> in <code>src/index.ts</code> — nothing else in the codebase decides who may call it.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">02</span><h2>The autonomy model</h2></div>
+    <p>This is the idea the whole system is built around. An agent never acts directly — it <strong>proposes</strong>, and the boundary decides what happens next. Order matters, because vetoes resolve before allowances.</p>
+    <div class="flow">
+      <div class="step"><span class="n">1</span><span class="body"><span class="t">Agent proposes</span><span class="d">Draft this post, publish that draft, reply to this comment, flag this stalled lead.</span></span></div>
+      <div class="step"><span class="n">2</span><span class="body"><span class="t">Approval rules run first — as vetoes</span><span class="d">If any fires, the action is queued. Full stop. Spend, irreversibility, a new channel, pricing changes, anything new by type.</span></span></div>
+      <div class="step"><span class="n">3</span><span class="body"><span class="t">Routine rules run second — as allowances</span><span class="d">Only reached when no veto fired. Drafting inside approved pillars, publishing a ready draft in an established slot.</span></span></div>
+      <div class="step"><span class="n">4</span><span class="body"><span class="t">Unmatched, or a failed judgement call</span><span class="d">Queued. The default is deny, and uncertainty escalates rather than proceeding.</span></span></div>
+      <div class="step terminal"><span class="n">→</span><span class="body"><span class="t">Executes now, or waits for you</span><span class="d">Routine work runs and lands in Completed. Everything else lands in Pending until you approve or reject it.</span></span></div>
+    </div>
+    <div class="split">
+      <div class="box routine"><span class="label">Routine — runs unattended</span><p style="font-size:13.5px">Drafting inside approved pillars and formats, in the voice profile. Publishing a ready draft when a scheduled slot is due. Applying non-protected site fixes. Replying to praise and simple questions above the confidence floor.</p></div>
+      <div class="box approval"><span class="label">Needs approval — always</span><p style="font-size:13.5px">Every growth idea, by definition. Engaging a named external account. Any paid promotion. A campaign type nobody has run. Copy that never cleared the drafting rule. Anything touching a protected page.</p></div>
+    </div>
+    <p>No agent module calls a connector directly. That is what keeps this line real rather than a comment in a file.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">03</span><h2>The roster</h2></div>
+    <p>Model tier is chosen per agent against the work it actually does — not uniformly, because uniform Opus would be an unnecessarily high cost for arithmetic and timing.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Agent</th><th>Batch</th><th>Model</th><th>Effort</th><th>Wakes</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Content</td><td>Marketing</td><td class="mono">Opus 5</td><td class="mono">xhigh</td><td class="mono">daily</td></tr>
+          <tr><td class="name">X Strategist</td><td>Marketing</td><td class="mono">Opus 5</td><td class="mono">xhigh</td><td class="mono">hourly</td></tr>
+          <tr><td class="name">LinkedIn Strategist</td><td>Marketing</td><td class="mono">Opus 5</td><td class="mono">xhigh</td><td class="mono">hourly</td></tr>
+          <tr><td class="name">Facebook Strategist</td><td>Marketing</td><td class="mono">Opus 5</td><td class="mono">xhigh</td><td class="mono">dormant</td></tr>
+          <tr><td class="name">SEO / Site</td><td>Marketing</td><td class="mono">Sonnet 5 · Haiku</td><td class="mono">high</td><td class="mono">daily</td></tr>
+          <tr><td class="name">Marketing Analytics</td><td>Marketing</td><td class="mono">Sonnet 5</td><td class="mono">medium</td><td class="mono">daily</td></tr>
+          <tr><td class="name">Social Engagement</td><td>Marketing</td><td class="mono">Haiku → Sonnet → Opus</td><td class="mono">xhigh</td><td class="mono">hourly</td></tr>
+          <tr><td class="name">Lead / Pipeline</td><td>Sales</td><td class="mono">none</td><td class="mono">—</td><td class="mono">daily</td></tr>
+          <tr><td class="name">Objection / FAQ</td><td>Sales</td><td class="mono">Sonnet 5</td><td class="mono">high</td><td class="mono">manual</td></tr>
+          <tr><td class="name">Finance-Watch</td><td>Executive</td><td class="mono">Sonnet 5</td><td class="mono">medium</td><td class="mono">daily</td></tr>
+          <tr><td class="name">Ops-Health</td><td>Executive</td><td class="mono">none</td><td class="mono">—</td><td class="mono">hourly</td></tr>
+          <tr><td class="name">Growth-Strategy</td><td>Executive</td><td class="mono">Opus 5</td><td class="mono">max</td><td class="mono">weekly</td></tr>
+          <tr><td class="name">Chief-of-Staff</td><td>Orchestration</td><td class="mono">Opus 5</td><td class="mono">high</td><td class="mono">daily</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Opus</strong> writes public copy or makes judgement calls with consequences. <strong>Sonnet</strong> classifies, summarises and matches against approved libraries. <strong>Haiku</strong> does cheap high-volume filtering — spam triage before an expensive judge call, and alt text. <strong>No model at all</strong> where the work is threshold checks and stall arithmetic, which should not cost a token.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">04</span><h2>Channel strategists</h2></div>
+    <p>The architecture document originally scoped these as timing-and-publishing only. That was widened deliberately: each channel now owns its platform end to end.</p>
+    <p>Every time a strategist wakes it reads its own past posts and channel memory, drafts one post written for that specific platform, and proposes up to three growth ideas — which always queue, by design. It publishes only when a scheduled slot is genuinely due.</p>
+    <p>Learning from past posts explicitly does <strong>not</strong> mean copying them. The prompt instructs the model to notice what landed and what stalled, break the pattern when recent posts all opened the same way, and rewrite any draft that could sit unnoticed inside the recent list.</p>
+    <p>LinkedIn was scoped as an external build in the original document. That was overridden — the strategist is ours. Publishing still routes through the partner queue because we hold no LinkedIn API credentials; switching to direct posting later is deleting one option.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">05</span><h2>How scheduling actually works</h2></div>
+    <p>Three separate concepts get confused with each other. They are not the same thing.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Concept</th><th>Lives in</th><th>What it decides</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Cron</td><td class="mono">wrangler.toml</td><td>When the Worker wakes at all. Three schedules only: hourly on the hour, 07:00 UTC daily, 08:00 UTC Mondays.</td></tr>
+          <tr><td class="name">Cadence</td><td class="mono">per agent</td><td>Which tick wakes that agent. This is the hourly / daily / weekly label on each dashboard node.</td></tr>
+          <tr><td class="name">Weekly plan</td><td class="mono">core/schedule.ts</td><td>When posts actually go out. Three slots per channel per week, re-rolled every week.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout gold">
+      <h3>A strategist wakes hourly but posts three times a week</h3>
+      <p>Waking keeps the draft shelf stocked — if fewer than three finished drafts are waiting, it writes one, and nothing goes public. Publishing is gated separately by the weekly plan. Slot times are drawn from a generator seeded on the channel and ISO week, so they are stable within a week (a restart never reshuffles a week that is half published) but different between weeks, so nothing lands on a repeating on-the-hour pattern that reads as automated.</p>
+    </div>
+    <p>Windows target English-speaking audiences: X Monday to Friday, 12:00–21:00 UTC; LinkedIn Tuesday to Thursday, 13:00–21:00 UTC. <strong>Run once</strong> on the dashboard fires a wake-up immediately but will not publish early — it still checks whether a slot is due.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">06</span><h2>The dashboard</h2></div>
+    <p>A pan-and-zoom canvas rather than a scrolling page, because the system is a network and not a workflow. The Chief-of-Staff sits on the left with two sub-nodes — Completed and Pending — with animated lines running from each section into it. Marketing, Sales and Executive sections hold their agent dots on the right.</p>
+    <p>Drag to pan, wheel to zoom, click any node to open its panel, Escape to close. Each panel carries that agent's routine and approval rules, its recent activity, a Run once control, and cadence override buttons — hourly, daily, weekly, paused, or default. Overrides persist in the database and take effect with no redeploy.</p>
+    <p><strong>Feeding it business data.</strong> Pipeline and finance figures are not read from anywhere — they are pushed in. <code>PUT /api/state/&lt;key&gt;</code> with a JSON body writes a typed snapshot the agents then reason over. <code>GET /api/state</code> lists the keys it understands.</p>
+    <p><strong>Live thought trails.</strong> The runner captures every line an agent emits while working and writes it to a status board. A running agent shows an amber pulsing ring and its current phase; its panel shows what it is doing right now plus the last twelve steps. When idle, the panel shows the previous run's trail, so there is always an answer to "what did it just do". The page polls every three seconds while anything is running and every sixty otherwise.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">07</span><h2>Live, and waiting</h2></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Channel</th><th>State</th><th>Waiting on</th></tr></thead>
+        <tbody>
+          <tr><td class="name">X</td><td><span class="pill live">live</span></td><td>Nothing. All four API secrets set and the flag is on.</td></tr>
+          <tr><td class="name">LinkedIn</td><td><span class="pill wait">drafting</span></td><td><code>LINKEDIN_PARTNER_TOKEN</code> and the integration flag. Drafts queue and publish the moment it is switched on.</td></tr>
+          <tr><td class="name">Facebook</td><td><span class="pill off">dormant</span></td><td>No page exists yet. Full logic and connector are built; <code>FACEBOOK_ENABLED</code> turns it on.</td></tr>
+          <tr><td class="name">Site</td><td><span class="pill live">live</span></td><td>Nothing. SEO agent reads the page inventory.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>To check what the deployed Worker actually believes, call <code>/api/status</code> and read <code>connectors[].missing</code>. That is authoritative — the Cloudflare UI is not.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">08</span><h2>Traps already paid for</h2></div>
+    <div class="callout">
+      <h3>Never set variables in the Cloudflare dashboard</h3>
+      <p><code>wrangler.toml</code> is the source of truth. Every deploy overwrites whatever the dashboard says, so a value changed in the web UI is silently stamped back on the next deploy. This turned enabling X publishing into a loop that repeated several times before the cause was found. Edit the file, deploy, commit. Secrets are the opposite — those live only in <code>wrangler secret put</code> and never in the file.</p>
+    </div>
+    <ul>
+      <li><strong>A failing Cloudflare build complaining about a missing <code>index.js</code> is a red herring.</strong> That is Cloudflare's server-side builder trying to build the repo itself and looking for a plain JS entry point. Our entry is TypeScript, compiled by wrangler at deploy time. It has never been the path that deploys this Worker, and its failures never touch what is running.</li>
+      <li><strong>Haiku rejects thinking and effort parameters.</strong> Sending either returns a 400. The request builder is capability-aware and omits them per model.</li>
+      <li><strong>The API rejects array length constraints in output schemas.</strong> A single <code>maxItems</code> silently broke drafting on all three strategists — the request failed before the model ran, so it cost nothing, produced nothing, and surfaced only as a logged error. A test now walks the real schema objects and fails the build on any rejected keyword.</li>
+      <li><strong>The FAQ page is a pricing page.</strong> It is protected from unattended SEO edits for that reason.</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">09</span><h2>Still open</h2></div>
+    <p>These were flagged during the build and remain unresolved. None of them blocks the system running — each one has a defined holding behaviour rather than a guess.</p>
+    <div class="items">
+      <div class="item">
+        <span class="q">How does the SEO agent write to the site?</span>
+        <span class="a">The architecture document grants write access but names no platform. The site is a static build on Netlify, which narrows it to a commit against the site repository or the Netlify API. Until that is decided the agent still runs in full and writes every proposed edit out completely — page, exact before, exact after — into a change queue. Real work is already waiting there.</span>
+      </div>
+      <div class="item">
+        <span class="q">Where do the pipeline and finance figures come from?</span>
+        <span class="a">Both live in Phase 0 systems this project must not touch, and no read path was specified. There is a push endpoint instead: <code>PUT /api/state/&lt;key&gt;</code>, which n8n or anything else can post to on a schedule. Until data arrives, each agent reports that it has none rather than inventing a number.</span>
+      </div>
+      <div class="item">
+        <span class="q">Ops-Health has nothing to watch</span>
+        <span class="a">It needs a read-only operations status endpoint at <code>OPS_PIPELINE_STATUS_URL</code>. No Phase 0 credentials are wired into this project, deliberately. Until that URL exists the agent is dormant.</span>
+      </div>
+      <div class="item">
+        <span class="q">The voice profile is a default, not your writing</span>
+        <span class="a">A deliberately non-generic default is in place in one swappable file, with mechanical checks that catch stock cadences and engagement bait before a draft can reach a channel. Moving to your own writing samples later means replacing that single file, not retraining anything.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="marker">10</span><h2>Where the memory lives</h2></div>
+    <p>None of the context behind these decisions survives a chat ending. It is written into <code>CLAUDE.md</code> at the repo root instead, which Claude Code loads automatically at the start of every session in this repository.</p>
+    <p>It records what cannot be recovered by reading the code: the business grounding and pricing, which parts of the original architecture document were deliberately overridden and why, the reasoning behind each model tier, the agents that were considered and declined so they do not get re-proposed, and every trap above. <strong>Keep it current</strong> — when a decision is made or a trap is found, it belongs there.</p>
+  </section>
+
+  <footer>
+    <div>VX-03 — internal operations layer. Served behind an unguessable URL; no authentication yet.</div>
+    <div>Model tiers: Opus 5 · Sonnet 5 · Haiku 4.5. Full rationale in <code>docs/MODEL-CHOICES.md</code>.</div>
+  </footer>
+
+</div>
+</body>
+</html>

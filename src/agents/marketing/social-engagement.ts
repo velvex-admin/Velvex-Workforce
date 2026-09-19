@@ -13,8 +13,9 @@
 // call made below ENGAGEMENT_CONFIDENCE_FLOOR is treated as not-routine even
 // when the label itself came back "praise". Being unsure is not permission.
 
+import { flag, type Env } from "../../env.js";
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
-import type { ExecutionResult, ProposedAction } from "../../core/types.js";
+import type { Channel, ExecutionResult, ProposedAction } from "../../core/types.js";
 import {
   ENGAGEMENT_CATEGORIES,
   ENGAGEMENT_CONFIDENCE_FLOOR,
@@ -29,10 +30,11 @@ import { spamTriage } from "../../lib/judge.js";
 import { getConnector } from "../../connectors/registry.js";
 import {
   ConnectorInactiveError,
+  ConnectorRequestError,
   type Connector,
   type InboundMessage,
 } from "../../connectors/types.js";
-import { MODELS } from "../../core/models.js";
+import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 
 const MODEL = MODELS.reasoning;
@@ -63,8 +65,31 @@ interface Candidate {
   reason: string;
 }
 
-async function gather(ctx: RunContext): Promise<InboundMessage[]> {
+/** A channel we hold credentials for but cannot currently read. */
+interface UnreadableChannel {
+  channel: Channel;
+  status: number;
+  reason: string;
+}
+
+/**
+ * Statuses that mean "the credentials are fine, this plan may not read here".
+ * X returns 402 credits-depleted on the free tier, because posting is included
+ * and reading mentions is not. That is a billing state, not a fault, and it
+ * must not take down the channels that are working.
+ */
+function accessReason(status: number): string | null {
+  if (status === 401) return "credentials were rejected";
+  if (status === 402) return "read access is not included in the current API plan";
+  if (status === 403) return "this app is not permitted to read here";
+  return null;
+}
+
+async function gather(
+  ctx: RunContext
+): Promise<{ messages: InboundMessage[]; unreadable: UnreadableChannel[] }> {
   const messages: InboundMessage[] = [];
+  const unreadable: UnreadableChannel[] = [];
   const since = new Date(ctx.now.getTime() - 3 * 86400_000).toISOString();
 
   for (const connector of [facebookConnector, xConnector] as Connector[]) {
@@ -74,6 +99,16 @@ async function gather(ctx: RunContext): Promise<InboundMessage[]> {
       if (err instanceof ConnectorInactiveError) {
         ctx.log(`social_engagement: ${connector.channel} inactive, waiting on ${err.missing.join(", ")}`);
         continue;
+      }
+      if (err instanceof ConnectorRequestError) {
+        const reason = accessReason(err.status);
+        if (reason) {
+          // Skip this channel and carry on. Failing the whole run here would
+          // hide inbound messages on the channels that are working.
+          ctx.log(`social_engagement: cannot read ${connector.channel} — ${reason} (HTTP ${err.status})`);
+          unreadable.push({ channel: connector.channel, status: err.status, reason });
+          continue;
+        }
       }
       throw err;
     }
@@ -86,7 +121,7 @@ async function gather(ctx: RunContext): Promise<InboundMessage[]> {
   const injected = ctx.input?.["message"];
   if (injected && typeof injected === "object") messages.push(injected as InboundMessage);
 
-  return messages;
+  return { messages, unreadable };
 }
 
 export const socialEngagementAgent: AgentDefinition = {
@@ -102,6 +137,30 @@ export const socialEngagementAgent: AgentDefinition = {
   effort: "xhigh",
   cadence: "hourly",
   approvedChannels: ["linkedin", "facebook", "x"],
+  // NOT blocking, and that is the judgement call. It still runs, because the
+  // moment ANY channel can be read it has work to do — and gather() already
+  // treats 401/402/403 as "skip this channel and carry on" rather than as a
+  // fault. What it cannot do today is see anything at all, on any channel, so
+  // it wakes hourly and finds nothing. That is worth stating once here rather
+  // than being rediscovered as "the engagement agent never does anything".
+  requires: [
+    {
+      id: "social.read-access",
+      summary: "No channel can be read yet, so there is nothing to engage with",
+      blocking: false,
+      steps: [
+        "X: read access (GET /2/users/me and the mentions endpoints) needs a paid tier. The free tier posts but returns 402 credits-depleted on every read. Roughly $200/month, so this is a volume decision rather than a setup step — worth it when X is actually driving conversations, not before.",
+        "LinkedIn: comments on the page are readable with r_organization_social, which arrives with the same Community Management API approval the LinkedIn agent is waiting on. See that agent's requirement.",
+        "Facebook: pages_read_engagement, if a page ever exists.",
+      ],
+      note:
+        "The agent is built, tested and safe to leave running: it costs a few cheap calls an hour and files an observation recording that a channel was unreadable, so the state stays visible rather than silent.",
+      check: (env: Env) =>
+        flag(env.X_READ_ENABLED) || env.LINKEDIN_ACCESS_TOKEN || env.FACEBOOK_PAGE_ACCESS_TOKEN
+          ? null
+          : "X read endpoints return 402 on the free tier; LinkedIn and Facebook have no token",
+    },
+  ],
 
   routineRules: [
     {
@@ -160,8 +219,23 @@ export const socialEngagementAgent: AgentDefinition = {
   ],
 
   async propose(ctx: RunContext): Promise<ProposedAction[]> {
-    const messages = await gather(ctx);
+    const { messages, unreadable } = await gather(ctx);
+
     if (messages.length === 0) {
+      if (unreadable.length > 0) {
+        // Record it. A channel that has silently stopped being readable looks
+        // exactly like a quiet channel, and the two need different responses.
+        return unreadable.map((entry) => ({
+          type: "observation" as const,
+          summary: `Cannot read ${entry.channel}: ${entry.reason}`,
+          channel: entry.channel,
+          payload: { status: entry.status, reason: entry.reason },
+          rationale:
+            `Inbound messages on ${entry.channel} are not being seen. Credentials are present, ` +
+            `so this is an access or plan question rather than a fault.`,
+          dedupeKey: `unreadable:${entry.channel}:${entry.status}`,
+        }));
+      }
       ctx.log("social_engagement: nothing inbound");
       return [];
     }
@@ -229,7 +303,7 @@ export const socialEngagementAgent: AgentDefinition = {
           `Their message:\n"""\n${candidate.message.text}\n"""\n\nWrite the reply.`,
         model: MODEL,
         effort: socialEngagementAgent.effort,
-        maxTokens: 600,
+        maxTokens: SHORT_ANSWER_MAX_TOKENS,
       });
 
       let text = softenTells(draft.text.trim());
@@ -294,9 +368,12 @@ export const socialEngagementAgent: AgentDefinition = {
     // LinkedIn has no connector on our side: the external agent posts. The
     // reply goes into the partner queue and is collected like any other item.
     if (channel === "linkedin") {
-      const queued = await enqueueForPartner(ctx.db, {
+      const { item: queued } = await enqueueForPartner(ctx.db, {
         text: reply,
         approvalRef: action.approvedContentRef,
+        // The message being answered. Two different comments can warrant the
+        // same wording, so identity here is the thread, not the text.
+        sourceKey: `reply:${messageId}`,
       });
       await markHandled(messageId);
       return {

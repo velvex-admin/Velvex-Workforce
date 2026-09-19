@@ -2,6 +2,7 @@
 // trusted as documentation.
 
 import { describe, expect, it } from "vitest";
+import { BudgetExceededError } from "../src/lib/claude.js";
 import { evaluate } from "../src/core/autonomy.js";
 import type { AgentDefinition } from "../src/core/agent.js";
 import type { ProposedAction } from "../src/core/types.js";
@@ -15,6 +16,9 @@ import { leadPipelineAgent } from "../src/agents/sales/lead-pipeline.js";
 import { financeWatchAgent } from "../src/agents/executive/finance-watch.js";
 import { opsHealthAgent } from "../src/agents/executive/ops-health.js";
 import { growthStrategyAgent } from "../src/agents/executive/growth-strategy.js";
+import { competitiveIntelAgent } from "../src/agents/intelligence/competitive-intel.js";
+import { recordVerdict, type CandidateLedger } from "../src/core/intel.js";
+import SEED from "../db/seeds/intel-candidates.json";
 import { marketingAnalyticsAgent } from "../src/agents/marketing/analytics.js";
 import { FAQ_LIBRARY } from "../src/core/config.js";
 import { action, ruleContext } from "./helpers.js";
@@ -302,6 +306,514 @@ describe("Executive agents", () => {
     );
     expect(decision.classification).toBe("routine");
   });
+});
+
+describe("Competitive Intelligence Agent", () => {
+  it("files a brief into its own library without asking", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({ type: "intel_brief", channel: "internal", payload: { brief: {} } })
+    );
+    expect(decision.classification).toBe("routine");
+    expect(decision.ruleId).toBe("competitive_intel.file_brief");
+  });
+
+  it("logs what moved on the watchlist without asking", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({ type: "observation", channel: "internal", payload: { changed: [] } })
+    );
+    expect(decision.classification).toBe("routine");
+    expect(decision.ruleId).toBe("competitive_intel.report_movement");
+  });
+
+  it("queues a positioning move rather than adopting it", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({
+        type: "recommendation",
+        channel: "internal",
+        payload: { kind: "positioning_gap", changesPositioning: true },
+      })
+    );
+    expect(decision.classification).toBe("needs_approval");
+    // Either the agent's own rule fires or the general messaging veto does.
+    // Both are the right answer: what Velvex claims about itself is the
+    // owner's call, and this is caught twice on purpose.
+    expect([
+      "competitive_intel.acts_on_nothing",
+      "general.pricing_or_messaging_change",
+    ]).toContain(decision.ruleId);
+  });
+
+  it("queues anything that would add to what it watches", async () => {
+    const decision = await classify(
+      competitiveIntelAgent,
+      action({ type: "memory_write", channel: "internal", payload: { watchlistAddition: true } })
+    );
+    expect(decision.classification).toBe("needs_approval");
+  });
+
+  it("cannot act externally even if it tried", async () => {
+    expect(competitiveIntelAgent.observeOnly).toBe(true);
+    expect(competitiveIntelAgent.approvedChannels).toEqual(["internal"]);
+    for (const channel of ["x", "linkedin", "site"] as const) {
+      const decision = await classify(
+        competitiveIntelAgent,
+        action({ type: "publish_post", channel, payload: {} })
+      );
+      expect(decision.classification).toBe("needs_approval");
+    }
+  });
+
+  it("does nothing at all until it has somewhere to file a brief", async () => {
+    // The library is a fourth table added by migration 0002. Without it the
+    // agent must stop BEFORE the two Opus passes, not after: a run that
+    // researches and then cannot file has spent real money for nothing.
+    const logs: string[] = [];
+    const result = await competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "true" } as unknown as import("../src/env.js").Env,
+      db: {
+        intelReady: async () => ({ ok: false, error: "relation does not exist" }),
+      } as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: new Proxy(
+        {},
+        {
+          get() {
+            throw new Error("the agent must not reach the model before the table exists");
+          },
+        }
+      ) as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: (message) => logs.push(message),
+    });
+
+    expect(result).toEqual([]);
+    expect(logs.join(" ")).toContain("0002_intelligence_layer.sql");
+  });
+
+  // A memory stub that answers per key, because the agent reads five different
+  // pieces of state and they are not interchangeable.
+  const memoryStub = (values: Record<string, unknown>) => ({
+    readMemory: async (opts: { keys?: string[] }) => {
+      const key = opts?.keys?.[0];
+      if (!key || !(key in values)) return [];
+      return [{ key, content: "", detail: { value: values[key] } }];
+    },
+    writeMemory: async (row: unknown) => row,
+    intelReady: async () => ({ ok: true }),
+    listIntelBriefs: async () => [],
+    getIntelBrief: async () => null,
+    listReports: async () => [],
+    listApprovals: async () => [],
+  });
+
+  /** A ledger in which every shipped candidate has already been ruled on. */
+  const allSeedsRuled = () => {
+    let ledger: CandidateLedger = {};
+    for (const candidate of SEED.candidates) {
+      ledger = recordVerdict(
+        ledger,
+        { name: candidate.name, url: candidate.url, verdict: "rejected" },
+        new Date("2026-08-01T00:00:00Z")
+      );
+    }
+    return ledger;
+  };
+
+  const runWith = async (
+    db: unknown,
+    complete: (args: { schema?: unknown }) => Promise<unknown>,
+    logs: string[] = []
+  ) =>
+    competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "true" } as unknown as import("../src/env.js").Env,
+      db: db as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: { complete } as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: (message) => logs.push(message),
+    });
+
+  const research = { text: "Checked the usual pages.", costUsd: 0.1, sources: [], searchesUsed: 3, truncated: false };
+
+  /** Which pass a stubbed call is, told apart by the schema it was given. */
+  const passOf = (args: { schema?: unknown }): "research" | "scan" | "other" => {
+    if (!args.schema) return "research";
+    const props = ((args.schema as { properties?: Record<string, unknown> }).properties ?? {}) as
+      Record<string, unknown>;
+    return "somethingMoved" in props ? "scan" : "other";
+  };
+
+  it("does not pay for research on a cycle where nothing moved", async () => {
+    // This is the whole cost argument. The scan is cheap and runs FIRST, so a
+    // quiet cycle ends before the research pass — which measured $1.18 on its
+    // own — is ever started. The old order ran research first and only then
+    // asked whether the cycle was worth a brief, which saved the composing pass
+    // and nothing else.
+    const logs: string[] = [];
+    const calls = { research: 0, scan: 0, other: 0 };
+
+    const result = await runWith(
+      memoryStub({ "intel.candidate_verdicts": allSeedsRuled() }),
+      async (args) => {
+        const pass = passOf(args);
+        calls[pass] += 1;
+        if (pass === "research") return research;
+        if (pass === "scan") {
+          return {
+            text: "{}",
+            parsed: {
+              somethingMoved: false,
+              why: "No provider changed its claims.",
+              leads: [],
+              settledNow: ["Lumena still publishes no price"],
+            },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        return {
+          text: "{}",
+          parsed: { anythingMaterial: false, quietNote: "unused", candidates: [] },
+          costUsd: 0.02,
+          sources: [],
+          searchesUsed: 0,
+          truncated: false,
+        };
+      },
+      logs
+    );
+
+    expect(calls.scan).toBe(1);
+    // The two expensive passes never started.
+    expect(calls.research).toBe(0);
+    expect(calls.other).toBe(0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("observation");
+    expect(result[0]!.payload["quiet"]).toBe(true);
+    expect(result[0]!.payload["scannedOnly"]).toBe(true);
+    expect(result[0]!.summary).toContain("No provider changed its claims");
+    expect(logs.join(" ")).toContain("quiet cycle, no research");
+  });
+
+  it("hands over the candidates when the ceiling stops the composing pass", async () => {
+    // A measured run spent $1.3132 on research and discovery, was refused the
+    // composing pass by the ceiling, threw, and lost the four candidates
+    // discovery had already produced. Full price, nothing delivered. Candidates
+    // are not part of the brief: they are a list of sources to rule on, and
+    // ruling on them is what unblocks the agent.
+    const logs: string[] = [];
+
+    const result = await runWith(
+      memoryStub({}),
+      async (args) => {
+        const pass = passOf(args);
+        if (pass === "research") return research;
+        if (pass === "scan") {
+          return {
+            text: "{}",
+            parsed: { somethingMoved: true, why: "moved", leads: [], settledNow: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        const props = ((args.schema as { properties?: Record<string, unknown> }).properties ??
+          {}) as Record<string, unknown>;
+        // Discovery answers; the composing pass is refused for budget.
+        if ("anythingMaterial" in props) {
+          return {
+            text: "{}",
+            parsed: { anythingMaterial: true, quietNote: "", candidates: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 0,
+            truncated: false,
+          };
+        }
+        throw new BudgetExceededError(1.3132, 1.25);
+      },
+      logs
+    );
+
+    // Candidates are recommendations carrying a watch_candidate payload.
+    const candidates = result.filter(
+      (action) => action.type === "recommendation" && action.payload["kind"] === "watch_candidate"
+    );
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(result.map((action) => action.type)).toContain("observation");
+
+    const note = result.find((action) => action.type === "observation");
+    expect(note?.summary).toContain("spend ceiling");
+    expect(note?.payload["spentUsd"]).toBe(1.3132);
+    expect(logs.join(" ")).toContain("the ceiling stopped the composing pass");
+  });
+
+  it("writes the pages to re-read into the scan prompt as URLs", async () => {
+    // web_fetch only retrieves a URL already present in the conversation, so
+    // this is the difference between a scan that checks and one that assumes.
+    let scanUser = "";
+
+    const withPreviousBrief = {
+      ...memoryStub({
+        "intel.watchlist": {
+          updatedAt: "2026-08-01T00:00:00Z",
+          sources: [
+            {
+              id: "rival",
+              label: "Rival",
+              url: "https://rival.example/pricing",
+              kind: "competitor",
+            },
+          ],
+        },
+      }),
+      listIntelBriefs: async () => [{ brief_date: "2026-07-01", headline: "prior" }],
+      getIntelBrief: async () => ({
+        document: {
+          headline: "prior",
+          watchNext: [],
+          sources: [{ url: "https://unwatched.example/pricing" }],
+        },
+      }),
+    };
+
+    await runWith(
+      withPreviousBrief,
+      async (args) => {
+        const pass = passOf(args);
+        if (pass === "scan") {
+          scanUser = (args as { user?: string }).user ?? "";
+          return {
+            text: "{}",
+            parsed: { somethingMoved: false, why: "quiet", leads: [], settledNow: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        return research;
+      }
+    );
+
+    // A page the last brief used and nobody is watching IS a fetch target.
+    expect(scanUser).toContain("https://unwatched.example/pricing");
+    expect(scanUser).toContain("You may fetch at most");
+    // The watchlist page reaches the scan through the diff, which the run
+    // computed without a model. Offering it as a fetch target too is what
+    // exhausted the budget before the unwatched pages were reached.
+    expect(scanUser).toContain("Rival");
+    // Bound the slice to that block: the watchlist URL legitimately appears
+    // further down, in the diff, which is exactly where it should come from.
+    const start = scanUser.indexOf("Pages worth re-reading");
+    const end = scanUser.indexOf("\n\n", start);
+    const recheckBlock = scanUser.slice(start, end === -1 ? undefined : end);
+    expect(recheckBlock).not.toContain("https://rival.example/pricing");
+  });
+
+  it("keeps the snapshots it fetched even when the cycle is quiet", async () => {
+    // The bug this exists for: the scan gate added a third way out of the run,
+    // and it returned without persisting the snapshots the fetch had just paid
+    // for. Every source then reports "first_seen" again next cycle, so the
+    // week-on-week diff — the only first-hand evidence a brief ever carries —
+    // silently never works.
+    const writes: Array<{ key: string; value: unknown }> = [];
+    const db = {
+      readMemory: async (opts: { keys?: string[] }) => {
+        const key = opts?.keys?.[0];
+        if (key === "intel.watchlist") {
+          return [
+            {
+              key,
+              content: "",
+              detail: {
+                value: {
+                  updatedAt: "2026-08-01T00:00:00Z",
+                  sources: [
+                    {
+                      id: "rival",
+                      label: "Rival",
+                      url: "https://rival.example/pricing",
+                      kind: "competitor",
+                    },
+                  ],
+                },
+              },
+            },
+          ];
+        }
+        return [];
+      },
+      writeMemory: async (row: { key: string; detail: { value: unknown } }) => {
+        writes.push({ key: row.key, value: row.detail.value });
+        return row;
+      },
+      intelReady: async () => ({ ok: true }),
+      listIntelBriefs: async () => [],
+      getIntelBrief: async () => null,
+      listReports: async () => [],
+      listApprovals: async () => [],
+    };
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("<html><body><p>Rival sells a diagnostic for $1,000.</p></body></html>", {
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+
+    try {
+      await runWith(db, async (args) => {
+        if (passOf(args) === "scan") {
+          return {
+            text: "{}",
+            parsed: { somethingMoved: false, why: "quiet", leads: [], settledNow: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 1,
+            truncated: false,
+          };
+        }
+        return research;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    const snapshotWrite = writes.find((w) => w.key === "intel.source_snapshots");
+    expect(snapshotWrite).toBeDefined();
+    expect(Object.keys(snapshotWrite!.value as Record<string, unknown>)).toContain("rival");
+  });
+
+  it("still runs the expensive passes when the scan finds movement", async () => {
+    // The gate has to open as well as close, or the agent quietly stops working
+    // and looks like it is saving money.
+    const logs: string[] = [];
+    const calls = { research: 0, scan: 0, other: 0 };
+
+    await runWith(
+      memoryStub({ "intel.candidate_verdicts": allSeedsRuled() }),
+      async (args) => {
+        const pass = passOf(args);
+        calls[pass] += 1;
+        if (pass === "research") return research;
+        if (pass === "scan") {
+          return {
+            text: "{}",
+            parsed: {
+              somethingMoved: true,
+              why: "Lumena published a price.",
+              leads: ["lumenaglobal.com pricing page"],
+              settledNow: [],
+            },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 2,
+            truncated: false,
+          };
+        }
+        return {
+          text: "{}",
+          parsed: { anythingMaterial: false, quietNote: "quiet", candidates: [] },
+          costUsd: 0.02,
+          sources: [],
+          searchesUsed: 0,
+          truncated: false,
+        };
+      },
+      logs
+    );
+
+    expect(calls.scan).toBe(1);
+    expect(calls.research).toBe(1);
+    expect(logs.join(" ")).toContain("scan says something moved");
+    expect(logs.join(" ")).toContain("1 lead(s)");
+  });
+
+  it("puts candidates to the owner rather than watching them itself", async () => {
+    const proposed = await runWith(memoryStub({}), async (args) =>
+      args.schema
+        ? {
+            text: "{}",
+            parsed: { anythingMaterial: false, quietNote: "quiet", candidates: [] },
+            costUsd: 0.02,
+            sources: [],
+            searchesUsed: 0,
+            truncated: false,
+          }
+        : research
+    );
+
+    // Nothing material, but the shipped batch is unruled, so the week is not
+    // quiet: those decisions are the work.
+    const candidates = proposed.filter((a) => a.payload["kind"] === "watch_candidate");
+    expect(candidates.length).toBeGreaterThan(0);
+    // Bounded, so the queue is never buried by a list of maybes.
+    expect(candidates.length).toBeLessThanOrEqual(4);
+    // The one real competitor is put first, because the batch drains a few a week.
+    expect(candidates[0]!.payload["suggestedKind"]).toBe("competitor");
+    for (const candidate of candidates) {
+      expect((await classify(competitiveIntelAgent, candidate)).classification).toBe(
+        "needs_approval"
+      );
+    }
+  });
+
+  it("spends nothing when there is nothing to research and nothing watched", async () => {
+    const logs: string[] = [];
+    const proposed = await competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "false" } as unknown as import("../src/env.js").Env,
+      db: memoryStub({}) as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: new Proxy(
+        {},
+        {
+          get() {
+            throw new Error("no watchlist and no web access means no model call");
+          },
+        }
+      ) as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: (m) => logs.push(m),
+    });
+
+    // Candidates still need ruling on, and putting them to the owner needs no
+    // model at all. The Proxy above would throw if one were called.
+    expect(proposed.every((a) => a.payload["kind"] === "watch_candidate")).toBe(true);
+    expect(logs.join(" ")).toContain("No model was called");
+  });
+
+  it("says it has nothing to look at once every candidate has been ruled on", async () => {
+    const proposed = await competitiveIntelAgent.propose({
+      env: { INTEL_WEB_RESEARCH_ENABLED: "false" } as unknown as import("../src/env.js").Env,
+      db: memoryStub({
+        "intel.candidate_verdicts": allSeedsRuled(),
+      }) as unknown as import("../src/lib/supabase.js").Supabase,
+      claude: new Proxy({}, { get() { throw new Error("must not be called"); } }) as unknown as import("../src/lib/claude.js").Claude,
+      judge: {} as unknown as import("../src/core/types.js").Judge,
+      runId: "r",
+      now: new Date("2026-08-24T08:00:00Z"),
+      trigger: "cron",
+      log: () => {},
+    });
+
+    expect(proposed).toHaveLength(1);
+    expect(proposed[0]!.type).toBe("observation");
+    expect(proposed[0]!.payload["active"]).toBe(false);
+  });
+
 });
 
 describe("Channel strategist drafts and growth ideas", () => {

@@ -26,7 +26,9 @@ import { readiness } from "./env.js";
 import { handleApi, buildContext, json } from "./routes/api.js";
 import { handleIntegration } from "./routes/integrations.js";
 import { dashboardHtml } from "./ui/dashboard.js";
-import { runDue } from "./agents/registry.js";
+import { runDue, type BatchFilter } from "./agents/registry.js";
+import type { RunCadence } from "./core/agent.js";
+import { maybeSendOpsDigest } from "./core/ops-digest.js";
 
 /** Constant-time string comparison. */
 function secretEquals(a: string, b: string): boolean {
@@ -68,7 +70,7 @@ function authorize(url: URL, env: Env): Authorized | null {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     // The LinkedIn partner reaches its endpoints with a bearer token rather
@@ -114,7 +116,7 @@ export default {
 
     if (rest.startsWith("/api/")) {
       try {
-        return await handleApi(request, env, rest.slice("/api/".length));
+        return await handleApi(request, env, rest.slice("/api/".length), execCtx);
       } catch (err) {
         console.error(err);
         return json(
@@ -143,14 +145,52 @@ export default {
       return;
     }
 
-    const cadence =
-      event.cron === "0 8 * * 1" ? "weekly" : event.cron === "0 7 * * *" ? "daily" : "hourly";
+    // Two Monday ticks, not one. A cron invocation has fifteen minutes of wall
+    // clock for everything it runs and the agent loop is sequential, so putting
+    // Competitive Intelligence (measured 10m03s) in front of Growth-Strategy
+    // (Opus, effort high) meant the second one would be killed part way with no
+    // error to show for it. Intelligence at 08:00, everything else at 09:00, so
+    // Growth-Strategy still reads the brief that was written for it.
+    const MONTHLY = "0 8 1 * *";
+    const WEEKLY = "0 9 * * 1";
+
+    // The hourly tick is split for the same reason, against the OTHER limit.
+    // An invocation gets roughly fifty subrequests for everything it runs, and
+    // Site-Integrity is last in the hourly loop and the heaviest thing in it: it
+    // fetches every stored page, so it is the one that finds the budget already
+    // spent. It died that way on consecutive hourly ticks on 2026-08-29 and left
+    // no error, because the failure report is itself a subrequest. Guarding that
+    // report makes the failure visible; it does not raise the ceiling. Its own
+    // slot does, by giving it a fresh budget.
+    const HOURLY_MAIN = "0 * * * *";
+    const HOURLY_INTEGRITY = "30 * * * *";
+
+    const cadence: RunCadence =
+      event.cron === MONTHLY
+        ? "monthly"
+        : event.cron === WEEKLY
+          ? "weekly"
+          : event.cron === "0 7 * * *"
+            ? "daily"
+            : "hourly";
+
+    // The weekly tick takes no filter. It used to be split in two so
+    // Competitive Intelligence could not eat Growth-Strategy's fifteen minutes,
+    // but that split cost a cron line the account does not have, and the line it
+    // cost was firing every Monday to run nothing. Filtering this one now would
+    // be how a weekly agent silently never runs.
+    const filter: BatchFilter =
+      event.cron === HOURLY_INTEGRITY
+        ? { onlyAgents: ["site_integrity"] }
+        : event.cron === HOURLY_MAIN
+          ? { exceptAgents: ["site_integrity"] }
+          : {};
 
     const logs: string[] = [];
     const ctx = buildContext(env, { trigger: "cron", logs });
 
     try {
-      const results = await runDue(cadence, ctx);
+      const results = await runDue(cadence, ctx, filter);
       const totals = results.reduce(
         (sum, result) => ({
           executed: sum.executed + result.executed,
@@ -164,6 +204,24 @@ export default {
       );
     } catch (err) {
       console.error(`vx03 ${cadence} run failed`, err);
+    }
+
+    // Cheap on every tick that isn't one of its two digest hours (a single
+    // getUTCHours() check, no subrequest), so it costs nothing to leave
+    // unconditional here rather than filtering by which cron line fired.
+    // See src/core/ops-digest.ts.
+    // Guarded here rather than inside the digest. Its two Supabase reads sit
+    // above its own try, and `memory` and `reports` are the exact tables that
+    // answered 504 for three days in September — so a database blink at 05:00
+    // would throw out of this handler and kill the invocation, which is the
+    // trap section 10 records twice. Nothing follows this line, and runDue has
+    // already reported, so swallowing here loses nothing that was not already
+    // safe. It does NOT cover a hang: the SMTP socket is still unbounded, and
+    // that is noted in section 12a for whoever finishes the digest.
+    try {
+      await maybeSendOpsDigest(ctx);
+    } catch (err) {
+      console.error("vx03 ops digest failed", err);
     }
   },
 } satisfies ExportedHandler<Env>;

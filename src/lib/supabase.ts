@@ -62,6 +62,83 @@ export interface ApprovalRow {
   error?: string | null;
 }
 
+/** A filed intelligence brief. `document` is the whole IntelBrief. */
+export interface IntelBriefRow {
+  id?: string;
+  created_at?: string;
+  /** YYYY-MM-DD. Unique: one brief per cycle. */
+  brief_date: string;
+  title: string;
+  headline: string;
+  document?: Record<string, unknown>;
+  gap_count?: number;
+  move_count?: number;
+  source_count?: number;
+  sources_watched?: number;
+  sources_changed?: number;
+  web_research?: boolean;
+  searches_used?: number;
+  model?: string | null;
+  cost_usd?: number;
+  run_id?: string | null;
+}
+
+/**
+ * How long one database call may take before it is abandoned.
+ *
+ * There was no timeout at all, which is the trap already recorded twice in
+ * section 10 of CLAUDE.md for Site-Integrity and Ops-Health: a fetch with no
+ * signal is not a slow call, it is a call that may never return. This is the
+ * one that matters most, because every agent makes several of these on every
+ * tick. Measured reads against this project run 0.4-1.3s, so twenty seconds is
+ * an outer bound on "something is wrong", not a budget anyone should approach.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * Waits before re-sending a call the database could not answer in time.
+ *
+ * Short on purpose, and the reason is not politeness. Every attempt costs a
+ * SUBREQUEST, and a Worker invocation gets roughly fifty for everything it
+ * runs — this system has already lost two agents to that budget. Two retries
+ * is the most that can be spent without the retry becoming the new failure.
+ */
+const RETRY_DELAYS_MS = [250, 1_000];
+
+/** Statuses that mean the database was busy rather than the request wrong. */
+const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Whether re-sending this call is SAFE, which is a different question from
+ * whether it would help.
+ *
+ * A 504 is a gateway giving up, not a transaction rolling back: the statement
+ * may well have committed before the timeout was reported. So re-sending a
+ * plain insert can file the same row twice, and this repo has already paid for
+ * that lesson — the LinkedIn partner queue reached 131 copies of one post, and
+ * section 10 records the rule that a report which cannot be written must never
+ * revise what the run actually did. Two copies of a failure report would be a
+ * quieter version of the same thing.
+ *
+ * So only two shapes are re-sent: a GET, which changes nothing, and an upsert
+ * carrying `on_conflict`, where the second write lands on the same key as the
+ * first. Every other method fails exactly as it did before.
+ */
+export function retryableRequest(method: string, path: string): boolean {
+  const verb = method.toUpperCase();
+  if (verb === "GET" || verb === "HEAD") return true;
+  return verb === "POST" && path.includes("on_conflict=");
+}
+
+/** Whether the failure itself is worth another attempt. */
+export function transientDbFailure(err: unknown): boolean {
+  if (err instanceof SupabaseError) return TRANSIENT_STATUSES.has(err.status);
+  // An aborted or dropped connection never returned an answer, so nothing is
+  // known about whether it ran — which is why only safe methods reach here.
+  const name = err instanceof Error ? err.name : "";
+  return name === "AbortError" || name === "TimeoutError" || name === "TypeError";
+}
+
 export class SupabaseError extends Error {
   constructor(
     message: string,
@@ -77,9 +154,18 @@ export class Supabase {
   private readonly base: string;
   private readonly key: string;
 
-  constructor(env: Env) {
+  /** Overridable so a test can exercise the retry loop without the waiting. */
+  private readonly retryDelaysMs: ReadonlyArray<number>;
+  private readonly timeoutMs: number;
+
+  constructor(
+    env: Env,
+    options?: { retryDelaysMs?: ReadonlyArray<number>; timeoutMs?: number }
+  ) {
     this.base = env.SUPABASE_URL.replace(/\/+$/, "");
     this.key = requireSecret(env, "SUPABASE_SERVICE_ROLE_KEY");
+    this.retryDelaysMs = options?.retryDelaysMs ?? RETRY_DELAYS_MS;
+    this.timeoutMs = options?.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
   private async request<T>(
@@ -95,17 +181,48 @@ export class Supabase {
       ...((rest.headers as Record<string, string> | undefined) ?? {}),
     };
 
-    const res = await fetch(`${this.base}/rest/v1/${path}`, { ...rest, headers });
-    const text = await res.text();
+    const method = rest.method ?? "GET";
+    const mayRetry = retryableRequest(method, path);
+    let lastError: unknown;
 
-    if (!res.ok) {
-      throw new SupabaseError(
-        `Supabase ${rest.method ?? "GET"} ${path} failed with ${res.status}`,
-        res.status,
-        text.slice(0, 500)
-      );
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const res = await fetch(`${this.base}/rest/v1/${path}`, {
+          ...rest,
+          headers,
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+        const text = await res.text();
+
+        if (!res.ok) {
+          throw new SupabaseError(
+            `Supabase ${method} ${path} failed with ${res.status}`,
+            res.status,
+            text.slice(0, 500)
+          );
+        }
+        return (text ? JSON.parse(text) : null) as T;
+      } catch (err) {
+        if (!mayRetry || !transientDbFailure(err)) throw err;
+        lastError = err;
+
+        const delay = this.retryDelaysMs[attempt];
+        if (delay === undefined) break;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
-    return (text ? JSON.parse(text) : null) as T;
+
+    // Out of attempts. The count goes in the message because these reach the
+    // owner as an agent's failure, and "the database was busy" and "the
+    // database was busy three times running" are different problems.
+    const attempts = this.retryDelaysMs.length + 1;
+    throw new SupabaseError(
+      `Supabase ${method} ${path} failed with ` +
+        `${lastError instanceof SupabaseError ? lastError.status : "no response"} ` +
+        `after ${attempts} attempts`,
+      lastError instanceof SupabaseError ? lastError.status : 0,
+      lastError instanceof SupabaseError ? lastError.body : String(lastError)
+    );
   }
 
   // --- reports -------------------------------------------------------------
@@ -179,13 +296,25 @@ export class Supabase {
     return rows[0] ?? null;
   }
 
-  async listApprovals(status: ApprovalRow["status"] | "all" = "pending", limit = 100) {
+  /**
+   * `agentId` filters in PostgREST rather than in the caller. An agent reading
+   * back its own rulings wants a handful of its own rows, and fetching 100
+   * rows of everybody else's to discard 95 of them spends the one thing this
+   * Worker is actually short of: an invocation's ~50 subrequests carry the
+   * whole response body, so the cost of a wide read is paid on the wire.
+   */
+  async listApprovals(
+    status: ApprovalRow["status"] | "all" = "pending",
+    limit = 100,
+    agentId?: AgentId
+  ) {
     const params = new URLSearchParams({
       select: "*",
       order: "created_at.desc",
       limit: String(limit),
     });
     if (status !== "all") params.set("status", `eq.${status}`);
+    if (agentId) params.set("agent_id", `eq.${agentId}`);
     return this.request<ApprovalRow[]>(`pending_approvals?${params}`);
   }
 
@@ -202,6 +331,63 @@ export class Supabase {
       { method: "PATCH", body: JSON.stringify(patch), prefer: "return=representation" }
     );
     return rows[0]!;
+  }
+
+  // --- intel_briefs --------------------------------------------------------
+
+  /**
+   * File a brief. Keyed on the date it covers, so a second run on the same day
+   * revises that day's brief instead of filing a near-duplicate next to it.
+   */
+  async upsertIntelBrief(row: IntelBriefRow): Promise<IntelBriefRow> {
+    const rows = await this.request<IntelBriefRow[]>("intel_briefs?on_conflict=brief_date", {
+      method: "POST",
+      body: JSON.stringify(row),
+      prefer: "return=representation,resolution=merge-duplicates",
+    });
+    return rows[0]!;
+  }
+
+  /**
+   * The library index. `document` is excluded on purpose: the list view shows
+   * titles and counts, and pulling every full brief to render a list is how a
+   * library page gets slow and expensive at the same time.
+   */
+  async listIntelBriefs(limit = 50): Promise<IntelBriefRow[]> {
+    const params = new URLSearchParams({
+      select:
+        "id,created_at,brief_date,title,headline,gap_count,move_count,source_count," +
+        "sources_watched,sources_changed,web_research,searches_used,model,cost_usd",
+      order: "brief_date.desc",
+      limit: String(limit),
+    });
+    return this.request<IntelBriefRow[]>(`intel_briefs?${params}`);
+  }
+
+  /** One brief, whole. Accepts either its uuid or the date it covers. */
+  async getIntelBrief(handle: string): Promise<IntelBriefRow | null> {
+    const column = /^\d{4}-\d{2}-\d{2}$/.test(handle) ? "brief_date" : "id";
+    const rows = await this.request<IntelBriefRow[]>(
+      `intel_briefs?${column}=eq.${encodeURIComponent(handle)}&select=*&limit=1`
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Whether migration 0002 has been applied.
+   *
+   * Worth a dedicated probe: without it the intelligence agent's first act on a
+   * fresh deployment is an insert that 400s, which surfaces as a failed run
+   * rather than as "the migration has not been run". The agent calls this
+   * first and stops cleanly; the dashboard shows the same answer.
+   */
+  async intelReady(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.request<unknown>("intel_briefs?select=id&limit=1");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Cheap health probe for the dashboard. */

@@ -15,7 +15,7 @@
 
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
-import { flag } from "../../env.js";
+import { flag, type Env } from "../../env.js";
 import { STATE_KEYS, state } from "../../core/state.js";
 
 export interface OpsStatus {
@@ -30,6 +30,21 @@ export interface OpsStatus {
 const ERROR_RATE_WARNING = 0.05;
 const STUCK_CASE_WARNING = 3;
 
+/**
+ * How long to wait for the operations pipeline before giving up on it.
+ *
+ * This agent runs hourly, near the end of the hourly tick, and reaches a URL on
+ * a system this project deliberately holds no control over. A `fetch` with no
+ * signal is not a slow call, it is a call that may never return — and the agent
+ * that hangs is the one that would have reported the problem. Site-Integrity
+ * lost two consecutive ticks to exactly this shape on 2026-08-29, leaving a
+ * `running` status row and no error anywhere.
+ *
+ * Ten seconds is the same budget Site-Integrity gives each page. A status
+ * endpoint that cannot answer in ten seconds is itself the news.
+ */
+const STATUS_FETCH_TIMEOUT_MS = 10_000;
+
 export const opsHealthAgent: AgentDefinition = {
   id: "ops_health",
   name: "Ops-Health Agent",
@@ -43,6 +58,27 @@ export const opsHealthAgent: AgentDefinition = {
   cadence: "hourly",
   observeOnly: true,
   approvedChannels: ["internal"],
+  // NOT blocking. Ops-Health has two jobs and only one of them needs the
+  // pipeline: it watches this system's own agents regardless, which is the half
+  // that matters most while there is no Phase 0 credential to give it.
+  requires: [
+    {
+      id: "ops.pipeline-status-endpoint",
+      summary: "The Phase 0 operations pipeline is not being watched — no status endpoint is wired",
+      blocking: false,
+      steps: [
+        "Expose a read-only status endpoint on the operations pipeline. It is a separate project with its own database, and this system deliberately holds no credentials for it, so the pipeline has to offer a URL rather than this agent reaching in.",
+        "wrangler secret put OPS_PIPELINE_STATUS_URL, and OPS_PIPELINE_STATUS_TOKEN if it needs one.",
+        "Set OPS_PIPELINE_MONITOR_ENABLED = \"true\" in wrangler.toml and deploy.",
+      ],
+      note:
+        "Read-only by design and never to be widened. The hard constraint on this repo is that it does not touch the operations-pipeline project, its database or its infrastructure; a status URL is the whole of the intended coupling.",
+      check: (env: Env) =>
+        flag(env.OPS_PIPELINE_MONITOR_ENABLED) && env.OPS_PIPELINE_STATUS_URL
+          ? null
+          : "no OPS_PIPELINE_STATUS_URL is configured",
+    },
+  ],
 
   routineRules: [
     {
@@ -94,6 +130,7 @@ export const opsHealthAgent: AgentDefinition = {
         headers: ctx.env.OPS_PIPELINE_STATUS_TOKEN
           ? { Authorization: `Bearer ${ctx.env.OPS_PIPELINE_STATUS_TOKEN}` }
           : {},
+        signal: AbortSignal.timeout(STATUS_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) {
         return [
@@ -105,13 +142,43 @@ export const opsHealthAgent: AgentDefinition = {
           },
         ];
       }
-      status = (await res.json()) as OpsStatus;
+      // Parsed separately from the request, because "the host never answered"
+      // and "the host answered with a login page" send you looking in entirely
+      // different places, and on a first connection the second is likelier.
+      // Reporting both as "could not reach" costs an afternoon.
+      const body = await res.text();
+      try {
+        status = JSON.parse(body) as OpsStatus;
+      } catch {
+        return [
+          {
+            type: "observation",
+            summary: "Operations status endpoint answered, but not with JSON",
+            payload: {
+              httpStatus: res.status,
+              contentType: res.headers.get("content-type"),
+              // Enough to recognise a login page or an error page, not enough
+              // to paste somebody's whole dashboard into the memory table.
+              bodyStarts: body.slice(0, 200),
+              active: true,
+            },
+            dedupeKey: `ops:not-json:${ctx.now.toISOString().slice(0, 13)}`,
+          },
+        ];
+      }
     } catch (err) {
+      const timedOut = err instanceof Error && err.name === "TimeoutError";
       return [
         {
           type: "observation",
-          summary: "Could not reach the operations status endpoint",
-          payload: { error: err instanceof Error ? err.message : String(err) },
+          summary: timedOut
+            ? `Operations status endpoint did not answer within ${STATUS_FETCH_TIMEOUT_MS / 1000}s`
+            : "Could not reach the operations status endpoint",
+          payload: {
+            error: err instanceof Error ? err.message : String(err),
+            timedOut,
+            active: true,
+          },
           dedupeKey: `ops:unreachable:${ctx.now.toISOString().slice(0, 13)}`,
         },
       ];

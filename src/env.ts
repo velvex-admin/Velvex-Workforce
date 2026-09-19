@@ -15,14 +15,53 @@ export interface Env {
   MODEL_FAST?: string;
   FACEBOOK_ENABLED: string;
   X_ENABLED: string;
+  /**
+   * Whether X's READ endpoints are available. Separate from X_ENABLED because
+   * they are separately purchased: the free tier posts fine and returns 402
+   * credits-depleted on every read, so this stays off until a paid tier is
+   * active. Social Engagement and any per-post metric retrieval depend on it.
+   */
+  X_READ_ENABLED?: string;
   LINKEDIN_INTEGRATION_ENABLED: string;
+  /**
+   * Whether this Worker posts to the LinkedIn company page itself, rather than
+   * handing drafts to the partner queue. Off until the Community Management API
+   * app is approved and a token exists.
+   */
+  LINKEDIN_DIRECT_ENABLED?: string;
   OPS_PIPELINE_MONITOR_ENABLED: string;
+  /**
+   * Whether the Competitive Intelligence agent may reach the open web.
+   *
+   * Not a credential: web search runs server side on the model call, so there
+   * is nothing to set up. It is a spend switch. Searches bill at $10 per 1,000
+   * on top of the tokens their results consume, and the agent caps itself at 8
+   * a run on a weekly cadence, so on is a few cents a month. Off leaves the
+   * agent working from the watchlist alone, and it says so in the brief.
+   */
+  INTEL_WEB_RESEARCH_ENABLED: string;
 
   // --- secrets (wrangler secret put) --------------------------------------
   /** The unguessable path segment every route lives under. */
   APP_PATH_SECRET?: string;
   ANTHROPIC_API_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  /** Gmail address the Ops-Health digest authenticates as, and sends FROM. */
+  OPS_DIGEST_GMAIL_USER?: string;
+  /**
+   * Where the digest is delivered. Optional; defaults to OPS_DIGEST_GMAIL_USER.
+   *
+   * Exists because self-addressed mail is the hardest kind to diagnose: when the
+   * sending account and the receiving account are the same, "Gmail accepted it"
+   * and "it is in the inbox" cannot be told apart from outside, and anything
+   * acting on that one mailbox takes the evidence with it. Pointing this at a
+   * different address makes a send verifiable somewhere the sender does not
+   * control. The FROM address must stay the authenticated account — Gmail
+   * rewrites or refuses anything else.
+   */
+  OPS_DIGEST_TO?: string;
+  /** A Gmail App Password (16 chars, Google Account > Security > App passwords) — not the login password. */
+  OPS_DIGEST_GMAIL_APP_PASSWORD?: string;
 
   // --- inactive integrations: unset on purpose ----------------------------
   FACEBOOK_PAGE_ID?: string;
@@ -32,6 +71,13 @@ export interface Env {
   X_ACCESS_TOKEN?: string;
   X_ACCESS_TOKEN_SECRET?: string;
   LINKEDIN_PARTNER_TOKEN?: string;
+  /** Company page URN number only, e.g. "1234567" from urn:li:organization:1234567. */
+  LINKEDIN_ORG_ID?: string;
+  /** OAuth token with w_organization_social, and r_organization_social to read back. */
+  LINKEDIN_ACCESS_TOKEN?: string;
+  /** Netlify write access for the SEO / Site agent. Both are required. */
+  NETLIFY_AUTH_TOKEN?: string;
+  NETLIFY_SITE_ID?: string;
   OPS_PIPELINE_STATUS_URL?: string;
   OPS_PIPELINE_STATUS_TOKEN?: string;
 }
@@ -96,6 +142,11 @@ export function readiness(env: Env): Readiness {
   detail["linkedin"] = {
     status: flag(env.LINKEDIN_INTEGRATION_ENABLED) && env.LINKEDIN_PARTNER_TOKEN ? "live" : "inactive",
     note: "integration point only — the agent itself is an external build",
+  };
+  detail["intel_web_research"] = {
+    status: flag(env.INTEL_WEB_RESEARCH_ENABLED) ? "live" : "inactive",
+    note: "Competitive Intelligence reads the open web. Server-side, so no credential; "
+      + "capped at 8 searches per weekly run. Off means it works from the watchlist alone.",
   };
   detail["ops_pipeline_monitor"] = {
     status: flag(env.OPS_PIPELINE_MONITOR_ENABLED) && env.OPS_PIPELINE_STATUS_URL ? "live" : "inactive",

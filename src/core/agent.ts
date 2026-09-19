@@ -21,8 +21,17 @@ import type {
   RuleDecision,
 } from "./types.js";
 import { evaluate } from "./autonomy.js";
+import { STATE_KEYS, state, type AgentRuntimeStatus, type AgentRuntimeStatusMap } from "./state.js";
 
-export type Cadence = "hourly" | "daily" | "weekly" | "manual" | "external";
+/**
+ * Cadences a cron tick can be responsible for.
+ *
+ * "monthly" exists because a category with few competitors does not move weekly.
+ * A brief written every week about a market that shifts quarterly is how a
+ * library stops being read, and it is paid for either way.
+ */
+export type RunCadence = "hourly" | "daily" | "weekly" | "monthly";
+export type Cadence = RunCadence | "manual" | "external";
 
 export interface RunContext {
   env: Env;
@@ -36,6 +45,150 @@ export interface RunContext {
   /** Free-form input for event-driven runs (an inbound comment, for instance). */
   input?: Record<string, unknown>;
   log: (message: string, detail?: Record<string, unknown>) => void;
+}
+
+/**
+ * One thing an agent needs before it can work, stated so it survives forgetting.
+ *
+ * The fields are what the owner would have to reconstruct otherwise: what is
+ * missing, whether it is on them or on someone else, and the actual next step.
+ * `blocking: false` marks a requirement that degrades the agent rather than
+ * stopping it — it still runs, and the gap is reported rather than hidden.
+ */
+/** The unmet requirements on an agent, in declaration order. */
+export function unmetRequirements(
+  agent: Pick<AgentDefinition, "requires">,
+  env: Env
+): Array<{ requirement: AgentRequirement; reason: string }> {
+  const unmet: Array<{ requirement: AgentRequirement; reason: string }> = [];
+  for (const requirement of agent.requires ?? []) {
+    let reason: string | null;
+    try {
+      // A feed-only requirement has nothing to say about the environment. It
+      // is resolved against the database by resolveRequirements() instead.
+      reason = requirement.check ? requirement.check(env) : null;
+    } catch (err) {
+      // A check that throws is itself a blocker, and a silent one otherwise.
+      reason = `requirement check failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (reason) unmet.push({ requirement, reason });
+  }
+  return unmet;
+}
+
+/** Whether anything unmet is severe enough to hold the agent back entirely. */
+export function isBlocked(agent: Pick<AgentDefinition, "requires">, env: Env): boolean {
+  return unmetRequirements(agent, env).some((entry) => entry.requirement.blocking);
+}
+
+/**
+ * Nothing has arrived under this key yet.
+ *
+ * Absent, null, an empty array, an empty object or an empty string all mean the
+ * same thing to the agent waiting on it: there is nothing to work on. Note what
+ * this deliberately does NOT treat as empty — a snapshot that arrived carrying
+ * zero prospects. The feed is connected at that point; the badge says "nothing
+ * is wired up", not "no prospects yet", and those are different sentences.
+ */
+function feedIsEmpty(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "string") return value.trim() === "";
+  if (typeof value === "object") return Object.keys(value as object).length === 0;
+  return false;
+}
+
+/**
+ * Every agent's unmet requirements, with feed requirements resolved against the
+ * database in ONE read for the whole roster.
+ *
+ * This is the display path, not the run path. `unmetRequirements()` stays
+ * env-only and stays on every tick; this costs a single extra subrequest and is
+ * called from /api/status, which somebody asked for.
+ *
+ * A failed read falls back to the env-only answer rather than inventing a
+ * "needs setup" badge across the board. A database that is briefly unreachable
+ * is not the same fact as an agent nobody has connected, and painting the
+ * second onto the first is how a board starts crying wolf.
+ */
+export async function resolveRequirements(
+  agents: ReadonlyArray<Pick<AgentDefinition, "id" | "requires">>,
+  env: Env,
+  db: Supabase
+): Promise<Map<string, Array<{ requirement: AgentRequirement; reason: string }>>> {
+  const resolved = new Map<string, Array<{ requirement: AgentRequirement; reason: string }>>();
+  for (const agent of agents) resolved.set(agent.id, unmetRequirements(agent, env));
+
+  const keys = [
+    ...new Set(
+      agents.flatMap((agent) =>
+        (agent.requires ?? []).flatMap((requirement) =>
+          requirement.feed ? [requirement.feed.key] : []
+        )
+      )
+    ),
+  ];
+  if (keys.length === 0) return resolved;
+
+  const feeds = await state.readMany(db, keys).catch(() => null);
+  if (!feeds) return resolved;
+
+  for (const agent of agents) {
+    const unmet = resolved.get(agent.id) ?? [];
+    for (const requirement of agent.requires ?? []) {
+      if (!requirement.feed) continue;
+      // An env check that already failed has said the more specific thing.
+      if (unmet.some((entry) => entry.requirement.id === requirement.id)) continue;
+      if (!feedIsEmpty(feeds.get(requirement.feed.key))) continue;
+      unmet.push({
+        requirement,
+        reason: `Nothing has been pushed to ${requirement.feed.key} yet, so ${requirement.feed.describe}.`,
+      });
+    }
+    resolved.set(agent.id, unmet);
+  }
+
+  return resolved;
+}
+
+export interface AgentRequirement {
+  /** Short identifier, e.g. "linkedin.community-management-api". */
+  id: string;
+  /** One line: what is missing. Shown as the heading on the dashboard. */
+  summary: string;
+  /** Whether the agent should be held back entirely while this is unmet. */
+  blocking: boolean;
+  /**
+   * What would actually resolve it, in order. Written for the owner in six
+   * months, not for whoever is in the conversation today.
+   */
+  steps: string[];
+  /** Anything that makes the wait expected rather than suspicious. */
+  note?: string;
+  /**
+   * Met, as far as the environment can tell? Return null when satisfied, or a
+   * short reason when not.
+   *
+   * Optional, because not everything an agent waits for is a variable. An
+   * agent can be fully configured and still have nothing to work on.
+   */
+  check?: (env: Env) => string | null;
+  /**
+   * A data feed this requirement waits on, named by the memory key it arrives
+   * under.
+   *
+   * `check` deliberately cannot see the database: it runs before propose() on
+   * every tick for every agent, and a read there would spend the subrequest
+   * budget that has already killed two agents in this system. A feed is
+   * therefore declared here and resolved only where it is displayed, in one
+   * batched read on a route the owner asked for.
+   *
+   * A feed requirement is never blocking. An agent waiting on data should
+   * still run and say so: "no pipeline data to track" is the report that tells
+   * you the wiring is the missing half, and holding the agent back would take
+   * that sentence away too.
+   */
+  feed?: { key: string; describe: string };
 }
 
 export interface AgentDefinition {
@@ -68,6 +221,41 @@ export interface AgentDefinition {
 
   /** Built elsewhere — we expose an integration point, we do not run it. */
   externalBuild?: boolean;
+
+  /**
+   * What this agent needs before it can do its job, and what to do about it.
+   *
+   * Some agents are blocked on things the owner cannot simply supply: LinkedIn's
+   * Community Management API needs a registered legal entity, X's read endpoints
+   * need a paid tier. Those are not bugs and they are not going to resolve on
+   * their own, so an agent in that state should not run, should not burn tokens,
+   * and — this is the part that was missing — should SAY WHY, somewhere the
+   * owner will see it months later without having to remember.
+   *
+   * A blocked agent is different from a failed one and from a paused one. Failed
+   * means it tried and something went wrong. Paused means somebody chose to stop
+   * it. Blocked means it is waiting on the outside world, the wait is expected,
+   * and there is a specific thing that would end it.
+   *
+   * `check` returns null when the requirement is met, or the reason it is not.
+   * It is deliberately deterministic and cheap: it runs before propose(), on
+   * every tick, from the environment alone. No database, no model.
+   */
+  requires?: AgentRequirement[];
+
+  /**
+   * The most this agent may spend in one run, in USD. Unset means uncapped.
+   *
+   * A ceiling, not a budget: it is there so a run that goes wrong stops instead
+   * of continuing to spend. It exists because one did. A research pass paused
+   * four times, every resume re-sent the whole accumulated conversation at full
+   * input price, and the run cost over three dollars before failing on
+   * something unrelated. Nothing noticed, because nothing was counting.
+   *
+   * Hitting it is a failure, and it reports as one: the agent is told what it
+   * spent, and the owner sees it in the queue like any other problem.
+   */
+  spendCapUsd?: number;
 
   routineRules: AutonomyRule[];
   approvalRules: AutonomyRule[];
@@ -107,7 +295,174 @@ export interface AgentRunResult {
   error?: string;
 }
 
-const OBSERVE_ONLY_TYPES = new Set(["observation", "recommendation", "memory_write", "pipeline_flag"]);
+// What an observe-only agent is still allowed to propose. "intel_brief" is on
+// this list because a brief is written into the agent's own library and reaches
+// nobody outside the system: it records, it does not act.
+const OBSERVE_ONLY_TYPES = new Set([
+  "observation",
+  "recommendation",
+  "memory_write",
+  "pipeline_flag",
+  "intel_brief",
+  // A restore is on this list and it is worth being precise about why, because
+  // it is the only entry that touches the outside world. The guarantee this
+  // flag makes is narrower than "never writes": it is "never writes anything
+  // NEW". A restore publishes bytes that were already checked and found sound,
+  // and its payload is not model-generated — no agent on this list can author
+  // a page. Site-Integrity is the only agent that may propose one, by rule.
+  "site_restore",
+]);
+const MAX_THOUGHTS = 12;
+/** How often a running agent proves it is still alive. */
+const HEARTBEAT_MS = 120_000;
+/** Floor between two trail writes, however chatty the agent gets. */
+const TRAIL_MIN_GAP_MS = 15_000;
+
+/**
+ * Writes the running agent's status board so the dashboard can show what it is
+ * doing right now. Errors are swallowed: a status write failing must never
+ * take an agent's real work down with it.
+ *
+ * A Worker gets a fixed number of subrequests per invocation, and the read here
+ * costs one of them just as the write does. That is affordable for the handful
+ * of status writes around a run and it is NOT affordable for a trail: a
+ * ten-minute run with a heartbeat and a flush per log line spent roughly forty
+ * subrequests on this function alone and died on the limit after composing its
+ * brief, losing the approvals it was about to queue. So the read is optional.
+ * Pass a cached map and the call costs one subrequest instead of two.
+ */
+async function writeStatus(
+  agentId: string,
+  patch: Partial<AgentRuntimeStatus>,
+  ctx: RunContext,
+  cached?: AgentRuntimeStatusMap
+): Promise<AgentRuntimeStatusMap | null> {
+  try {
+    const fresh = cached ?? (await state.read<AgentRuntimeStatusMap>(ctx.db, STATE_KEYS.agentRuntime));
+    const current = fresh ?? {};
+
+    // Only on a read. A trail write reuses a map this run already swept, and
+    // sweeping it again would cost nothing and prove nothing.
+    if (!cached) {
+      const closed = reconcileStale(current, ctx.runId, Date.now());
+      if (closed > 0) {
+        ctx.log(`runtime: closed ${closed} stale status row(s) left by a run that never ended`);
+      }
+    }
+    const previous = current[agentId] ?? { status: "idle", phase: "idle" };
+    const next: AgentRuntimeStatus = { ...previous, ...patch };
+    // Only keep the tail of thoughts.
+    if (next.thoughts && next.thoughts.length > MAX_THOUGHTS) {
+      next.thoughts = next.thoughts.slice(-MAX_THOUGHTS);
+    }
+    current[agentId] = next;
+    await state.write(ctx.db, STATE_KEYS.agentRuntime, current, `runtime status: ${agentId}`, {
+      scope: "runtime",
+      salience: 1,
+      tags: ["runtime"],
+    });
+    return current;
+  } catch {
+    /* ignore */
+    return null;
+  }
+}
+
+/**
+ * How long a row may claim to be running before it is provably lying.
+ *
+ * A cron invocation is capped at fifteen minutes of wall clock by the platform,
+ * so nothing started by an earlier invocation can still be running half an hour
+ * later. This is not a guess about slowness; it is an upper bound.
+ */
+const IMPOSSIBLE_RUN_MS = 30 * 60 * 1000;
+
+/**
+ * Close out rows left claiming to be running by a run that is gone.
+ *
+ * writeStatus swallows its own errors, deliberately: a status write must never
+ * take an agent's real work down with it. The cost is that a LOST terminal
+ * write leaves a permanent lie. Three rows were found in exactly that state —
+ * finance_watch had been "running" for three days, and marketing_analytics was
+ * mid-tick alongside a Chief-of-Staff row that had finished, which proves the
+ * agent itself completed and only its ending went missing.
+ *
+ * Nothing else was ever going to fix those: the agent that owns the row is not
+ * running, so it cannot correct itself. So every run sweeps the board on its way
+ * in, using the one fact that makes it safe — a different runId plus an age no
+ * invocation is allowed to reach.
+ */
+function reconcileStale(board: AgentRuntimeStatusMap, runId: string, now: number): number {
+  let closed = 0;
+  for (const [id, row] of Object.entries(board)) {
+    if (!row || row.status !== "running" || row.runId === runId) continue;
+    const seen = Date.parse(row.heartbeatAt ?? row.startedAt ?? "");
+    if (!Number.isFinite(seen) || now - seen < IMPOSSIBLE_RUN_MS) continue;
+    board[id] = {
+      ...row,
+      // NOT "failed". A lost ending is a fact about the status write, not about
+      // the work: the comment above records the proof, which is that
+      // marketing_analytics was closed this way beside a Chief-of-Staff row
+      // from the SAME runId that had finished. Marking it failed manufactures a
+      // red dot for a run that completed, and two of those sat on the dashboard
+      // for a week telling the owner something was broken when nothing was.
+      //
+      // A paused agent never runs again, so it can never correct the lie —
+      // which is how finance_watch read "failed" from 26 August onward.
+      //
+      // What is actually true is that we do not know, and the reports the run
+      // filed are the record of what it did.
+      status: "unknown",
+      phase: "unknown",
+      endedAt: new Date(now).toISOString(),
+      error:
+        row.error ??
+        "This run never recorded an ending, so how it finished was not written down. Its reports are the record of what it actually did.",
+    };
+    closed += 1;
+  }
+  return closed;
+}
+
+/**
+ * File a failure report without letting the filing become the failure.
+ *
+ * The error paths in `runAgent` exist to turn a broken run into a recorded one.
+ * Both of them did it with a bare `await coordinator.receiveReport(...)`, and a
+ * report is a subrequest — so when the thing that broke the run was running OUT
+ * of subrequests, the report threw too, and that second throw escaped `runAgent`
+ * entirely: past `stopBeat()`, past the terminal `writeStatus()`, out of
+ * `runDue()`, killing the whole invocation. The agent's status row then read
+ * `running` forever with no error recorded anywhere, because recording it was
+ * the thing that failed.
+ *
+ * That is not hypothetical. Site-Integrity is last in the hourly tick and the
+ * heaviest agent in it, and it died this way on consecutive hourly runs on
+ * 2026-08-29 — 20:00 and 21:00 both logged one line and then stopped, with no
+ * heartbeat, no findings and no error, while the same agent run alone in its own
+ * invocation completed in seconds. An earlier session read that signature as a
+ * hanging `fetch` and gave it a timeout, which was a real fix for a different
+ * bug and left this one untouched.
+ *
+ * So: the error path must not depend on the resource that just ran out. A report
+ * that cannot be filed is swallowed, exactly as `writeStatus()` already swallows
+ * its own, and for the same reason — the run's ending is worth more than the
+ * record of why it ended, because a missing ending is a lie that only another
+ * run can correct.
+ */
+async function reportSafely(
+  coordinator: Coordinator,
+  report: AgentReport,
+  ctx: RunContext
+): Promise<void> {
+  try {
+    await coordinator.receiveReport(report, ctx);
+  } catch (err) {
+    ctx.log(`could not file a failure report for ${report.agentId}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 /**
  * Propose -> classify -> execute or queue -> report. The whole autonomy model
@@ -129,6 +484,41 @@ export async function runAgent(
     decisions: [],
   };
 
+  // Blocked before anything else, and before any spend.
+  //
+  // An agent waiting on something outside the owner's control should not run,
+  // should not cost a token, and should not present as a failure — a red dot
+  // that means "LinkedIn requires a registered company" teaches you to ignore
+  // red dots. It writes its reason to the status board and returns, so the
+  // dashboard can say exactly what is needed months from now without anyone
+  // having to remember.
+  const blockers = unmetRequirements(agent, ctx.env);
+  const blocking = blockers.filter((entry) => entry.requirement.blocking);
+  if (blocking.length > 0) {
+    ctx.log(
+      `${agent.id}: blocked, not running. ${blocking.map((b) => b.reason).join("; ")}`
+    );
+    await writeStatus(
+      agent.id,
+      {
+        status: "blocked",
+        phase: "blocked",
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        latestThought: blocking[0]!.requirement.summary,
+        blockedBy: blocking.map((entry) => ({
+          id: entry.requirement.id,
+          summary: entry.requirement.summary,
+          reason: entry.reason,
+          steps: entry.requirement.steps,
+          note: entry.requirement.note,
+        })),
+      },
+      ctx
+    );
+    return result;
+  }
+
   // Snapshot spend so this agent's share of the bill is attributable to it.
   const spendBefore = ctx.claude instanceof Claude ? ctx.claude.spentUsd : 0;
   const callsBefore = ctx.claude instanceof Claude ? ctx.claude.callCount : 0;
@@ -136,20 +526,144 @@ export async function runAgent(
     if (!(ctx.claude instanceof Claude)) return;
     result.costUsd = Math.round((ctx.claude.spentUsd - spendBefore) * 1_000_000) / 1_000_000;
     result.modelCalls = ctx.claude.callCount - callsBefore;
+    // Always lift the ceiling on the way out. The Claude client is shared by
+    // every agent on a tick, so leaving one agent's cap in place would starve
+    // whichever agent ran next.
+    ctx.claude.clearSpendCap();
   };
+
+  if (ctx.claude instanceof Claude && agent.spendCapUsd) {
+    ctx.claude.capSpend(agent.spendCapUsd);
+  }
 
   if (agent.externalBuild) {
     ctx.log(`${agent.id}: external build, nothing to run on our side`);
     return result;
   }
 
+  // Live thought capture. Wrap ctx.log so every line the agent emits during
+  // this run lands both in the caller's log AND in the status board the
+  // dashboard reads. The wrapped ctx is what we hand into propose/execute.
+  const thoughts: Array<{ at: string; text: string }> = [];
+
+  // The trail has to reach the board WHILE the agent is working, not after.
+  // Collecting lines into an array and only writing them around propose() made
+  // the trail live for agents that finish in seconds and useless for the one
+  // agent that does not: Competitive Intelligence spends its whole run inside
+  // propose(), so the board sat on "started" for ten minutes and the dashboard
+  // could not distinguish that from a hang.
+  //
+  // Three properties this needs, and none of them are optional. It cannot be
+  // awaited, because ctx.log is synchronous and called from inside the agent's
+  // own work. Two writes must not interleave, because writeStatus reads the
+  // whole status map and writes it back, so an older read landing after a newer
+  // write silently reverts it. And a chatty agent must not buy one round trip
+  // per line, so a flush already in flight sets a flag rather than queueing.
+  let flushing = false;
+  let flushAgain = false;
+  let flushChain: Promise<void> = Promise.resolve();
+  let lastFlushAt = 0;
+  // The board as this run last left it. Held so a trail write can skip the read
+  // and cost one subrequest instead of two; the terminal writes still read, so
+  // whatever else touched the map is merged back before the run signs off.
+  let board: AgentRuntimeStatusMap | null = null;
+  const flushThoughts = (): void => {
+    if (flushing) {
+      flushAgain = true;
+      return;
+    }
+    // A trail line is worth a subrequest, but not every line and not on demand.
+    // Ten minutes of unthrottled flushing is what exhausted the invocation's
+    // subrequest budget and cost a run its approvals queue.
+    if (Date.now() - lastFlushAt < TRAIL_MIN_GAP_MS) {
+      flushAgain = true;
+      return;
+    }
+    flushing = true;
+    flushChain = (async () => {
+      try {
+        do {
+          flushAgain = false;
+          lastFlushAt = Date.now();
+          const written = await writeStatus(
+            agent.id,
+            {
+              thoughts: [...thoughts],
+              latestThought: thoughts[thoughts.length - 1]?.text,
+              heartbeatAt: new Date().toISOString(),
+            },
+            ctx,
+            board ?? undefined
+          );
+          if (written) board = written;
+          // Respect the floor between coalesced rounds too, or a chatty agent
+          // simply spins here instead of at the call site.
+          if (flushAgain && Date.now() - lastFlushAt < TRAIL_MIN_GAP_MS) break;
+        } while (flushAgain);
+      } finally {
+        flushing = false;
+      }
+    })();
+  };
+  /** Let an in-flight trail write finish before a status write that outranks it. */
+  const settleThoughts = (): Promise<void> => flushChain.then(undefined, () => {});
+
+
+  const originalLog = ctx.log;
+  const runCtx: RunContext = {
+    ...ctx,
+    log: (message, detail) => {
+      const line = detail ? `${message} ${JSON.stringify(detail)}` : message;
+      thoughts.push({ at: new Date().toISOString(), text: line });
+      // Keep the memory footprint bounded; the last few are all we need.
+      if (thoughts.length > MAX_THOUGHTS) thoughts.shift();
+      originalLog(message, detail);
+      flushThoughts();
+    },
+  };
+
+  board = await writeStatus(
+    agent.id,
+    {
+      status: "running",
+      phase: "thinking",
+      // Clear any block from a previous tick: a requirement that has since been
+      // met must not leave its notice sitting on a running agent.
+      blockedBy: [],
+      // The agent's own start, not the tick's. ctx.now is fixed for a whole
+      // cron invocation, so using it made every agent in a tick report the same
+      // startedAt and made "how long has this been running" unreadable.
+      startedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      endedAt: undefined,
+      runId: ctx.runId,
+      latestThought: `${agent.name} started`,
+      thoughts: [{ at: ctx.now.toISOString(), text: `${agent.name} started` }],
+      proposed: undefined,
+      executed: undefined,
+      queued: undefined,
+      failed: undefined,
+      error: undefined,
+    },
+    ctx
+  );
+
+  // A pulse while the agent works, so a row that says "running" can be trusted.
+  // Log lines already flush the board, but this agent can spend minutes inside a
+  // single model call without emitting one, and silence has to stay
+  // distinguishable from death. Cheap: one write a minute, and it stops the
+  // moment the run leaves propose/execute.
+  const beat = setInterval(flushThoughts, HEARTBEAT_MS);
+  const stopBeat = (): void => clearInterval(beat);
+
   let actions: ProposedAction[];
   try {
-    actions = await agent.propose(ctx);
+    actions = await agent.propose(runCtx);
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
     result.failed += 1;
-    await coordinator.receiveReport(
+    await reportSafely(
+      coordinator,
       {
         agentId: agent.id,
         batch: agent.batch,
@@ -158,13 +672,50 @@ export async function runAgent(
         outcome: "failed",
         error: result.error,
       },
-      ctx
+      runCtx
     );
     settleSpend();
+    stopBeat();
+    await settleThoughts();
+    await writeStatus(
+      agent.id,
+      {
+        status: "failed",
+        phase: "failed",
+        endedAt: new Date().toISOString(),
+        latestThought: `failed: ${result.error}`,
+        thoughts,
+        error: result.error,
+        proposed: 0,
+        executed: 0,
+        queued: 0,
+        failed: 1,
+      },
+      ctx
+    );
     return result;
   }
 
   result.proposed = actions.length;
+  await settleThoughts();
+  // Reuses the board this run already holds rather than reading it back. This
+  // is a phase label, not a terminal write: nothing else needs merging into it,
+  // and at two subrequests each these mid-run reads are what leave an agent
+  // without enough budget to record its own ending. Five agents on the daily
+  // tick had exactly that — work completed, "no issues found this pass" logged,
+  // and then a status row stuck on running that a later run closed as
+  // "stopped reporting and never recorded an ending".
+  const acting = await writeStatus(
+    agent.id,
+    {
+      phase: "acting",
+      latestThought: `proposed ${actions.length} action${actions.length === 1 ? "" : "s"}, deciding what to do with each`,
+      thoughts,
+    },
+    ctx,
+    board ?? undefined
+  );
+  if (acting) board = acting;
 
   for (const action of actions) {
     // An observe-only agent that tries to act externally is a bug, and it is
@@ -176,7 +727,7 @@ export async function runAgent(
         reason: `${agent.name} only observes and reports; it proposed "${action.type}", which acts.`,
         risk: "high",
       };
-      const queued = await coordinator.escalate({ agent, action, decision }, ctx);
+      const queued = await coordinator.escalate({ agent, action, decision }, runCtx);
       result.decisions.push({ action, decision, outcome: queued.queued ? "queued" : "duplicate" });
       result.queued += queued.queued ? 1 : 0;
       continue;
@@ -187,23 +738,37 @@ export async function runAgent(
       approvalRules: agent.approvalRules,
       routineRules: agent.routineRules,
       approvedChannels: agent.approvedChannels,
-      ctx: { agentId: agent.id, judge: ctx.judge, now: ctx.now },
+      ctx: { agentId: agent.id, judge: runCtx.judge, now: runCtx.now },
     });
 
     if (decision.classification === "needs_approval") {
-      const queued = await coordinator.escalate({ agent, action, decision }, ctx);
+      const queued = await coordinator.escalate({ agent, action, decision }, runCtx);
       result.decisions.push({ action, decision, outcome: queued.queued ? "queued" : "duplicate" });
       if (queued.queued) result.queued += 1;
       continue;
     }
 
     try {
-      const execution = await agent.execute(action, ctx);
+      runCtx.log(`executing: ${action.summary}`);
+      const execution = await agent.execute(action, runCtx);
       result.decisions.push({ action, decision, outcome: execution.outcome });
       if (execution.outcome === "failed") result.failed += 1;
       else result.executed += 1;
 
-      await coordinator.receiveReport(
+      // Guarded, and for a sharper reason than the catch blocks.
+      //
+      // By this line the action HAS happened — a post is published, a queue is
+      // written, a site is deployed. An unguarded report that throws here lands
+      // in the catch below, which counts the same action as failed on top of the
+      // executed it was already counted as, and files a failure report for work
+      // that succeeded. An agent reading that back sees an action it needs to
+      // retry, and retrying an external publish is how the LinkedIn queue reached
+      // 131 copies of one post.
+      //
+      // So a report that cannot be written must never revise what the run
+      // actually did. It is logged and the execution stands.
+      await reportSafely(
+        coordinator,
         {
           agentId: agent.id,
           batch: agent.batch,
@@ -215,13 +780,14 @@ export async function runAgent(
           externalRef: execution.externalRef,
           error: execution.error,
         },
-        ctx
+        runCtx
       );
     } catch (err) {
       result.failed += 1;
       const message = err instanceof Error ? err.message : String(err);
       result.decisions.push({ action, decision, outcome: "failed" });
-      await coordinator.receiveReport(
+      await reportSafely(
+        coordinator,
         {
           agentId: agent.id,
           batch: agent.batch,
@@ -231,11 +797,33 @@ export async function runAgent(
           channel: action.channel,
           error: message,
         },
-        ctx
+        runCtx
       );
     }
   }
 
   settleSpend();
+  stopBeat();
+
+  await settleThoughts();
+  await writeStatus(
+    agent.id,
+    {
+      status: result.failed > 0 && result.executed === 0 && result.queued === 0 ? "failed" : "idle",
+      phase: result.failed > 0 && result.executed === 0 && result.queued === 0 ? "failed" : "idle",
+      endedAt: new Date().toISOString(),
+      latestThought:
+        result.proposed === 0
+          ? "nothing to do this tick"
+          : `${result.executed} executed, ${result.queued} queued, ${result.failed} failed`,
+      thoughts,
+      proposed: result.proposed,
+      executed: result.executed,
+      queued: result.queued,
+      failed: result.failed,
+    },
+    ctx
+  );
+
   return result;
 }

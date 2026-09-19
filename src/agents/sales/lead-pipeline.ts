@@ -14,7 +14,7 @@
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { STALL_THRESHOLD_DAYS } from "../../core/config.js";
-import { daysSince, state, type Prospect } from "../../core/state.js";
+import { STATE_KEYS, daysSince, state, type Prospect } from "../../core/state.js";
 
 interface Stall {
   prospect: Prospect;
@@ -43,6 +43,34 @@ export const leadPipelineAgent: AgentDefinition = {
   effort: "high",
   cadence: "daily",
   approvedChannels: ["internal"],
+
+  // The agent is complete. What is missing is the data, and until this was
+  // written down the dashboard had no way to say so: it ran every day, filed
+  // "no pipeline data to track", and looked like an agent working fine. An
+  // agent with nothing to work on is not the same thing as an agent that works,
+  // and it is not a failure either.
+  requires: [
+    {
+      id: "lead_pipeline.pipeline_snapshot",
+      summary: "A pipeline snapshot to track. Nothing pushes one yet.",
+      // It still runs, and running is what produces the "no data" report that
+      // makes the gap visible. Holding it back would hide its own diagnosis.
+      blocking: false,
+      feed: {
+        key: STATE_KEYS.pipeline,
+        describe: "there are no prospects to track states or stalls for",
+      },
+      steps: [
+        "Decide what writes the snapshot. The Phase 0 operations pipeline owns the prospect states, so this is a push from there, not a read into it.",
+        "POST the snapshot to /x/<APP_PATH_SECRET>/api/state/sales.pipeline as { prospects: [ { id, name?, state, enteredStateAt, lastTouchAt?, value? } ] }.",
+        "State names must match the vocabulary in STALL_THRESHOLD_DAYS in src/core/config.ts, or a prospect is counted but never checked for a stall.",
+        "Push it on a schedule. A snapshot from three weeks ago produces stalls that are an artefact of the snapshot rather than the pipeline.",
+      ],
+      note:
+        "This agent deliberately does not reach into the operations pipeline's own database. " +
+        "Two systems reading one database is how they end up disagreeing about who has been contacted.",
+    },
+  ],
 
   routineRules: [
     {

@@ -1,0 +1,36 @@
+{
+  "_note": "The Velvex LinkedIn page as it stood on 2026-08-30, before the agent published anything. Read from the public page. This is a BASELINE, not a library: once the agent has published, readChannelHistory supplies real history and this only sets the starting register. The split into target//avoid is the page's own trajectory - the newest posts dropped the CTAs and the comment-bait, and that is the direction to continue.",
+  "capturedAt": "2026-08-30",
+  "followers": 339,
+  "target": [
+    {
+      "at": "5d",
+      "reactions": 1,
+      "text": "Operational performance under stable conditions is not the same as structural resilience under concurrent pressure. Most technology architectures are tested sequentially; volume first, then capital constraint, then regulatory scrutiny, then channel disruption. Rarely are they examined under the simultaneous load that characterises actual expansion.\n\nWhen multiple forces arrive together, previously independent variables begin to interact. Revenue mechanics constrain delivery capacity. Channel dependency amplifies continuity risk. Adaptation capacity is revealed not as a general attribute but as a specific, measurable tolerance for concurrent stress.\n\nA structural diagnostic isolates these interaction points before they compound. It does not forecast market conditions. It maps the load-bearing capacity of the commercial architecture itself, where the system holds under single-axis pressure and where it begins to compress when axes converge.\n\nThis distinction separates organisations that scale with verified structural integrity from those that discover their limits only after capital has already been committed."
+    },
+    {
+      "at": "5d",
+      "reactions": 0,
+      "text": "Channel concentration often appears efficient in the early stages of a technology business. A limited set of acquisition or distribution pathways can deliver predictable volume and simplify operational planning. Under expansion, however, the same concentration becomes a structural constraint.\n\nWhen growth depends disproportionately on one or two channels, any disruption to algorithmic change, competitive shift, regulatory adjustment, or partner realignment transmits directly into revenue mechanics and delivery capacity. The architecture has no independent pathways to absorb the shock.\n\nStructural diagnostics examine this dependency as a measurable exposure rather than a tactical preference. They map the degree of reliance, the substitution options that actually exist within the model, and the point at which channel failure would compromise continuity. The assessment does not prescribe diversification. It establishes whether the current configuration can sustain the intended scale without systemic fracture."
+    },
+    {
+      "at": "2w",
+      "reactions": 1,
+      "text": "Structural readiness is not measured by current revenue or user growth alone. It is determined by whether the underlying commercial architecture can absorb sudden increases in volume, complexity, and external scrutiny without systemic failure.\n\nMany technology businesses operate with visible operational performance that masks load-bearing dependencies. These dependencies, across revenue mechanics, channel concentration, delivery capacity, and financial continuity, remain latent under normal conditions and surface only under sustained pressure.\n\nA structural diagnostic isolates these points of vulnerability before expansion amplifies them. It examines the horizontal connections between operational silos rather than treating each function in isolation.\n\nThis distinction matters when capital is allocated or when entry into regulated, high-trust enterprise environments is contemplated. Historical financial statements confirm what has already occurred. Structural evaluation addresses what the system is capable of sustaining."
+    }
+  ],
+  "avoid": [
+    {
+      "why": "Ends on a call to action. The post argues well and then holds a door open, which is the move that makes a page read as marketing.",
+      "text": "Institutional investors don't just back innovative products based on a smart idea; they allocate capital to the underlying business structures that are specifically built to survive hyper-growth. [...] Secure your foundational stability first. Get pure structural clarity and an objective diagnostic evaluation of your tech business with Velvex."
+    },
+    {
+      "why": "Comment bait. A multiple-choice question addressed to the audience, asking them to self-diagnose in the replies.",
+      "text": "If you had to audit just one critical structural pillar in your tech business today [...] A) Product Delivery Loop B) Tech-Cash Mechanics C) Ecosystem Trust. Let us know your primary bottleneck in the comments below, and let's break down how to solve it."
+    },
+    {
+      "why": "Opens on a rhetorical question and closes on a direct sell. Both are the register this page has moved away from.",
+      "text": "Are you leading a tech company that is ready to scale, or are you scaling a company that isn't quite ready? [...] Secure your foundational stability today. Message us directly or visit our website to schedule your Velvex structural diagnostic evaluation."
+    }
+  ]
+}

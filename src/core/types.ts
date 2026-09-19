@@ -5,7 +5,12 @@
 // only then does anything happen. That is what makes "routine vs needs
 // approval" enforceable rather than aspirational.
 
-export type AgentBatch = "marketing" | "sales_management" | "executive" | "orchestration";
+export type AgentBatch =
+  | "marketing"
+  | "sales_management"
+  | "executive"
+  | "intelligence"
+  | "orchestration";
 
 export type AgentId =
   // Marketing
@@ -22,7 +27,10 @@ export type AgentId =
   // Executive
   | "finance_watch"
   | "ops_health"
+  | "site_integrity"
   | "growth_strategy"
+  // Intelligence
+  | "competitive_intel"
   // Orchestration
   | "chief_of_staff";
 
@@ -38,6 +46,15 @@ export type ActionType =
   | "campaign_type"
   | "paid_promotion"
   | "site_edit"
+  /**
+   * Putting the site back to a copy that was already verified.
+   *
+   * Deliberately not a "site_edit". An edit authors something new and is
+   * vetoed for this agent; a restore re-publishes bytes that were checked and
+   * found sound, which is the one site write that is safer done immediately
+   * than done after somebody wakes up.
+   */
+  | "site_restore"
   | "reply_public"
   | "reply_dm"
   | "faq_answer"
@@ -46,6 +63,12 @@ export type ActionType =
   | "pipeline_flag"
   | "observation"
   | "recommendation"
+  /**
+   * A researched document written into the agent's own library. It reaches
+   * nobody outside this system, which is why it sits on the observe-only side
+   * of the runner alongside "observation".
+   */
+  | "intel_brief"
   | "memory_write";
 
 /**
