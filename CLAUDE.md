@@ -1259,9 +1259,9 @@ Two tells, and neither is the md5:
   pre-session tree, 424 the tree before the learning layer, 457 before the shelf
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
-  626 and 628 across the ops-digest build, 670 after hardening it, and **677** now,
-  measured on `553e499`; the current
-  number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
+  site-inventory apostrophe fix, and **680** now, measured on `5d22a8d`; the
+  current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1730,7 +1730,7 @@ PUT /x/<APP_PATH_SECRET>/api/intel/watchlist
 That endpoint still exists for direct control, and the validator rejects with a
 list of problems rather than storing something that would fail weekly inside an
 agent run. But the normal path is not this: it is accepting a candidate, which
-writes the same entry and records the verdict in one step. Twelve sources are
+writes the same entry and records the verdict in one step. Fifteen sources are
 fetched per run.
 
 `kind` is one of `competitor`, `category`, `adjacent_tooling`, `buyer_language`,
@@ -2152,7 +2152,7 @@ JSON
 Until that lands, the next monthly scan re-opens this thread and pays to look at
 it again.
 
-### The watchlist holds 13 and only 12 are ever fetched
+### CLOSED — the watchlist holds 13 and the cap is now 15
 
 Added 2026-09-19 at the owner's instruction: the three pages the 2026-08-28
 brief's `watchNext` named — `letslevelup.com.au/diagnostic`,
@@ -2168,15 +2168,27 @@ first-hand diff at all.
 agent's own User-Agent and reduced through the real `extractText()` to 107, 52
 and 26 sentences. A 200 that reduces to nothing is the failure that matters.
 
-**`MAX_SOURCES_PER_RUN` is 12 and the fetch is `watchlist.sources.slice(0, 12)`.**
-The list now holds **13**, so the last entry is never fetched — and it fails
-silently, which is worse than the unreachable-source case in 12b: an unreachable
-source at least reports unreachable. The three new entries were therefore
-**prepended**, because the slice cuts from the tail. The displaced entry is
-`finro` (buyer_language). That is the defensible one to lose — all three
-buyer_language sources sit in the investor-diligence territory the buy-side gap
-ruling just refuted — but it is a source in the list that nothing reads, and the
-honest fix is to remove one rather than leave a thirteenth.
+**The thirteenth entry was never going to be fetched, and the owner raised the
+cap rather than dropping a source.** `MAX_SOURCES_PER_RUN` was 12 and the fetch
+is `watchlist.sources.slice(0, MAX_SOURCES_PER_RUN)`, so with 13 in the list the
+last one fell off — and it fails **silently**, which is worse than the
+unreachable-source case in 12b: an unreachable source at least reports
+unreachable. The three new entries were prepended, because the slice cuts from
+the tail, which made the displaced entry `finro` (buyer_language).
+
+**The cap is now 15** (2026-09-19, owner's instruction), so all 13 are fetched
+and `finro` stays. What that costs is stated in the constant's own comment and
+is worth repeating here, because the number reads like a preference and is
+actually a time bound: the fetch loop is **sequential** and each page is capped
+at `FETCH_TIMEOUT_MS` (10s), so the cap is a worst case of 150s of wall clock
+against the invocation's fifteen minutes, and 15 subrequests against its ~50.
+The margin is real rather than tight only because intelligence runs **alone** on
+the monthly `0 8 1 * *` tick — set it back to weekly and it shares 09:00 with
+Growth-Strategy and this is part of what squeezes (section 7).
+
+**The list must stay at or under the cap.** A fourteenth and fifteenth source
+are free; a sixteenth is silent again. The honest fix at that point is to remove
+one, not to raise the number a second time.
 
 **Adding to the watchlist is normally the candidate approval flow's job**, not a
 direct PUT. The direct route was used here because the owner asked for these

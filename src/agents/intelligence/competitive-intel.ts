@@ -102,8 +102,17 @@ const SCAN_MAX_FETCHES = 4;
 const MAX_SEARCHES = 8;
 const MAX_FETCHES = 5;
 
-/** How many watchlist sources one run will pull. Bounds the run, not the list. */
-const MAX_SOURCES_PER_RUN = 12;
+/**
+ * How many watchlist sources one run will pull. Bounds the run, not the list.
+ *
+ * The fetch loop is sequential and each page is capped at FETCH_TIMEOUT_MS, so
+ * this number is also a worst-case time bound: 15 sources is 150s of wall clock
+ * against the cron invocation's fifteen minutes, and 15 subrequests against its
+ * budget. It is not the list's length -- a watchlist longer than this is
+ * silently truncated by the slice below, and a source nobody fetches reports
+ * nothing rather than reporting unreachable, so keep the list at or under it.
+ */
+const MAX_SOURCES_PER_RUN = 15;
 
 /** Per-source fetch timeout. A slow competitor site must not stall the tick. */
 const FETCH_TIMEOUT_MS = 10_000;
