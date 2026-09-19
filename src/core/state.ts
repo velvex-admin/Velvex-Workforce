@@ -54,6 +54,15 @@ export const STATE_KEYS = {
    * which is the opposite of what carrying open questions forward did.
    */
   intelSettled: "intel.settled",
+  /**
+   * Settled findings the OWNER pinned, which mergeSettled never evicts.
+   *
+   * Separate from intel.settled because the two have different lifetimes: the
+   * scan rewrites that list every cycle, so anything hand-written into it is
+   * competing with nine model-written entries for twelve slots and is gone
+   * within a cycle or two. A ruling made against evidence should outlive that.
+   */
+  intelSettledPinned: "intel.settled_pinned",
   /** The last site source verified sound. What a restore goes back to. */
   siteLastGood: "site.source.last_good",
   /** When automatic restores happened, so they cannot become a deploy loop. */

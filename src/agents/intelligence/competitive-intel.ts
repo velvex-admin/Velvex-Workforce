@@ -908,7 +908,22 @@ export const competitiveIntelAgent: AgentDefinition = {
     // Cheap, and first. It decides whether the expensive pass runs at all. The
     // old order asked "was this cycle worth a brief" only after the research
     // pass had been paid for, which meant a quiet cycle still cost a dollar.
-    const settled = (await state.read<string[]>(ctx.db, STATE_KEYS.intelSettled)) ?? [];
+    // Two keys, one round trip. Every read here costs a subrequest from the
+    // budget that has already killed two agents in this repo, and the pins are
+    // needed on exactly the runs the settled list is.
+    const settledRows = await state.readMany(ctx.db, [
+      STATE_KEYS.intelSettled,
+      STATE_KEYS.intelSettledPinned,
+    ]);
+    // readMany hands back whatever is in the row, so neither of these is known
+    // to be an array until it is checked -- and a hand-written row is exactly
+    // how one of them stopped being one. mergeSettled coerces, but the local
+    // reads below would still be wrong, so narrow here.
+    const asList = (value: unknown): string[] => (Array.isArray(value) ? value : []);
+    const pinnedSettled = asList(settledRows.get(STATE_KEYS.intelSettledPinned));
+    // Pins are part of what the scan is told is already settled, or pinning a
+    // finding would keep it in the store and still pay to re-establish it.
+    const settled = mergeSettled(asList(settledRows.get(STATE_KEYS.intelSettled)), [], pinnedSettled);
     const movedCount = changes.filter((change) => change.state === "changed").length;
     const seedPending = selectCandidates([], ledger, watchlist.sources, ctx.now);
 
@@ -948,7 +963,7 @@ export const competitiveIntelAgent: AgentDefinition = {
         await state.write(
           ctx.db,
           STATE_KEYS.intelSettled,
-          mergeSettled(settled, verdict.settledNow),
+          mergeSettled(settled, verdict.settledNow, pinnedSettled),
           `${verdict.settledNow.length} finding(s) settled this cycle`,
           { scope: "competitive_intel", agent: "competitive_intel", salience: 3, tags: ["intel"] }
         );
@@ -997,7 +1012,7 @@ export const competitiveIntelAgent: AgentDefinition = {
               quiet: true,
               scannedOnly: true,
               costUsd: scan.costUsd,
-              settledCount: mergeSettled(settled, verdict.settledNow ?? []).length,
+              settledCount: mergeSettled(settled, verdict.settledNow ?? [], pinnedSettled).length,
             },
             rationale:
               "The scan found nothing that would change the last brief, so the research and " +

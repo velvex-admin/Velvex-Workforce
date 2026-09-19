@@ -1287,9 +1287,8 @@ Two tells, and neither is the md5:
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
-  site-inventory apostrophe fix, 680 before the source-cap work, and **685** now,
-  measured on `c85b14b` plus the settled-shape fix; the current number is in
-  section 12. A count that dropped is a reverted checkout, not a passing suite.
+  site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
+  settled findings, and **689** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1360,7 +1359,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 685 tests
+npx vitest run            # 689 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -1584,6 +1583,27 @@ grows on its own because each brief adds more. Two bounds now: at most
 `intel.settled` — things checked and found unchanged, capped at `MAX_SETTLED`
 (12), de-duplicated case-insensitively — which the next scan is told to skip.
 Each cycle should have *less* to look at, not more.
+
+**And a subtracting memory forgets the ruling you most wanted kept.** Measured
+2026-09-19: the buy-side ruling was written to the HEAD of `intel.settled`, one
+scan produced **nine** findings, and it was pushed to position 10 of 12. One
+more ordinary cycle and it was gone — re-opening a thread already refuted
+against six pages read end to end, at the price of a research pass. Truncation
+cutting from the tail is right for a model-written list and wrong for a decision
+somebody made.
+
+`intel.settled_pinned` is that exemption, and it is deliberately narrow:
+`MAX_PINNED_SETTLED` (4) of the twelve slots, so the scan keeps eight to do its
+own subtracting. A pin is exempt from forgetting, so an unbounded pin list is
+the additive-memory problem with the safety catch taken off. Pins are merged
+FIRST, so the cap cannot reach them, and they claim their `settledKey` first —
+which means the model's own rephrasing of a pinned fact is absorbed as a
+duplicate rather than occupying a second slot. Both keys come back in one
+`state.readMany`, because a second read is a subrequest from the budget that has
+already killed two agents here.
+
+Write it as a **bare array**, per the trap in section 10:
+`curl -X PUT "$BASE/api/state/intel.settled_pinned" -d '["<the ruling>"]'`.
 
 **A run stopped for budget still hands over the cheap half.** The composing pass
 is the one that gets refused, and when it is, `BudgetExceededError` is caught and

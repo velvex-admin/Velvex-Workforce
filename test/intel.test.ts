@@ -40,6 +40,7 @@ import {
   type SourceSnapshot,
   mergeSettled,
   MAX_SETTLED,
+  MAX_PINNED_SETTLED,
   recheckUrls,
   MAX_RECHECK_URLS,
 } from "../src/core/intel.js";
@@ -644,6 +645,54 @@ describe("settled findings, the memory that subtracts", () => {
 
   it("drops empty lines rather than storing them", () => {
     expect(mergeSettled([], ["", "   ", "real"])).toEqual(["real"]);
+  });
+
+  it("never evicts a pinned finding, however many the cycle produces", () => {
+    // The case this exists for, measured on the live system: the buy-side
+    // ruling was written to the head of the list, one scan produced NINE
+    // findings, and it was pushed to position 10 of 12. One more ordinary
+    // cycle would have dropped it and re-opened a thread already refuted
+    // against evidence -- at the price of a research pass.
+    const pin = "Buy-side ODD is adversarial to the operator; the gap is refuted, not open";
+    const flood = Array.from({ length: 20 }, (_, i) => `routine finding number ${i + 1}`);
+    const merged = mergeSettled([], flood, [pin]);
+    expect(merged).toHaveLength(MAX_SETTLED);
+    expect(merged[0]).toBe(pin);
+    expect(merged).toContain(pin);
+  });
+
+  it("rescues a pin that is already in the carried list and would have been cut", () => {
+    // The real shape of the bug: the ruling was ALREADY in intel.settled, near
+    // the tail, and the cycle's own findings pushed it off. Being in the
+    // carried list is what fails to save it -- being pinned is.
+    const pin = "Value Builder gives its eight-driver score away free";
+    const carried = [pin];
+    const flood = Array.from({ length: 20 }, (_, i) => `routine finding number ${i + 1}`);
+    expect(mergeSettled(carried, flood)).not.toContain(pin);
+    const merged = mergeSettled(carried, flood, [pin]);
+    expect(merged).toContain(pin);
+    expect(merged.filter((line) => line === pin)).toHaveLength(1);
+  });
+
+  it("absorbs a model rephrasing of a pinned finding rather than spending a second slot", () => {
+    // settledKey compares a normalised prefix, and the pin claims it first.
+    // Without this the pin and the model's wording of the same fact both sit
+    // in the list, which is the near-duplicate problem the cap exists to stop.
+    const pin = "Lumena Global publishes no price for the operational readiness assessment";
+    const reworded = "Lumena Global publishes no price for the operational readiness assessment page";
+    const merged = mergeSettled([], [reworded], [pin]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toBe(pin);
+  });
+
+  it("caps the pins too, so a pin list cannot crowd out what the cycle found", () => {
+    // A pin is exempt from forgetting, so an unbounded pin list is additive
+    // memory with the safety catch removed. The scan must keep room to work.
+    const pins = Array.from({ length: 10 }, (_, i) => `pinned ruling ${i + 1}`);
+    const merged = mergeSettled([], ["this cycle found a thing"], pins);
+    expect(merged).toHaveLength(MAX_PINNED_SETTLED + 1);
+    expect(merged).toContain("this cycle found a thing");
+    expect(MAX_PINNED_SETTLED).toBeLessThan(MAX_SETTLED);
   });
 
   it("survives a stored list that is not a list, because one was written by hand", () => {

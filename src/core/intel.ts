@@ -356,13 +356,27 @@ export function recheckUrls(
 export const MAX_SETTLED = 12;
 
 /**
+ * How many of those slots the owner may pin.
+ *
+ * Deliberately a minority of MAX_SETTLED. A pin is exempt from the forgetting
+ * rules, so an unbounded pin list is the additive-memory problem with the
+ * safety catch removed -- and the scan needs room to do its own subtracting.
+ * Eight slots stay open for what this cycle actually found.
+ */
+export const MAX_PINNED_SETTLED = 4;
+
+/**
  * Merge this cycle's settled findings into the standing list, newest first.
  *
  * De-duplicated case-insensitively, because the model will phrase the same
  * settled fact differently each cycle and an unbounded list of near-duplicates
  * is the additive-memory problem wearing a different hat.
  */
-export function mergeSettled(existing: string[], addition: string[]): string[] {
+export function mergeSettled(
+  existing: string[],
+  addition: string[],
+  pinned: string[] = []
+): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   // A row written by hand through /api/state stores the WHOLE request body as
@@ -374,7 +388,13 @@ export function mergeSettled(existing: string[], addition: string[]): string[] {
   // malformed list degrades to empty, in the over-checking direction.
   const carried = Array.isArray(existing) ? existing : [];
   const incoming = Array.isArray(addition) ? addition : [];
-  for (const item of [...incoming, ...carried]) {
+  // Pins go first, so the cap can never cut them: truncation takes from the
+  // tail, and a ruling the owner made against evidence must not be evicted by
+  // nine routine findings from one scan. They are capped separately, and they
+  // also claim their settledKey first -- so a model rephrasing the same fact
+  // is absorbed as a duplicate rather than occupying a second slot.
+  const pins = (Array.isArray(pinned) ? pinned : []).slice(0, MAX_PINNED_SETTLED);
+  for (const item of [...pins, ...incoming, ...carried]) {
     if (typeof item !== "string") continue;
     const line = item.trim();
     if (!line) continue;
