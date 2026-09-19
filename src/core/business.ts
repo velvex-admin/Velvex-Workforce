@@ -28,11 +28,39 @@ export const BUSINESS = {
     "an open-ended advisory relationship",
   ],
 
+  /**
+   * WHO THE LEDGER IS WRITTEN FOR, which is a different question from who is
+   * in the room when a business decides to buy one.
+   *
+   * This line named "capital allocators" as an audience until 2026-09-19, and
+   * `intel.position` says the opposite in the owner's own words: the Ledger is
+   * "addressed to the operating business itself, never to capital allocators
+   * directly". `intel.position` outranks the public record and outranks this
+   * file, so the site's phrasing was the stale half of that disagreement, not
+   * the authority — see section 10 on checking this file against the position
+   * statement rather than against the site alone.
+   *
+   * The contradiction mattered more here than anywhere else it was written
+   * down. BUSINESS_CONTEXT is rendered in FULL into the system prompt of every
+   * agent that writes anything, so an allocator named as the audience puts all
+   * public copy into the allocator register — writing to the person across the
+   * table from the reader rather than to the reader. Approved positioning notes
+   * reach two agents as a one-line title; this string reaches every one of them
+   * whole, which is why it is the line that had to be right.
+   *
+   * "Institutional" is kept, because it describes the register and the tier and
+   * that much the site means correctly. What is dropped is the claim that an
+   * allocator is who the Ledger is addressed to. If allocators turn out to be a
+   * route by which a business arrives, that is a distribution fact and belongs
+   * in a field of its own: it is not this one, and nothing here should be read
+   * as inventing one.
+   */
   audience:
     "Businesses approaching a scaling decision — new capital, new channels, aggressive " +
     "growth targets — that want a third-party read on whether the underlying architecture " +
-    "holds before resources are committed. Distribution is institutional: B2B enterprises " +
-    "and capital allocators.",
+    "holds before resources are committed. The Ledger is written to be read by the " +
+    "operating business itself, and is never addressed to a capital allocator sitting " +
+    "across the table from them. The register is institutional; the reader is the operator.",
 
   engine: {
     name: "Veĺa",

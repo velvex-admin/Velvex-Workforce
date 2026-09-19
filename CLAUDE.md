@@ -2057,9 +2057,21 @@ the open thread on approved positions reaching nobody who writes: those rows
 reach two agents as a one-line title, whereas `BUSINESS_CONTEXT` is rendered in
 full into the system prompt of **every** agent that writes anything. So this is
 the one path that does reach every writer, which is exactly why a contradiction
-sitting in it matters more than the retrieval gap does. *(observed)* Not
-changed — `intel.position` outranks the site, so which of the two is wrong is a
-decision about the product, not an edit to make on anyone's behalf.
+sitting in it matters more than the retrieval gap does. *(observed)*
+
+**Ruled and fixed 2026-09-19.** The owner settled it the only way it could go
+once stated: `intel.position` outranks the site, so the site's phrasing was the
+stale half. `BUSINESS.audience` now says the Ledger is written to be read by the
+operating business itself and is never addressed to an allocator across the
+table, and keeps "institutional" as the register rather than as an audience.
+`db/seeds/intel-position.md` carried the same sentence and was brought with it —
+that file is derived from `business.ts` by its own account, and a draft that
+would re-send the contradiction into the one store that outranks everything is
+the worst place to leave it. **What was deliberately NOT invented:** a
+distribution claim. Dropping an allocator as the *addressee* says nothing about
+whether an allocator is a route by which a business arrives; if that is true it
+is a fact of its own and wants a field of its own, and the comment on
+`audience` says so rather than quietly implying it.
 
 **Two things deliberately not done.** The six URLs were **not** added to
 `intel.watchlist`: a watchlist is configured now, and adding to it is the

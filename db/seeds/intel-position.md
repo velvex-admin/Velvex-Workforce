@@ -57,8 +57,10 @@ assumption is disclosed rather than hidden. This is the credibility claim, and
 it is the thing most likely to be imitated in words before it is imitated in
 practice.
 
-Distribution is institutional: B2B enterprises and capital allocators, aimed at
-businesses approaching a scaling decision.
+The register is institutional and the buyers are B2B enterprises approaching a
+scaling decision. The Executive Ledger is written to be read by the operating
+business itself, and is never addressed to a capital allocator sitting across the
+table from them.
 
 ## Only you can write this
 
