@@ -38,6 +38,7 @@ import {
   type IntelSource,
   type IntelWatchlist,
   type PositionStatement,
+  MAX_PINNED_SETTLED,
 } from "../core/intel.js";
 import {
   assessAnswer,
@@ -197,6 +198,14 @@ export async function handleApi(
       // without a Cloudflare token -- a deploy of it was confirmed once by
       // running the agent, which cost a model call to answer.
       sourcesPerRun: MAX_SOURCES_PER_RUN,
+      // How many settled findings the owner has exempted from forgetting, and
+      // the ceiling on that. Reported for the same reason sourcesPerRun is: a
+      // pin that the deployed bundle does not read is indistinguishable from a
+      // pin that works, right up until the cap evicts the ruling it was meant
+      // to protect -- and that is a monthly agent, so the answer arrives a
+      // month late.
+      settledPinned: 0,
+      maxSettledPinned: MAX_PINNED_SETTLED,
       briefs: 0,
       error: "not checked" as string | undefined,
     };
@@ -213,6 +222,11 @@ export async function handleApi(
         .read<IntelWatchlist>(db, STATE_KEYS.intelWatchlist)
         .catch(() => null);
       intelligence.watchedSources = watchlist?.sources?.length ?? 0;
+
+      const pinned = await state
+        .read<string[]>(db, STATE_KEYS.intelSettledPinned)
+        .catch(() => null);
+      intelligence.settledPinned = Array.isArray(pinned) ? pinned.length : 0;
 
       if (intelReady.ok) {
         intelligence.briefs = (await db.listIntelBriefs(200).catch(() => [])).length;

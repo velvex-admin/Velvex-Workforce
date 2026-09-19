@@ -1605,6 +1605,15 @@ already killed two agents here.
 Write it as a **bare array**, per the trap in section 10:
 `curl -X PUT "$BASE/api/state/intel.settled_pinned" -d '["<the ruling>"]'`.
 
+`/api/status` reports `intelligence.settledPinned` and `maxSettledPinned`, for
+the same reason it reports `sourcesPerRun`: **a pin the deployed bundle does not
+read is indistinguishable from a pin that works**, right up until the cap evicts
+the ruling it was meant to protect — and on a monthly agent that answer arrives
+a month late. The lesson generalises past this field: **anything whose failure
+is silent and whose next exercise is a month away needs a witness on a route,
+not a test.** The test proves the code is right; the route proves the code is
+THERE.
+
 **A run stopped for budget still hands over the cheap half.** The composing pass
 is the one that gets refused, and when it is, `BudgetExceededError` is caught and
 the candidates discovery already produced are returned with an observation
