@@ -2252,6 +2252,24 @@ The margin is real rather than tight only because intelligence runs **alone** on
 the monthly `0 8 1 * *` tick — set it back to weekly and it shares 09:00 with
 Growth-Strategy and this is part of what squeezes (section 7).
 
+**CORRECTION, measured the same day: the subrequest half of this note was too
+comfortable.** "15 subrequests against its ~50" reads like margin, and the
+invocation does not have it. A full run on 2026-09-19 — 13 fetches, a brief
+composed, $1.5252 — died on `Too many subrequests by single Worker invocation`
+**after** filing the brief and executing the top move, losing one of the two
+candidates it was queueing. This is the trap in section 10 recurring: the
+mitigations there (trail writes reusing the map, `TRAIL_MIN_GAP_MS`,
+`HEARTBEAT_MS` 120s) reduced it and did not remove it, and a ten-minute run
+makes many more subrequests than its page fetches.
+
+So the honest accounting: raising the cap from 12 to 15 cost **one** extra fetch
+on this run (13 against 12), on the budget that is already the binding one. It
+did not cause the failure and it did not help. **The wall-clock bound is
+comfortable; the subrequest bound is not.** Do not read the cap as free, and if
+the watchlist ever reaches 15 that is three more subrequests on a run that
+already fails at 13. The fix, if this matters, is on the trail-write side rather
+than the fetch side — the fetches are the work, the status writes are overhead.
+
 **VERIFIED ON THE DEPLOYED BUNDLE 2026-09-19**, not on the deploy output.
 `POST /api/run/competitive_intel` logged `competitive_intel: 13 watched, 4
 changed, 0 unreachable`. With the old cap that line reads **12**, so the number
