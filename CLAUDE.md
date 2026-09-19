@@ -2152,6 +2152,60 @@ JSON
 Until that lands, the next monthly scan re-opens this thread and pays to look at
 it again.
 
+### CLOSED — the method page leads with the instrument, not its limits
+
+Published 2026-09-19. `/method` opened with `#validation`, and the owner read
+the published page as saying the whole system is unvalidated. **The page never
+claims that** — it states what internal validation does establish, and that
+VSL's weightings are AHP-validated — so the ordering was doing the damage
+rather than the content. `#frameworks` now precedes `#validation`, and
+`fabricated` became `constructed` ("fabricated" means *made up to deceive* in
+ordinary English, which is the opposite of what that sentence does; the brief
+used the word and the page copied it).
+
+**The disclosure itself is not optional and must not be softened.** It is the
+2026-08-28 brief's `positioningGaps[2]`, and its argument is that a free lead
+surface structurally *cannot* copy it: "a score funded by an advisor network
+cannot publish its weighting method, because the method is the lead magnet",
+and "a page that implied field validation Velvex does not have would forfeit
+the exact position it is trying to take". Note the brief tagged it `inferred` —
+it measured what competitors do not publish, never how buyers react. **Revisit
+that section the moment one client engagement completes**; it is written for
+the position held today, not permanently.
+
+**Limits stated after substance read as rigour; limits stated before substance
+read as an apology.** That is the reusable half.
+
+### Drag the folder with a gate, because the folder name does not change
+
+The owner dragged a stale `~/velvex-site-current` **twice** on 2026-09-19 — the
+second time after being told to re-copy — because the folder has the same name
+whichever version is in it, and nothing in the Netlify drop confirms which one
+you dropped. Both rounds cost a full verify-and-diagnose cycle, and the second
+one happened despite the written instruction to re-copy first.
+
+Advice did not fix it; a gate did. Hand over one paste that **refuses** rather
+than one that instructs, with the expected short SHA filled in and a `grep` for
+a string only the new version carries:
+
+```
+cd ~/Velvex-Workforce
+git pull origin claude/vx03-operations-layer-7rq5ya
+[ "$(git rev-parse --short HEAD)" = "<sha>" ] \
+  && rm -rf ~/velvex-site-current \
+  && cp -r ~/Velvex-Workforce/site ~/velvex-site-current \
+  && ! grep -q "<string only the OLD version has>" ~/velvex-site-current/<file> \
+  && echo "READY — drag velvex-site-current" \
+  || echo "STOP"
+```
+
+**Verify the publish against the live page, never against the report that it
+was dragged.** Fetch with a cache-buster and compare a structural fact — the
+section order, or the byte count against the stored copy plus the injection.
+Live and `site.source` agreeing with each other while the repo is ahead is the
+safe shape: the SEO agent deploys `site.source`, so a stale drag cannot publish
+a half-state, it just does nothing.
+
 ### A hand-written meta description outside 70–155 buys a whole-site deploy
 
 Found 2026-09-19 while checking why Netlify credit was going. `/method.html`
