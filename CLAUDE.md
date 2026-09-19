@@ -2087,6 +2087,20 @@ sits near end-of-file with less than 90 characters after it. A plain
 `grep -i allocator` found all four. Pad a search for context and it silently
 stops being a search.
 
+**The positive line was added on the owner's say-so, 2026-09-19.** Removing the
+contradiction left the site stating the reader only by implication, through the
+second person. `/index.html`'s Ledger section now closes: *"It is written for
+you to read — the operating business itself — never for a capital allocator
+sitting across the table from you."* It is the last sentence of the existing
+`.led-desc` paragraph rather than a new element, which is why it needed no CSS:
+a sibling `<p>` would have inherited `margin-bottom:40px` and pushed against
+`.led-meta`'s `border-top`. Second person throughout, because the whole
+paragraph already is ("where **your** operation holds"). Still no distribution
+claim — it names the reader and the non-reader, nothing about how either
+arrives. **Only the homepage carries it.** `/faq`'s opening answer is the other
+natural home and was left alone; one statement of the reader is a position,
+two is a theme, and that is a copy decision rather than a correction.
+
 Each page lost exactly **34 bytes**, which is the same proof-shape §12a uses for
 the Netlify injection: one number repeated across four files of very different
 sizes is one identical substitution, and four different numbers would have meant
