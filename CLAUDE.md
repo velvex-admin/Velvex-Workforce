@@ -2224,12 +2224,39 @@ fail on the unfixed code (680 in the suite).
 **Why it matters more than a wrong number:** every finding that agent has is a
 whole-site digest deploy, so a description the agent cannot measure is a deploy
 it will keep proposing. `/faq.html` is protected, so this one queued instead of
-applying, and the stable `dedupeKey` stopped it multiplying — on an
-**unprotected** page the same bug auto-applies and ships the whole site.
+applying — on an **unprotected** page the same bug auto-applies and ships the
+whole site. Protection was the only thing that made this cost noise rather than
+a daily publish.
 
-**The pending approval is now stale and should be rejected, not approved.**
-Approving it rewrites a description that was already in range and spends a
-deploy doing it.
+**CORRECTION — "the stable dedupeKey stopped it multiplying" was written here
+and is false.** `dedupeKey()` appends a **content hash** (`proposal-key.ts`),
+deliberately: keying on the finding alone made a REJECTION permanent, because a
+rejected row holds its key forever and the agent could never re-propose
+corrected wording. So different wording is a different proposal with its own
+row — and the model drafts fresh copy every run, so a mis-measured page queues a
+NEW approval every single tick. Two rows existed within nine hours. **A stable
+dedupe key suppresses repeats; a content-hashed one does not, and every
+model-drafted proposal is content-hashed.**
+
+**Both pending approvals are stale and should be rejected, not approved.**
+Approving either rewrites a description already in range and spends a deploy
+doing it.
+
+**VERIFIED LIVE 2026-09-19, and the first deploy did not land.** After the fix
+was deployed, `POST /api/run/seo_site` still reported 62 — so the bug was
+reproduced against the deployed artifact rather than assumed fixed. The check
+that separated "my fix is wrong" from "my fix is not deployed" was running the
+real `inventoryFromSource` locally against the page pulled from `site.source`:
+130 locally, 62 live, same input. A second `wrangler deploy` from the same
+`5d22a8d` landed it, and the next run printed **"no issues found this pass" —
+proposed 0, queued 0, costUsd 0, modelCalls 0**. Nothing in the deploy output of
+the first attempt explained it; the behavioural probe is what caught it.
+
+**That probe is the cheap one to reuse.** A run that finds nothing makes no model
+call, because `propose()` makes its first call inside the finding loop — so
+`POST /api/run/seo_site` costs nothing when the site is clean and is the only
+way to confirm what the deployed inventory actually measures. There is no route
+exposing the derived inventory, and reading the bundle needs a Cloudflare token.
 
 The general shape, and this repo has met it before in `resolveToPage()`: **a
 regex written against the markup you happened to have is a parser for that
