@@ -1332,7 +1332,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 677 tests
+npx vitest run            # 680 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -2205,6 +2205,35 @@ section order, or the byte count against the stored copy plus the injection.
 Live and `site.source` agreeing with each other while the repo is ahead is the
 safe shape: the SEO agent deploys `site.source`, so a stale drag cannot publish
 a half-state, it just does nothing.
+
+### An apostrophe read as a quote made the SEO agent propose a daily deploy
+
+Found 2026-09-19 by reading the one pending approval rather than trusting it.
+`seo_site` reported *"meta description is 62 characters, outside 70-155"* on
+`/faq.html`, whose description is **130**. The proposal's `before` anchor was
+the full correct tag, so only the MEASUREMENT was wrong.
+
+`site-inventory.ts` captured attributes with `content=["']([^"']*)["']`. That
+class excludes **both** quotes whichever one opened the attribute, so
+`content="...what's included..."` is captured as everything up to the
+apostrophe — 62 characters of a 130-character string. The same pattern was in
+`alt=` and `src=`. `captureQuoted()` now matches the opening quote with a
+backreference. Three tests in `test/site-inventory.test.ts`, two verified to
+fail on the unfixed code (680 in the suite).
+
+**Why it matters more than a wrong number:** every finding that agent has is a
+whole-site digest deploy, so a description the agent cannot measure is a deploy
+it will keep proposing. `/faq.html` is protected, so this one queued instead of
+applying, and the stable `dedupeKey` stopped it multiplying — on an
+**unprotected** page the same bug auto-applies and ships the whole site.
+
+**The pending approval is now stale and should be rejected, not approved.**
+Approving it rewrites a description that was already in range and spends a
+deploy doing it.
+
+The general shape, and this repo has met it before in `resolveToPage()`: **a
+regex written against the markup you happened to have is a parser for that
+markup only.** Ordinary prose contains apostrophes.
 
 ### A hand-written meta description outside 70–155 buys a whole-site deploy
 

@@ -112,3 +112,39 @@ describe("inbound internal links", () => {
     expect(pages.find((p) => p.path === "/faq.html")?.inboundInternalLinks).toBe(2);
   });
 });
+
+describe("an apostrophe is not a quote", () => {
+  // A [^"'] class truncates at the first apostrophe whichever quote opened the
+  // attribute, so a 130-character description read as 62 made the SEO agent
+  // propose a rewrite of a description that was already in range -- and every
+  // finding that agent has is a whole-site deploy.
+  const page = (head: string) => `<html><head>${head}</head><body><p>x</p></body></html>`;
+
+  it("measures a description containing an apostrophe at its real length", () => {
+    const desc =
+      "Velvex FAQ: how the Vela diagnostic scores seven engines, what's included, " +
+      "pricing, and what the Executive Ledger actually covers.";
+    const [p] = inventoryFromSource(
+      { "/faq.html": page(`<meta name="description" content="${desc}">`) },
+      new Date("2026-09-19T00:00:00Z")
+    );
+    expect(p?.metaDescription).toBe(desc);
+    expect(p?.metaDescription?.length).toBe(desc.length);
+  });
+
+  it("reads single-quoted attributes too", () => {
+    const [p] = inventoryFromSource(
+      { "/a.html": page(`<meta name='description' content='no apostrophe here'>`) },
+      new Date("2026-09-19T00:00:00Z")
+    );
+    expect(p?.metaDescription).toBe("no apostrophe here");
+  });
+
+  it("does not truncate alt text at an apostrophe", () => {
+    const [p] = inventoryFromSource(
+      { "/b.html": `<html><body><img src="/x.png" alt="the owner's desk"></body></html>` },
+      new Date("2026-09-19T00:00:00Z")
+    );
+    expect(p?.images?.[0]?.alt).toBe("the owner's desk");
+  });
+});

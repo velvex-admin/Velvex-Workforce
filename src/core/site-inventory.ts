@@ -18,6 +18,19 @@ import type { SitePage } from "./state.js";
 
 const capture = (html: string, re: RegExp): string | undefined => html.match(re)?.[1]?.trim();
 
+/**
+ * Capture a quoted attribute whose delimiter is group 1 and value group 2.
+ *
+ * A character class of [^"'] excludes BOTH quotes whichever one opened the
+ * attribute, so content="what's included" is captured as "what" and measured
+ * at 62 characters instead of 130. The SEO agent then reports the description
+ * as too short and proposes a rewrite -- and every finding it has is a
+ * whole-site digest deploy. Match the opening quote with a backreference so an
+ * apostrophe in ordinary prose is just an apostrophe.
+ */
+const captureQuoted = (html: string, re: RegExp): string | undefined =>
+  html.match(re)?.[2]?.trim();
+
 /** Visible words, with script and style contents removed first. */
 function wordCount(html: string): number {
   const body = html
@@ -31,9 +44,9 @@ function wordCount(html: string): number {
 function images(html: string): Array<{ src: string; alt?: string }> {
   return [...html.matchAll(/<img\b[^>]*>/gi)].map((match) => {
     const tag = match[0];
-    const alt = capture(tag, /alt=["']([^"']*)["']/i);
+    const alt = captureQuoted(tag, /alt=(["'])([\s\S]*?)\1/i);
     return {
-      src: capture(tag, /src=["']([^"']+)["']/i) ?? "",
+      src: captureQuoted(tag, /src=(["'])([\s\S]+?)\1/i) ?? "",
       // An absent alt and an empty alt are different things: empty is a valid
       // way to mark an image decorative, absent is an omission. Preserve both.
       ...(alt === undefined ? {} : { alt }),
@@ -98,9 +111,9 @@ export function inventoryFromSource(source: Record<string, string>, now = new Da
   return htmlPaths.sort().map((path) => {
     const html = source[path] ?? "";
     const title = capture(html, /<title[^>]*>([\s\S]*?)<\/title>/i);
-    const metaDescription = capture(
+    const metaDescription = captureQuoted(
       html,
-      /<meta\b[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i
+      /<meta\b[^>]*name=["']description["'][^>]*content=(["'])([\s\S]*?)\1/i
     );
 
     return {
