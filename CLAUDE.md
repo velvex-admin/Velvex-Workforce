@@ -2133,24 +2133,34 @@ candidate approval flow's job, not a session's. And the 2026-08-28 brief was
 written, and revising `watchNext` after the fact would make the library a
 reconstruction instead of a record.
 
-**What closes it inside the system, which needs the owner because a session has
-no `APP_PATH_SECRET`.** `intel.settled` is the standing list the next scan is
-told to skip. It is a `string[]` at `detail.value`, so unlike the LinkedIn queue
-it *is* writable through the state route. Read it first, append rather than
-replace, and keep it under `MAX_SETTLED` (12):
+**Closed inside the system 2026-09-19.** `intel.settled` is the standing list
+the next scan is told to skip, and it now carries the ruling, so the monthly
+scan will not re-open this thread and pay to look at it again. It went in at the
+**head** of the list, not the tail, which is not a formality: `mergeSettled()`
+puts each cycle's new findings first and truncates from the **tail** at
+`MAX_SETTLED` (12), so an entry appended to the end is the first one dropped.
+The list holds 8.
+
+It is a `string[]` at `detail.value`, so unlike the LinkedIn queue it *is*
+writable through the state route — read it first, and rebuild the whole array
+rather than assuming the route appends:
 
 ```
 BASE="https://velvex-vx03.a99339744.workers.dev/x/<APP_PATH_SECRET>"
 curl -s "$BASE/api/state/intel.settled"          # read what is there first
 curl -X PUT "$BASE/api/state/intel.settled" -H 'Content-Type: application/json' \
   --data-binary @- <<'JSON'
-{ "value": ["<existing entries, newest first>",
-  "Buy-side ODD is bought by the buyer and adversarial to the operator; the operator-facing equivalent already exists as exit readiness / sell-side readiness. The 2026-08-28 allocator-register gap is refuted, not open."] }
+{ "value": ["<the new entry>", "<existing entries, newest first>"] }
 JSON
 ```
 
-Until that lands, the next monthly scan re-opens this thread and pays to look at
-it again.
+One thing that looks like a conflict and is not: three of those eight entries
+(Level Up, For The TECH Of It, Value Builder) are also on the watchlist now. The
+watchlist is fetched and diffed with **no model** and `describeChanges()` hands
+the scan the exact sentences that appeared or vanished; `intel.settled` tells the
+scan not to spend a *fetch* re-establishing the same fact. Those are
+complementary, which is the same reasoning that keeps watched pages out of
+`recheckUrls()`.
 
 ### CLOSED — the watchlist holds 13 and the cap is now 15
 
