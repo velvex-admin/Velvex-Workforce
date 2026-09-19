@@ -2073,6 +2073,33 @@ whether an allocator is a route by which a business arrives; if that is true it
 is a fact of its own and wants a field of its own, and the comment on
 `audience` says so rather than quietly implying it.
 
+**The site said it too, in the footer of all four pages, and now does not.**
+`Distribution · Institutional · B2B Enterprises · Capital Allocators` is the
+site's copy of the same sentence; it is now `Institutional · B2B Enterprises`.
+Same restraint as the code: the allocator clause is dropped, "Institutional"
+stays as the register, and no replacement distribution claim was invented. The
+rest of the site was already operator-addressed and needed nothing — the FAQ is
+written in the second person throughout ("executed by you, or by anyone you
+choose"), and the homepage's Ledger section says "where **your** operation
+holds". **Note the grep that nearly missed it:** a context-padded
+`grep -E ".{90}allocator.{90}"` returned ONE unrelated hit, because the footer
+sits near end-of-file with less than 90 characters after it. A plain
+`grep -i allocator` found all four. Pad a search for context and it silently
+stops being a search.
+
+Each page lost exactly **34 bytes**, which is the same proof-shape §12a uses for
+the Netlify injection: one number repeated across four files of very different
+sizes is one identical substitution, and four different numbers would have meant
+something else changed. Rendered in Chromium at 1280px — no console errors, no
+horizontal scroll, footer correct on all four.
+
+**This is in the repo `site/` folder only, NOT in `site.source`,** exactly like
+the separation-caption thread below it, and it rides out with the same publish.
+Until the owner drags the folder into Netlify and re-seeds, the stored map still
+carries the old footer — so an SEO-agent deploy before that would publish
+`site.source` over both changes. That is the digest-deploy hazard in §10, and it
+is the reason these two threads have to close together rather than separately.
+
 **Two things deliberately not done.** The six URLs were **not** added to
 `intel.watchlist`: a watchlist is configured now, and adding to it is the
 candidate approval flow's job, not a session's. And the 2026-08-28 brief was
