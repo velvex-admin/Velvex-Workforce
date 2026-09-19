@@ -2152,6 +2152,25 @@ JSON
 Until that lands, the next monthly scan re-opens this thread and pays to look at
 it again.
 
+### A hand-written meta description outside 70–155 buys a whole-site deploy
+
+Found 2026-09-19 while checking why Netlify credit was going. `/method.html`
+shipped with a **161-character** description against `META_MAX` 155 in
+`seo-site.ts`, so the next daily tick would have flagged it, spent a model call
+rewriting it, and **deployed all eight files** to change six characters — a
+digest deploy publishes the whole source, always (§10). Trimmed to 149 before
+it fired.
+
+**When you write a page by hand, check it against what the agent looks for**,
+because every finding it has is a full deploy. There are exactly three
+(`findIssues`): a description outside `META_MIN`/`META_MAX`, an `<img>` with no
+`alt`, and a page nothing links to. Plus `findSiteFileIssues`, which is why
+`sitemap.xml` and `robots.txt` must be produced by running the real
+`generatedFiles(source, siteUrl)` rather than written by hand — verified here by
+running it against the folder and confirming both files match byte-for-byte.
+The whole check costs one command and is the difference between an agent that
+deploys daily and one that correctly finds nothing.
+
 ### CLOSED — separation caption published and re-seeded 2026-09-19
 
 From the same 2026-08-28 brief: the "number, then a band, then a label" shape
