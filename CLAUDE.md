@@ -2152,6 +2152,36 @@ JSON
 Until that lands, the next monthly scan re-opens this thread and pays to look at
 it again.
 
+### The watchlist holds 13 and only 12 are ever fetched
+
+Added 2026-09-19 at the owner's instruction: the three pages the 2026-08-28
+brief's `watchNext` named — `letslevelup.com.au/diagnostic`,
+`forthetechofit.com/book-a-diagnostic` and
+`valuebuildersystem.com/eight-drivers`. They are the comparables the
+terminal-diagnostic position is measured against (fee credited against
+delivery; $1,497 with no delivery arm; free score into an advisor network), and
+until now none of them was watched — they sat in `intel.settled`, which tells
+the scan to SKIP them, so the three most-cited providers produced no week-on-week
+first-hand diff at all.
+
+**Vetted before adding, per the rule in 12b.** All three answered 200 to the
+agent's own User-Agent and reduced through the real `extractText()` to 107, 52
+and 26 sentences. A 200 that reduces to nothing is the failure that matters.
+
+**`MAX_SOURCES_PER_RUN` is 12 and the fetch is `watchlist.sources.slice(0, 12)`.**
+The list now holds **13**, so the last entry is never fetched — and it fails
+silently, which is worse than the unreachable-source case in 12b: an unreachable
+source at least reports unreachable. The three new entries were therefore
+**prepended**, because the slice cuts from the tail. The displaced entry is
+`finro` (buyer_language). That is the defensible one to lose — all three
+buyer_language sources sit in the investor-diligence territory the buy-side gap
+ruling just refuted — but it is a source in the list that nothing reads, and the
+honest fix is to remove one rather than leave a thirteenth.
+
+**Adding to the watchlist is normally the candidate approval flow's job**, not a
+direct PUT. The direct route was used here because the owner asked for these
+specific three; the validator accepted them.
+
 ### CLOSED — the method page leads with the instrument, not its limits
 
 Published 2026-09-19. `/method` opened with `#validation`, and the owner read
