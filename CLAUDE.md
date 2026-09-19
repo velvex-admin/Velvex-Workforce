@@ -2118,8 +2118,10 @@ this note sits beside).
 **Not done, and cannot be done from this session:** the site is a Netlify file
 deploy with no API read access (§10a) — publishing means the owner drags
 `~/Velvex-Workforce/site` into Netlify, and re-seeding means running
-`node scripts/seed-site-source.mjs site https://velvex-vx03.a99339744.workers.dev/x/<APP_PATH_SECRET>`
-with the real secret, which this session does not have. Until that happens,
+`node scripts/seed-site-source.mjs ./site "$BASE"` with `BASE` set on the line
+above to the worker URL plus the real `APP_PATH_SECRET` — written that way
+because a literal `<APP_PATH_SECRET>` in a paste is a shell redirection, the
+trap recorded in the thread below. This session does not hold the secret. Until that happens,
 `/proof-of-concept` on the live site does not carry the caption yet, and
 `site.source` does not either. Close this thread the same way the one below
 was closed: publish, re-seed, then verify the caption and its `method.html#separation`
