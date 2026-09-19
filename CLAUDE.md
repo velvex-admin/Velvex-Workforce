@@ -1126,6 +1126,33 @@ outright.
   fetch-timeout misdiagnosis in this section: the bundle is the fact, a log line
   is an inference.
 
+- **`PUT /api/state/<key>` stores the WHOLE BODY, so a `{"value": ...}` wrapper
+  buries the payload one level down and the next agent run throws on it.** The
+  route does `state.write(db, key, body)` with the parsed body itself, and
+  `state.write` puts that in `detail.value` — so a PUT of `{"value": [...]}`
+  reads back as `value: {value: [...]}` while a row the agent wrote reads back
+  as `value: [...]`. On 2026-09-19 `intel.settled` was hand-written with the
+  wrapper, and the next `competitive_intel` run died on **`existing is not
+  iterable`** inside `mergeSettled` — after the scan had been paid for and
+  thirteen pages fetched. `costUsd 0.038`, `proposed 0`, nothing persisted.
+
+  **Three things made it expensive rather than obvious.** The recipe in section
+  12a said to use the wrapper, so the mistake was documented as correct. The
+  read-back *looked* right, because the obvious unwrap (`d['value']['value'] if
+  isinstance(dict)`) silently accepts both shapes — the same double-nesting
+  already recorded for `transfer.*` in section 11, which is where the wrapper
+  habit comes from and where it IS correct, because that payload is a string.
+  And the throw landed on the common path, so it would have killed **every**
+  future run, not just one.
+
+  Three fixes, and the ordering matters: the row was rewritten as a bare array
+  (data, no deploy); `mergeSettled` now coerces a non-array to `[]` and skips a
+  non-string entry, so a malformed row costs the scan a few re-checks instead
+  of the whole run — degrading toward MORE checking, never less; and the recipe
+  in 12a was corrected. **The cheap check after any hand-write is the TYPE of
+  `value` on the read-back**, not whether the contents look right. A list is a
+  list; `{"value": [...]}` is a bug.
+
 - **Cloudflare blocks a Worker's `fetch()` to another Worker's bare
   `*.workers.dev` address, and the failure looks exactly like the destination
   answering 404.** Hit 2026-09-15 wiring `OPS_PIPELINE_STATUS_URL` up to a real
@@ -1260,8 +1287,9 @@ Two tells, and neither is the md5:
   deadlock was found, 478 before the LinkedIn page work, 560 before the status
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
-  site-inventory apostrophe fix, and **680** now, measured on `5d22a8d`; the
-  current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  site-inventory apostrophe fix, 680 before the source-cap work, and **685** now,
+  measured on `c85b14b` plus the settled-shape fix; the current number is in
+  section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1332,7 +1360,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 680 tests
+npx vitest run            # 685 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -2141,18 +2169,26 @@ puts each cycle's new findings first and truncates from the **tail** at
 `MAX_SETTLED` (12), so an entry appended to the end is the first one dropped.
 The list holds 8.
 
-It is a `string[]` at `detail.value`, so unlike the LinkedIn queue it *is*
-writable through the state route — read it first, and rebuild the whole array
-rather than assuming the route appends:
+It is writable through the state route, unlike the LinkedIn queue — but **PUT
+the BARE ARRAY, not `{"value": [...]}`**. That wrapper is what an earlier
+version of this recipe said and it is wrong: `PUT /api/state/<key>` passes the
+**whole request body** to `state.write`, so the wrapper is stored as the row's
+`detail` and the list reads back one level too deep. See the trap in section 10
+— it killed a real run.
 
 ```
 BASE="https://velvex-vx03.a99339744.workers.dev/x/<APP_PATH_SECRET>"
 curl -s "$BASE/api/state/intel.settled"          # read what is there first
 curl -X PUT "$BASE/api/state/intel.settled" -H 'Content-Type: application/json' \
   --data-binary @- <<'JSON'
-{ "value": ["<the new entry>", "<existing entries, newest first>"] }
+["<the new entry>", "<existing entries, newest first>"]
 JSON
 ```
+
+**The cheap check after any hand-write is the shape, not the contents.** Read it
+back and confirm the type: `GET /api/state/intel.settled` must give
+`value` as a **list**. If it gives `{"value": [...]}` the write is wrapped and
+the next run will throw on it.
 
 One thing that looks like a conflict and is not: three of those eight entries
 (Level Up, For The TECH Of It, Value Builder) are also on the watchlist now. The
@@ -2196,9 +2232,27 @@ The margin is real rather than tight only because intelligence runs **alone** on
 the monthly `0 8 1 * *` tick — set it back to weekly and it shares 09:00 with
 Growth-Strategy and this is part of what squeezes (section 7).
 
-**The list must stay at or under the cap.** A fourteenth and fifteenth source
-are free; a sixteenth is silent again. The honest fix at that point is to remove
-one, not to raise the number a second time.
+**VERIFIED ON THE DEPLOYED BUNDLE 2026-09-19**, not on the deploy output.
+`POST /api/run/competitive_intel` logged `competitive_intel: 13 watched, 4
+changed, 0 unreachable`. With the old cap that line reads **12**, so the number
+is the proof — and it comes from `gatherWatchlist`, which runs before any model
+call. All 13 fetched, nothing unreachable, so the three new pages are good.
+
+That probe cost a model call to answer a question about a constant, which is
+one time too many: `/api/status` now reports `intelligence.sourcesPerRun`
+alongside `watchedSources`. **Those two numbers differing is the whole failure
+mode**, and it is now readable from outside for free.
+
+**A sixteenth source is no longer silent.** `gatherWatchlist` logs which ids it
+is dropping when the list is longer than the cap — an unreachable source at
+least reports unreachable, and a truncated one reported nothing at all.
+`test/agent-rules.test.ts` asserts both halves: that it names the dropped ids,
+and that it stays **quiet** when the list fits, because a warning on every run
+is a warning nobody reads.
+
+Even so, **the list should stay at or under the cap.** A fourteenth and
+fifteenth source are free. The honest fix at sixteen is to remove one, not to
+raise the number a second time.
 
 **Adding to the watchlist is normally the candidate approval flow's job**, not a
 direct PUT. The direct route was used here because the owner asked for these

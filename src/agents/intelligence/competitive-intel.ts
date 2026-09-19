@@ -112,7 +112,7 @@ const MAX_FETCHES = 5;
  * silently truncated by the slice below, and a source nobody fetches reports
  * nothing rather than reporting unreachable, so keep the list at or under it.
  */
-const MAX_SOURCES_PER_RUN = 15;
+export const MAX_SOURCES_PER_RUN = 15;
 
 /** Per-source fetch timeout. A slow competitor site must not stall the tick. */
 const FETCH_TIMEOUT_MS = 10_000;
@@ -183,6 +183,21 @@ async function gatherWatchlist(
   const sources = watchlist.sources.slice(0, MAX_SOURCES_PER_RUN);
   const snapshots: SourceSnapshotMap = { ...previous };
   const changes: SourceChange[] = [];
+
+  // A source past the cap is not fetched, and until this line it said nothing
+  // about that. An unreachable source at least reports unreachable; a truncated
+  // one reports NOTHING -- no diff, no error, no row -- which reads exactly
+  // like a page that never moves. Name them, because the honest fix is to
+  // shorten the list or raise the cap deliberately, and neither happens if
+  // nobody is told.
+  if (watchlist.sources.length > MAX_SOURCES_PER_RUN) {
+    const skipped = watchlist.sources.slice(MAX_SOURCES_PER_RUN);
+    ctx.log(
+      `competitive_intel: watchlist holds ${watchlist.sources.length} but only ` +
+        `${MAX_SOURCES_PER_RUN} are fetched per run, so ${skipped.length} ` +
+        `source(s) are NOT being checked: ${skipped.map((s) => s.id).join(", ")}`
+    );
+  }
 
   for (const source of sources) {
     const fetched = await fetchSnapshot(source.url, ctx.now);

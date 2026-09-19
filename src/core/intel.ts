@@ -365,7 +365,17 @@ export const MAX_SETTLED = 12;
 export function mergeSettled(existing: string[], addition: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const item of [...addition, ...existing]) {
+  // A row written by hand through /api/state stores the WHOLE request body as
+  // `detail`, so a PUT of {"value": [...]} reads back as an object rather than
+  // the array this expects -- and spreading it threw "existing is not
+  // iterable", which killed a run that had already paid for its scan and
+  // fetched thirteen pages. Losing the settled list for one cycle costs the
+  // scan a few re-checks it did not need; throwing costs the whole run. So a
+  // malformed list degrades to empty, in the over-checking direction.
+  const carried = Array.isArray(existing) ? existing : [];
+  const incoming = Array.isArray(addition) ? addition : [];
+  for (const item of [...incoming, ...carried]) {
+    if (typeof item !== "string") continue;
     const line = item.trim();
     if (!line) continue;
     const key = settledKey(line);

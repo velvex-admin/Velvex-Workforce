@@ -645,6 +645,29 @@ describe("settled findings, the memory that subtracts", () => {
   it("drops empty lines rather than storing them", () => {
     expect(mergeSettled([], ["", "   ", "real"])).toEqual(["real"]);
   });
+
+  it("survives a stored list that is not a list, because one was written by hand", () => {
+    // This is not hypothetical. PUT /api/state/<key> stores the WHOLE request
+    // body as the row's detail, so a hand-written {"value": [...]} reads back
+    // as an object. Spreading it threw "existing is not iterable" and killed a
+    // real run AFTER its scan had been paid for and thirteen pages fetched.
+    const wrongShape = { value: ["an entry written by hand"] } as unknown as string[];
+    expect(() => mergeSettled(wrongShape, ["this cycle"])).not.toThrow();
+    expect(mergeSettled(wrongShape, ["this cycle"])).toEqual(["this cycle"]);
+  });
+
+  it("degrades a malformed list toward MORE checking, never less", () => {
+    // Direction matters. Losing the settled list makes the next scan re-check
+    // things it did not need to, which costs a few cents. Trusting a malformed
+    // one, or throwing on it, costs the whole run.
+    expect(mergeSettled(null as unknown as string[], [])).toEqual([]);
+    expect(mergeSettled(["kept"], null as unknown as string[])).toEqual(["kept"]);
+  });
+
+  it("ignores a non-string entry rather than dying on .trim()", () => {
+    const mixed = ["good", 7, null, { a: 1 }] as unknown as string[];
+    expect(mergeSettled([], mixed)).toEqual(["good"]);
+  });
 });
 
 describe("the pages the scan is allowed to re-read", () => {

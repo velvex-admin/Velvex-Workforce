@@ -16,7 +16,7 @@ import { leadPipelineAgent } from "../src/agents/sales/lead-pipeline.js";
 import { financeWatchAgent } from "../src/agents/executive/finance-watch.js";
 import { opsHealthAgent } from "../src/agents/executive/ops-health.js";
 import { growthStrategyAgent } from "../src/agents/executive/growth-strategy.js";
-import { competitiveIntelAgent } from "../src/agents/intelligence/competitive-intel.js";
+import { competitiveIntelAgent, MAX_SOURCES_PER_RUN } from "../src/agents/intelligence/competitive-intel.js";
 import { recordVerdict, type CandidateLedger } from "../src/core/intel.js";
 import SEED from "../db/seeds/intel-candidates.json";
 import { marketingAnalyticsAgent } from "../src/agents/marketing/analytics.js";
@@ -693,6 +693,141 @@ describe("Competitive Intelligence Agent", () => {
     const snapshotWrite = writes.find((w) => w.key === "intel.source_snapshots");
     expect(snapshotWrite).toBeDefined();
     expect(Object.keys(snapshotWrite!.value as Record<string, unknown>)).toContain("rival");
+  });
+
+  it("says so out loud when the watchlist is longer than one run fetches", async () => {
+    // A source past MAX_SOURCES_PER_RUN is not fetched, and it used to report
+    // NOTHING about that -- no diff, no error, no row -- which reads exactly
+    // like a page that never moves. An unreachable source at least says
+    // unreachable. This asserts the truncation names the sources it is
+    // dropping, because the honest fix is to shorten the list or raise the cap
+    // deliberately and neither happens if nobody is told.
+    const overflow = MAX_SOURCES_PER_RUN + 2;
+    const sources = Array.from({ length: overflow }, (_, i) => ({
+      id: `src-${i + 1}`,
+      label: `Source ${i + 1}`,
+      url: `https://example-${i + 1}.test/pricing`,
+      kind: "competitor" as const,
+    }));
+
+    const db = {
+      readMemory: async (opts: { keys?: string[] }) => {
+        const key = opts?.keys?.[0];
+        if (key === "intel.watchlist") {
+          return [
+            {
+              key,
+              content: "",
+              detail: { value: { updatedAt: "2026-08-01T00:00:00Z", sources } },
+            },
+          ];
+        }
+        return [];
+      },
+      writeMemory: async (row: unknown) => row,
+      intelReady: async () => ({ ok: true }),
+      listIntelBriefs: async () => [],
+      getIntelBrief: async () => null,
+      listReports: async () => [],
+      listApprovals: async () => [],
+    };
+
+    const logs: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("<html><body><p>A page that says a thing.</p></body></html>", {
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+
+    try {
+      await runWith(
+        db,
+        async (args) => {
+          if (passOf(args) === "scan") {
+            return {
+              text: "{}",
+              parsed: { somethingMoved: false, why: "quiet", leads: [], settledNow: [] },
+              costUsd: 0.02,
+              sources: [],
+              searchesUsed: 1,
+              truncated: false,
+            };
+          }
+          return research;
+        },
+        logs
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    const warning = logs.find((line) => line.includes("are NOT being checked"));
+    expect(warning).toBeDefined();
+    // It must name them. A count alone does not tell you which source went
+    // quiet, and the whole failure is that you cannot tell from the outside.
+    expect(warning).toContain(`src-${overflow}`);
+    expect(warning).toContain(String(MAX_SOURCES_PER_RUN));
+
+    // And the run still fetched exactly the cap, not the whole list.
+    const fetched = logs.find((line) => line.includes("watched,"));
+    expect(fetched).toContain(`${MAX_SOURCES_PER_RUN} watched`);
+  });
+
+  it("says nothing about truncation when the list fits, because a clean run must stay quiet", async () => {
+    // The other half. A warning that fires on every run is a warning nobody
+    // reads, which is the same failure as no warning at all.
+    const sources = [
+      { id: "only", label: "Only", url: "https://only.test/pricing", kind: "competitor" as const },
+    ];
+    const db = {
+      readMemory: async (opts: { keys?: string[] }) =>
+        opts?.keys?.[0] === "intel.watchlist"
+          ? [
+              {
+                key: "intel.watchlist",
+                content: "",
+                detail: { value: { updatedAt: "2026-08-01T00:00:00Z", sources } },
+              },
+            ]
+          : [],
+      writeMemory: async (row: unknown) => row,
+      intelReady: async () => ({ ok: true }),
+      listIntelBriefs: async () => [],
+      getIntelBrief: async () => null,
+      listReports: async () => [],
+      listApprovals: async () => [],
+    };
+
+    const logs: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("<html><body><p>A page.</p></body></html>", {
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+
+    try {
+      await runWith(
+        db,
+        async (args) => {
+          if (passOf(args) === "scan") {
+            return {
+              text: "{}",
+              parsed: { somethingMoved: false, why: "quiet", leads: [], settledNow: [] },
+              costUsd: 0.02,
+              sources: [],
+              searchesUsed: 1,
+              truncated: false,
+            };
+          }
+          return research;
+        },
+        logs
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(logs.find((line) => line.includes("are NOT being checked"))).toBeUndefined();
   });
 
   it("still runs the expensive passes when the scan finds movement", async () => {

@@ -39,7 +39,11 @@ import {
   type IntelWatchlist,
   type PositionStatement,
 } from "../core/intel.js";
-import { assessAnswer, competitiveIntelAgent } from "../agents/intelligence/competitive-intel.js";
+import {
+  assessAnswer,
+  competitiveIntelAgent,
+  MAX_SOURCES_PER_RUN,
+} from "../agents/intelligence/competitive-intel.js";
 import { dedupeKey } from "../core/proposal-key.js";
 import { flag } from "../env.js";
 
@@ -186,6 +190,13 @@ export async function handleApi(
       migrationHint: "Apply db/migrations/0002_intelligence_layer.sql.",
       webResearch: flag(env.INTEL_WEB_RESEARCH_ENABLED),
       watchedSources: 0,
+      // What one run actually pulls, as opposed to how long the list is. These
+      // two differ the moment the list outgrows the cap, and the difference is
+      // invisible everywhere else: a truncated source reports nothing at all.
+      // It is also the only way to read this constant off the DEPLOYED bundle
+      // without a Cloudflare token -- a deploy of it was confirmed once by
+      // running the agent, which cost a model call to answer.
+      sourcesPerRun: MAX_SOURCES_PER_RUN,
       briefs: 0,
       error: "not checked" as string | undefined,
     };
