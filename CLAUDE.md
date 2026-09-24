@@ -200,9 +200,22 @@ reading the spend ledger across that date:
   lower bill; the ledger is the answer, not the price list. The same guidance
   says Opus 5.5 at `medium` beats Opus 5 at `high`, so the effort levels are
   now the obvious lever — to be pulled only against measured quality.
-- **Growth-Strategy at `max` has a 32000 budget, sized on Opus 5.** More
-  thinking at the same level eats the same ceiling faster. If it dies on
-  `max_tokens` again, raise the budget before touching anything else.
+- **Growth-Strategy at `max` now has a 64000 budget**, raised from the Opus 5
+  figure of 32000 at the owner's instruction on the day of the move, because
+  more thinking at the same level eats the same ceiling faster and one
+  truncation costs a weekly turn. `DEEP_FLOOR` in `test/token-budgets.test.ts`
+  holds it there.
+- **The effort levels were kept deliberately, and the review rule is written
+  down.** "Opus 5.5 uses fewer tokens" is Anthropic's claim for 5.5 at its
+  default `medium` against 5 at `high`; at the same level it is smarter and
+  thinks more. The owner chose intelligence over the saving, which is right at
+  this volume (about $3/month measured). Review after seven days of
+  `GET /api/spend` and the 1 October intelligence run: lower an agent one level
+  only if its cost rose materially AND its output is not judged better,
+  starting with the frequent `xhigh` writers (X, Content). Leave
+  Growth-Strategy and Competitive Intelligence alone unless they fail.
+  Competitive Intelligence runs at `high`, not `max`, and its cap is $4.50 —
+  older mentions of $1.25 in this file predate the raise.
 - **An omitted effort now means `medium`, not `high`.** Nothing here omits
   one — `complete()` sends `args.effort ?? "high"` — so keep it that way.
 

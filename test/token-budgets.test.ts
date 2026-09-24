@@ -138,8 +138,11 @@ describe("what a thinking model is given room for", () => {
 // between the two, which is the shape of test this repo has been burned by
 // twice already.
 describe("what effort max has to be given room for", () => {
-  /** Three times the budget that failed, and still a bounded ceiling. */
-  const DEEP_FLOOR = 12_000;
+  /**
+   * Sized for Opus 5.5 at max, which thinks more per turn than Opus 5 did at
+   * the same level. 4000 failed on Opus 5; 32000 was the Opus 5 budget.
+   */
+  const DEEP_FLOOR = 64_000;
 
   it("names every agent that runs at effort max", () => {
     // Not decoration. A new agent set to max is a new call that can die the way

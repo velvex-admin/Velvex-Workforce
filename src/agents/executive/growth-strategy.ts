@@ -262,7 +262,12 @@ export const growthStrategyAgent: AgentDefinition = {
       // intelligence agent's, at effort "high" since it was measured), and the
       // untaken half of a ceiling is free. Note that this is the ONLY call in
       // the system running at effort "max", so it has no sibling to copy.
-      maxTokens: 32000,
+      //
+      // 64000 since 2026-09-24, when the reasoning tier moved to Opus 5.5.
+      // At the same effort level Opus 5.5 thinks MORE per turn than Opus 5,
+      // most of all at max, so a budget sized on Opus 5 is spent sooner. The
+      // model allows 128K and every call is streamed, so the ceiling has room.
+      maxTokens: 64000,
     });
 
     return [
