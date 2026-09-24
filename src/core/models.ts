@@ -29,7 +29,7 @@ export const SHORT_ANSWER_MAX_TOKENS = 2000;
 
 export const MODELS = {
   /** Judgement that is expensive to get wrong, or writing that goes out in public. */
-  reasoning: "claude-opus-5",
+  reasoning: "claude-opus-5-5",
   /** Competent reading and writing inside tight bounds, at a fraction of the cost. */
   balanced: "claude-sonnet-5",
   /** Mechanical, high-volume, low-stakes work. */
@@ -57,6 +57,12 @@ export interface ModelCapabilities {
   priceInPerMTok: number;
   priceOutPerMTok: number;
   /**
+   * What a cache read costs as a fraction of the input rate. 0.1 on every
+   * model here except Opus 5.5, which bills cache reads at 0.05. Getting this
+   * wrong overstates spend, and spendCapUsd is enforced against these numbers.
+   */
+  cacheReadFactor?: number;
+  /**
    * The server-side web tools this model accepts, by exact `type` string. The
    * versioned names are not interchangeable: the current generation takes the
    * 2026-02-09 pair, which filters results in a sandbox before they reach the
@@ -69,12 +75,18 @@ export interface ModelCapabilities {
 }
 
 export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
-  "claude-opus-5": {
+  "claude-opus-5-5": {
+    // Opus 5.5 replaced Opus 5 on the reasoning tier on 2026-09-24, every
+    // agent keeping its effort level. Two differences matter to this code:
+    // thinking cannot be disabled (nothing here disables it), and an omitted
+    // effort defaults to medium rather than high — complete() always sends
+    // one, defaulting to high, so no call changes level by omission.
     adaptiveThinking: true,
     effort: true,
     contextTokens: 1_000_000,
-    priceInPerMTok: 5,
-    priceOutPerMTok: 25,
+    priceInPerMTok: 4,
+    priceOutPerMTok: 20,
+    cacheReadFactor: 0.05,
     webSearchToolType: "web_search_20260209",
     webFetchToolType: "web_fetch_20260209",
   },
@@ -145,8 +157,8 @@ export function estimateCostUsd(model: string, usage: TokenUsage | undefined): n
 
   const cost =
     (input / 1_000_000) * price.priceInPerMTok +
-    // Cache reads bill at a tenth of the input rate.
-    (cachedInput / 1_000_000) * price.priceInPerMTok * 0.1 +
+    // Cache reads bill at a tenth of the input rate, or less where the model says so.
+    (cachedInput / 1_000_000) * price.priceInPerMTok * (price.cacheReadFactor ?? 0.1) +
     (output / 1_000_000) * price.priceOutPerMTok;
 
   return Math.round(cost * 1_000_000) / 1_000_000;

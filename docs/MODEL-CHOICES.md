@@ -7,8 +7,8 @@ Three tiers, and a fourth answer that turns out to matter most: no model at all.
 
 | Tier | Model | Price in / out per MTok | What belongs here |
 |---|---|---|---|
-| Reasoning | `claude-opus-5` | $5 / $25 | Public writing in the Velvex voice, and judgement that is expensive to get wrong |
-| Balanced | `claude-sonnet-5` | $3 / $15 | Competent reading and writing inside tight, well-specified bounds |
+| Reasoning | `claude-opus-5-5` | $4 / $20 | Public writing in the Velvex voice, and judgement that is expensive to get wrong |
+| Balanced | `claude-sonnet-5` | $2 / $10 | Competent reading and writing inside tight, well-specified bounds |
 | Fast | `claude-haiku-4-5` | $1 / $5 | Mechanical, high-volume, low-stakes work |
 | None | — | — | Arithmetic, clocks, threshold checks, and an external build |
 
@@ -20,11 +20,11 @@ whole tier can move without touching code.
 
 | Agent | Model | Effort | Why this one |
 |---|---|---|---|
-| Content | Opus 5 | `xhigh` | Writes public copy in a specific institutional voice. Two drafts a day, and the most visible thing the system produces when it is wrong. Cheap to do properly. |
-| Social Engagement | Opus 5 | `xhigh` | Public replies carrying a judgement about what they are replying to. The register has to be right in front of an audience that includes prospects. |
-| Growth-Strategy | Opus 5 | `max` | Weekly, and its entire output is a judgement read across marketing and sales together. Four calls a month is the cheapest place in the system to buy depth. |
-| Competitive Intelligence | Opus 5 | `high` researching, `max` composing | Weekly, and the only agent whose subject is outside this system. Two passes on purpose: the research pass carries the web tools and no schema, the composing pass carries the schema and no tools. Effort is split because gathering benefits less from depth than deciding what the gathering means. A wrong read here is expensive in a way that does not show up for months, and a fabricated competitor would put a decision in front of the owner based on nothing. |
-| Chief-of-Staff | Opus 5 | `high` | Decides what reaches you and what stays in the log. Filtering badly is worse than not filtering. |
+| Content | Opus 5.5 | `xhigh` | Writes public copy in a specific institutional voice. Two drafts a day, and the most visible thing the system produces when it is wrong. Cheap to do properly. |
+| Social Engagement | Opus 5.5 | `xhigh` | Public replies carrying a judgement about what they are replying to. The register has to be right in front of an audience that includes prospects. |
+| Growth-Strategy | Opus 5.5 | `max` | Weekly, and its entire output is a judgement read across marketing and sales together. Four calls a month is the cheapest place in the system to buy depth. |
+| Competitive Intelligence | Opus 5.5 | `high` researching, `max` composing | Weekly, and the only agent whose subject is outside this system. Two passes on purpose: the research pass carries the web tools and no schema, the composing pass carries the schema and no tools. Effort is split because gathering benefits less from depth than deciding what the gathering means. A wrong read here is expensive in a way that does not show up for months, and a fabricated competitor would put a decision in front of the owner based on nothing. |
+| Chief-of-Staff | Opus 5.5 | `high` | Decides what reaches you and what stays in the log. Filtering badly is worse than not filtering. |
 | SEO / Site | Sonnet 5 | `high` | A meta description has a length, a subject and a page to match. Bounded work with a clear target, and every protected-page edit is queued for you anyway. |
 | Marketing Analytics | Sonnet 5 | `medium` | The aggregation is deterministic. Only the four-sentence read needs a model, and you are the only reader. |
 | Objection / FAQ | Sonnet 5 | `high` | Matching a question to an approved answer, and drafting a candidate when none fits. Every new answer is reviewed by you before it is used, so the reasoning tier would be paying twice for the same safety. |

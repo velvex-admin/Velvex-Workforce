@@ -170,9 +170,15 @@ describe("cost estimation", () => {
     //
     // Re-check against the current price list when a model moves tier.
     const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
-    expect(estimateCostUsd(MODELS.reasoning, usage)).toBeCloseTo(30, 5); // Opus 5: 5 + 25
+    expect(estimateCostUsd(MODELS.reasoning, usage)).toBeCloseTo(24, 5); // Opus 5.5: 4 + 20 (Opus 5 was 5 + 25)
     expect(estimateCostUsd(MODELS.balanced, usage)).toBeCloseTo(12, 5); // Sonnet 5: 2 + 10
     expect(estimateCostUsd(MODELS.fast, usage)).toBeCloseTo(6, 5); // Haiku 4.5: 1 + 5
+  });
+
+  it("prices an Opus 5.5 cache read at a twentieth of input, not a tenth", () => {
+    // $0.20 per MTok against $4 input. Every other model here reads at 0.1x.
+    expect(estimateCostUsd(MODELS.reasoning, { cache_read_input_tokens: 1_000_000 })).toBeCloseTo(0.2, 5);
+    expect(estimateCostUsd(MODELS.balanced, { cache_read_input_tokens: 1_000_000 })).toBeCloseTo(0.2, 5);
   });
 
   it("bills cache reads at a tenth of the input rate", () => {
@@ -192,7 +198,7 @@ describe("cost estimation", () => {
 describe("tier resolution", () => {
   it("uses the built-in defaults", () => {
     expect(resolveTiers({})).toEqual({
-      reasoning: "claude-opus-5",
+      reasoning: "claude-opus-5-5",
       balanced: "claude-sonnet-5",
       fast: "claude-haiku-4-5",
     });

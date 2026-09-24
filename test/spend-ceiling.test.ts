@@ -58,9 +58,12 @@ describe("the arithmetic that made a run cost three dollars", () => {
       (total, input) => total + estimateCostUsd(MODELS.reasoning, { input_tokens: input }),
       0
     );
-    expect(uncached).toBeGreaterThan(2.5);
+    // $3.03 on Opus 5 at $5 input, where the incident happened; $2.42 on Opus
+    // 5.5 at $4. Either way the uncached loop is the expensive shape.
+    expect(uncached).toBeGreaterThan(2.4);
 
-    // The same shape with the prefix served from cache, which bills at a tenth.
+    // The same shape with the prefix served from cache, which bills at a
+    // twentieth on Opus 5.5 (a tenth on Opus 5).
     const cached = turns.reduce(
       (total, input, index) =>
         total +

@@ -126,7 +126,7 @@ export function readiness(env: Env): Readiness {
     if (required && !present) blocking.push(String(name));
   };
 
-  secret("ANTHROPIC_API_KEY", "Claude Opus 5 — every agent's reasoning", true);
+  secret("ANTHROPIC_API_KEY", "Claude Opus 5.5 — every agent's reasoning", true);
   secret("SUPABASE_SERVICE_ROLE_KEY", "reports, memory, pending_approvals", true);
   secret("APP_PATH_SECRET", "the unguessable URL segment", true);
 

@@ -154,21 +154,21 @@ routine/needs-approval line real rather than a comment.
 
 | Agent | Batch | Model | Effort | Cadence |
 |---|---|---|---|---|
-| Content | marketing | Opus 5 | xhigh | daily |
-| X Strategist | marketing | Opus 5 | xhigh | hourly |
-| LinkedIn Strategist | marketing | Opus 5 | xhigh | hourly |
-| Facebook Strategist | marketing | Opus 5 | xhigh | hourly *(dormant)* |
+| Content | marketing | Opus 5.5 | xhigh | daily |
+| X Strategist | marketing | Opus 5.5 | xhigh | hourly |
+| LinkedIn Strategist | marketing | Opus 5.5 | xhigh | hourly |
+| Facebook Strategist | marketing | Opus 5.5 | xhigh | hourly *(dormant)* |
 | SEO / Site | marketing | Sonnet 5 (+ Haiku 4.5 for alt text) | high | daily |
 | Marketing Analytics | marketing | Sonnet 5 | medium | daily |
-| Social Engagement | marketing | Haiku → Sonnet → Opus 5 | xhigh | hourly |
+| Social Engagement | marketing | Haiku → Sonnet → Opus 5.5 | xhigh | hourly |
 | Lead / Pipeline | sales | *none* | — | daily |
 | Objection / FAQ | sales | Sonnet 5 | high | manual |
 | Finance-Watch | executive | Sonnet 5 | medium | daily |
 | Ops-Health | executive | *none* | — | hourly |
 | Site-Integrity | executive | *none* | — | hourly |
-| Growth-Strategy | executive | Opus 5 | max | weekly |
-| Competitive Intelligence | **intelligence** | Sonnet 5 scan → Opus 5 | high | monthly |
-| Chief-of-Staff | orchestration | Opus 5 | high | daily |
+| Growth-Strategy | executive | Opus 5.5 | max | weekly |
+| Competitive Intelligence | **intelligence** | Sonnet 5 scan → Opus 5.5 | high | monthly |
+| Chief-of-Staff | orchestration | Opus 5.5 | high | daily |
 
 ### Why the models differ
 
@@ -176,7 +176,7 @@ The owner was explicit: *"Not every agent with the best model is the right way,
 as that would be an unnecessarily high cost."* Three tiers in
 `src/core/models.ts`, resolved from `wrangler.toml` vars:
 
-- **reasoning** (Opus 5) — writes public copy, or makes judgement calls with
+- **reasoning** (Opus 5.5) — writes public copy, or makes judgement calls with
   real consequences.
 - **balanced** (Sonnet 5) — classification, summarisation, matching against an
   approved library.
@@ -186,6 +186,25 @@ as that would be an unnecessarily high cost."* Three tiers in
   deterministic and should not cost a token.
 
 Rationale per agent is in `docs/MODEL-CHOICES.md`.
+
+**The reasoning tier moved from Opus 5 to Opus 5.5 on 2026-09-24**, at the
+owner's instruction, with every agent keeping its exact effort level. Opus 5.5
+is $4/$20 against $5/$25, with cache reads at 0.05x rather than 0.1x
+(`cacheReadFactor` in `MODEL_CAPABILITIES`). Three things to know before
+reading the spend ledger across that date:
+
+- **Same effort name is not the same amount of thinking.** Anthropic's own
+  migration guidance says Opus 5.5 tends to think *more* per turn at a given
+  level than Opus 5, most of all at `xhigh` and `max` — which is where six of
+  the eight Opus agents sit. So a lower per-token price does not guarantee a
+  lower bill; the ledger is the answer, not the price list. The same guidance
+  says Opus 5.5 at `medium` beats Opus 5 at `high`, so the effort levels are
+  now the obvious lever — to be pulled only against measured quality.
+- **Growth-Strategy at `max` has a 32000 budget, sized on Opus 5.** More
+  thinking at the same level eats the same ceiling faster. If it dies on
+  `max_tokens` again, raise the budget before touching anything else.
+- **An omitted effort now means `medium`, not `high`.** Nothing here omits
+  one — `complete()` sends `args.effort ?? "high"` — so keep it that way.
 
 ---
 
@@ -1327,7 +1346,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, and **689** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, and **690** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1398,7 +1417,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 689 tests
+npx vitest run            # 690 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
