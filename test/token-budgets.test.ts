@@ -150,13 +150,16 @@ describe("what effort max has to be given room for", () => {
     // this list changes, size that agent's budget on purpose, then change it
     // here. There is deliberately no sibling to copy from: nothing else in the
     // system runs at max.
+    // Empty since 2026-09-24, when Growth-Strategy moved to "high". Nothing
+    // in the roster runs at max now, so the next agent that does must be
+    // sized on purpose rather than inherit a budget.
     const atMax = AGENTS.filter((agent) => agent.effort === "max")
       .map((agent) => agent.id)
       .sort();
-    expect(atMax).toEqual(["growth_strategy"]);
+    expect(atMax).toEqual([]);
   });
 
-  it("gives the one max-effort call room for the thinking as well", () => {
+  it("keeps the room Growth-Strategy was given when it ran at max", () => {
     const undersized = numericBudgets(growthStrategy).filter((n) => n < DEEP_FLOOR);
     expect(undersized).toEqual([]);
   });

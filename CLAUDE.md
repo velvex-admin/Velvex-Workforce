@@ -166,7 +166,7 @@ routine/needs-approval line real rather than a comment.
 | Finance-Watch | executive | Sonnet 5 | medium | daily |
 | Ops-Health | executive | *none* | — | hourly |
 | Site-Integrity | executive | *none* | — | hourly |
-| Growth-Strategy | executive | Opus 5.5 | max | weekly |
+| Growth-Strategy | executive | Opus 5.5 | high | weekly |
 | Competitive Intelligence | **intelligence** | Sonnet 5 scan → Opus 5.5 | high | monthly |
 | Chief-of-Staff | orchestration | Opus 5.5 | high | daily |
 
@@ -200,7 +200,11 @@ reading the spend ledger across that date:
   lower bill; the ledger is the answer, not the price list. The same guidance
   says Opus 5.5 at `medium` beats Opus 5 at `high`, so the effort levels are
   now the obvious lever — to be pulled only against measured quality.
-- **Growth-Strategy at `max` now has a 64000 budget**, raised from the Opus 5
+- **Growth-Strategy moved from `max` to `high` the same day**, on the owner's
+  call after reading its 2026-09-20 memo: sound reasoning built on stale
+  inputs, which more thinking does not fix. Nothing in the roster runs at
+  `max` now, and `token-budgets` asserts that. Its budget stays at 64000.
+- **Growth-Strategy has a 64000 budget**, raised from the Opus 5
   figure of 32000 at the owner's instruction on the day of the move, because
   more thinking at the same level eats the same ceiling faster and one
   truncation costs a weekly turn. `DEEP_FLOOR` in `test/token-budgets.test.ts`
@@ -1051,9 +1055,9 @@ outright.
   setting, all of it is billed inside `max_tokens`, and all of it happens before
   the first token of the answer. Growth-Strategy's `max_tokens: 4000` cleared
   the 1500 floor by nearly three times and still died on 2026-08-30. The budget
-  is now 32000. What the floor could not do, the roster can:
+  is now 64000. What the floor could not do, the roster can:
   `test/token-budgets.test.ts` **names every agent running at effort `max`** —
-  currently `growth_strategy` and nothing else — so a second one has to be sized
+  currently **none**, since Growth-Strategy moved to `high` on 2026-09-24 — so a new one has to be sized
   deliberately rather than inheriting a number that looked reasonable in place.
   It asserts on the roster rather than pairing efforts with budgets by regex,
   because the clever version would pass the day somebody moved a comment between

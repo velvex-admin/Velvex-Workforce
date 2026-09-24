@@ -110,7 +110,11 @@ export const growthStrategyAgent: AgentDefinition = {
   // Weekly, and its entire output is a judgement read across two departments at
   // once. Four calls a month is the cheapest place in the system to buy depth.
   model: MODEL,
-  effort: "max",
+  // "high", not "max", since 2026-09-24 (owner's call). Its inputs are thin
+  // (fourteen days of internal activity, no audience data), and more thinking
+  // over thin evidence buys a longer, more confident memo rather than a better
+  // one. Opus 5.5 at "high" is also above what Opus 5 did at "max".
+  effort: "high",
   cadence: "weekly",
   approvedChannels: ["internal"],
 
@@ -261,12 +265,13 @@ export const growthStrategyAgent: AgentDefinition = {
       // whole week, the largest pass in this system is budgeted at 32000 (the
       // intelligence agent's, at effort "high" since it was measured), and the
       // untaken half of a ceiling is free. Note that this is the ONLY call in
-      // the system running at effort "max", so it has no sibling to copy.
+      // the system that ran at effort "max", so it had no sibling to copy.
       //
       // 64000 since 2026-09-24, when the reasoning tier moved to Opus 5.5.
       // At the same effort level Opus 5.5 thinks MORE per turn than Opus 5,
-      // most of all at max, so a budget sized on Opus 5 is spent sooner. The
-      // model allows 128K and every call is streamed, so the ceiling has room.
+      // so a budget sized on Opus 5 is spent sooner. Kept at 64000 after the
+      // move to "high": a ceiling costs nothing unless it is used, and one
+      // truncation costs this weekly agent its whole turn.
       maxTokens: 64000,
     });
 
