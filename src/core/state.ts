@@ -227,6 +227,12 @@ export interface ContentDraft {
   authorAgent?: string;
   /** Set when the draft itself needed sign-off and got it. */
   approvalRef?: string;
+  /**
+   * The approved growth direction (a `growth.<channel>.*` memory key) this
+   * draft carries out, or null when it serves none. Copied onto the publish
+   * report so a post can be scored by direction once any signal exists.
+   */
+  direction?: string | null;
   publishedOn: Array<{ channel: string; ref: string; at: string }>;
   /**
    * Channels where the owner looked at this draft and said no.

@@ -1363,7 +1363,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, 689 before the Opus 5.5 move, and **690** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, and **698** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1434,7 +1434,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 690 tests
+npx vitest run            # 698 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -2966,7 +2966,43 @@ by itself - `seo_site` sat paused past its own stated exit condition and
 `finance_watch` since August for a reason nobody recorded. To extend it, change
 `until` and move the `AFTER` date in the test; do not delete the expiry test.
 
-### OPEN — an approved strategy or position reaches nobody who writes
+### OPEN — approved directions could never be closed; the mechanism is built, the retirements are not yet run
+
+Found 2026-09-24 reading Growth-Strategy's memo. An approved `campaign_direction`
+is written to memory as `growth.<channel>.<date>.<id>` at salience 8, tagged
+`[channel, "growth"]`, and the strategist reads its channel's tags at
+`minSalience: 5, limit: 12` on every draft. **Nothing ever lowered one.**
+Measured the same hour: **65 direction rows, all at salience 8** — 44 for X,
+21 for LinkedIn — so the X agent is handed the newest twelve as open work every
+draft, including the external-sourcing directions the owner closed that day in
+a rejection note. A ruling that only exists in a note changes nothing the
+strategist reads.
+
+**Built (`src/core/directions.ts`):** `GET /api/growth/directions[?channel=x]`
+lists open and retired; `POST /api/growth/directions/<key>/retire` with an
+optional `{ "note": "..." }` drops the row to `RETIRED_SALIENCE` (1), below the
+strategist's floor and both broadcast readers', tags it `retired`, and keeps the
+row as history. Idempotent: a second retire does not overwrite the first ruling.
+The strategist's floor is now the shared `STRATEGIST_MIN_SALIENCE`, and a test
+fails if it goes back to a literal — the pair is the invariant, as in 12c.
+
+**Also built: every draft and publish records the direction it served.** The
+drafting schema asks for the key of the open direction the post carries out, or
+"none"; `servedDirection()` keeps it only if it was one of the open keys the
+model was actually shown, so an invented or retired key is recorded as none, not
+guessed. It rides on the draft (`ContentDraft.direction`) onto the publish
+proposal and into the publish report's `detail.direction`, beside the
+`external_ref` already stored — so every post from now on can be scored by
+direction the day read access or `sales.pipeline` exists. 8 tests in
+`test/growth-directions.test.ts`, each fix verified to fail a test when removed.
+
+**Still to do after the deploy: the retirements themselves are data, and they
+are the owner's rulings, not a session's.** Even after retiring the directions
+already ruled closed, X keeps more open directions than the twelve the
+strategist reads, so the newest twelve win by date rather than by merit.
+Getting the open set to twelve or fewer is the real close of this thread.
+
+
 
 Found 2026-09-17 while scanning Growth-Strategy. Both `strategy.<date>` and
 `positioning.<date>.<kind>` write the substance to `detail` and a title to

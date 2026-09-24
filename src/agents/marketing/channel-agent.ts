@@ -19,6 +19,12 @@
 // A strategist that is not "active" (the flag is off, or the whole platform is
 // on hold) does nothing. Facebook is idle until the owner has an account there.
 
+import {
+  isDirectionKey,
+  isRetired,
+  servedDirection,
+  STRATEGIST_MIN_SALIENCE,
+} from "../../core/directions.js";
 import type { AgentDefinition, AgentRequirement, RunContext } from "../../core/agent.js";
 import type {
   AgentId,
@@ -214,9 +220,13 @@ export const DRAFT_SCHEMA = {
     draft: {
       type: "object",
       additionalProperties: false,
-      required: ["text", "pillar", "format", "reasoning"],
+      required: ["text", "pillar", "format", "reasoning", "direction"],
       properties: {
         text: { type: "string", minLength: 40 },
+        // The key of the open direction this post serves, or "none". Checked
+        // against the keys the model was actually shown before it is kept, so
+        // an invented key is recorded as no direction rather than guessed at.
+        direction: { type: "string", maxLength: 120 },
         pillar: { type: "string", enum: [...CONTENT_PILLARS] },
         format: { type: "string", enum: [...APPROVED_FORMATS] },
         reasoning: { type: "string", maxLength: 400 },
@@ -247,8 +257,11 @@ interface StrategyResult {
     pillar: ContentPillar;
     format: ContentFormat;
     reasoning: string;
+    direction?: string;
   };
   growth_ideas: Array<{ title: string; why: string; risk: "low" | "medium" | "high" }>;
+  /** Not from the model: the direction keys that were open in the notes it was shown. */
+  openDirections?: string[];
 }
 
 function isApprovedPillar(value: unknown): value is ContentPillar {
@@ -303,9 +316,14 @@ async function draftForChannel(
 ): Promise<StrategyResult | null> {
   const memory = await ctx.db.readMemory({
     tags: [spec.channel],
-    minSalience: 5,
+    minSalience: STRATEGIST_MIN_SALIENCE,
     limit: 12,
   });
+  // Retired directions sit below the floor, so this read cannot return them;
+  // the isRetired check is the second line, for a row somebody tagged by hand.
+  const openDirections = memory
+    .filter((row) => isDirectionKey(row.key) && !isRetired(row))
+    .map((row) => row.key);
 
   const notes = memory.map((row) => `- ${row.key}: ${row.content}`).join("\n") || "(none)";
   const posts = history.recentPosts.join("\n") || "(nothing published on this channel yet)";
@@ -359,6 +377,7 @@ Every draft must:
 - pick a format from: ${APPROVED_FORMATS.join(", ")}
 - read as one specific observation, not a summary
 - open differently from the openings in the recent posts below
+- set "direction" to the key (it starts "growth.") of the one open direction in the standing notes this post carries out, or "none" if it serves none. Do not bend a post to fit a direction; "none" is a fine answer
 ${spec.maxLength ? `- fit within ${spec.maxLength} characters` : ""}
 
 ${frozen ? "" : `Growth ideas are things you would try if allowed: engaging a specific external account, a new post format, a campaign concept, a series. Each carries a risk rating. Never suggest paid promotion at low risk; it is always high.`}
@@ -382,7 +401,7 @@ Now draft one new post${frozen ? ", and return growth_ideas as an empty array" :
     schema: DRAFT_SCHEMA as unknown as Record<string, unknown>,
   });
 
-  return result.parsed ?? null;
+  return result.parsed ? { ...result.parsed, openDirections } : null;
 }
 
 /**
@@ -632,6 +651,9 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
                   withinApprovedScope: next.withinApprovedScope,
                   pillar: next.pillar,
                   format: next.format,
+                  // Which approved direction this post carries out, so it can be
+                  // scored by direction the day any audience signal exists.
+                  direction: next.direction ?? null,
                   scheduledSlot: slot,
                 },
                 rationale: `Weekly plan slot at ${slot} is due and draft ${next.id} is ready.`,
@@ -750,6 +772,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           voiceClean: violations.length === 0,
           voiceViolations: violations,
           reasoning: result.draft.reasoning,
+          direction: servedDirection(result.draft.direction, result.openDirections ?? []),
         },
         rationale:
           violations.length === 0
@@ -845,6 +868,8 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           channelHint: action.payload["channelHint"] as ContentDraft["channelHint"],
           authorAgent: String(action.payload["authorAgent"] ?? spec.id),
           approvalRef: action.approvedContentRef,
+          direction:
+            typeof action.payload["direction"] === "string" ? action.payload["direction"] : null,
           publishedOn: [],
           status: action.payload["voiceClean"] === true ? "ready" : "needs_revision",
         };
@@ -882,6 +907,8 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
       // Publishing.
       const text = String(action.payload["text"] ?? "");
       const draftId = String(action.payload["draftId"] ?? action.target ?? "");
+      const direction =
+        typeof action.payload["direction"] === "string" ? action.payload["direction"] : null;
       const stampPublished = async (ref: string) => {
         const drafts = await state.contentQueue(ctx.db);
         const draft = drafts.find((item) => item.id === draftId);
@@ -951,6 +978,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
                 ? "This draft was already waiting in the LinkedIn queue, so nothing was added. It publishes as soon as the partner integration is switched on."
                 : "LinkedIn draft queued. It publishes as soon as the partner integration is switched on.",
               draftId,
+              direction,
               duplicate,
               waitingOn: ["LINKEDIN_INTEGRATION_ENABLED", "LINKEDIN_PARTNER_TOKEN"],
             },
@@ -965,6 +993,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
               ? "Already waiting in the LinkedIn partner queue; nothing was added."
               : "Queued for the LinkedIn partner agent to publish.",
             draftId,
+            direction,
             duplicate,
           },
         };
@@ -991,7 +1020,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         return {
           outcome: "executed",
           externalRef: result.externalRef,
-          detail: { url: result.url, scheduled: result.scheduled, draftId },
+          detail: { url: result.url, scheduled: result.scheduled, draftId, direction },
         };
       } catch (err) {
         if (err instanceof ConnectorInactiveError) {

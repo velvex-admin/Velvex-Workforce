@@ -24,6 +24,7 @@ import { STATE_KEYS, state } from "../core/state.js";
 import { ideationFreeze } from "../core/ideation.js";
 import { readLedger, summarise } from "../core/spend.js";
 import { DEFAULT_VOICE } from "../core/voice.js";
+import { listDirections, retireDirection } from "../core/directions.js";
 import { resolveTiers } from "../core/models.js";
 import {
   briefFilename,
@@ -391,6 +392,30 @@ export async function handleApi(
   // PUT /api/schedules/:agentId  { cadence, note? }
   //   valid cadences: "hourly" | "daily" | "weekly" | "monthly" | "paused" | "default"
   //   "default" clears the override so the built-in cadence applies again.
+  // GET  /api/growth/directions[?channel=x]   every approved direction, open and retired
+  // POST /api/growth/directions/:key/retire     { note? } closes one (src/core/directions.ts)
+  if (segments[0] === "growth" && segments[1] === "directions") {
+    const db = new Supabase(env);
+
+    if (request.method === "GET" && segments.length === 2) {
+      const channel = url.searchParams.get("channel") ?? undefined;
+      const directions = await listDirections(db, channel);
+      return json({
+        open: directions.filter((d) => d.status === "open"),
+        retired: directions.filter((d) => d.status === "retired"),
+      });
+    }
+
+    if (request.method === "POST" && segments.length === 4 && segments[3] === "retire") {
+      const key = decodeURIComponent(segments[2]!);
+      const body = (await request.json().catch(() => ({}))) as { note?: unknown };
+      const note = typeof body.note === "string" && body.note.trim() ? body.note.trim() : undefined;
+      const result = await retireDirection(db, key, new Date().toISOString(), note);
+      if (!result.ok) return json({ error: result.error }, result.status);
+      return json({ retired: result.direction, alreadyRetired: result.alreadyRetired });
+    }
+  }
+
   if (segments[0] === "schedules") {
     const db = new Supabase(env);
 
