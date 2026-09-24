@@ -2966,7 +2966,7 @@ by itself - `seo_site` sat paused past its own stated exit condition and
 `finance_watch` since August for a reason nobody recorded. To extend it, change
 `until` and move the `AFTER` date in the test; do not delete the expiry test.
 
-### OPEN — approved directions could never be closed; the mechanism is built, the retirements are not yet run
+### CLOSED — approved directions could never be closed; built, deployed, and 56 of 65 retired
 
 Found 2026-09-24 reading Growth-Strategy's memo. An approved `campaign_direction`
 is written to memory as `growth.<channel>.<date>.<id>` at salience 8, tagged
@@ -2996,11 +2996,30 @@ proposal and into the publish report's `detail.direction`, beside the
 direction the day read access or `sales.pipeline` exists. 8 tests in
 `test/growth-directions.test.ts`, each fix verified to fail a test when removed.
 
-**Still to do after the deploy: the retirements themselves are data, and they
-are the owner's rulings, not a session's.** Even after retiring the directions
-already ruled closed, X keeps more open directions than the twelve the
-strategist reads, so the newest twelve win by date rather than by merit.
-Getting the open set to twelve or fewer is the real close of this thread.
+**Retired 2026-09-24, on the owner's approval of a written list: 56 of 65.**
+Deployed as `b97fe37`, then one POST per key, each carrying its reason in
+`detail.retiredNote`. Four groups: 20 X directions that need web or read
+access the X agent does not have; 3 built on redacted client Ledgers that do not
+exist yet; all 21 LinkedIn directions (channel paused, delivery blocked on
+registration); 12 older or duplicate X series superseded by the registers.
+Verified live: **X 9 open / 35 retired, LinkedIn 0 open / 21 retired**, every
+retired row at salience 1 with its content and prior salience kept.
+
+The 9 left open are the eight register series plus the finding-tags
+methodology post (to be retired after 2026-09-29 if it has not gone out). Nine
+is under the strategist's twelve-row read, so every open direction is now
+actually seen, rather than the newest twelve by date.
+
+**Keep the open set at or under twelve.** When the ideation freeze lifts on
+09-29, every approved growth idea adds a row; past twelve the oldest open ones
+silently drop out of the prompt again. Retire before approving, not after.
+
+**The one check still owed:** the next X draft's report should carry
+`detail.direction` as one of the nine keys, or null. That needs a real drafting
+run and has not happened yet.
+
+**Operational note:** Python's default User-Agent gets a 403 from the Worker's
+edge; curl's does not. A script calling these routes must set a User-Agent.
 
 
 
