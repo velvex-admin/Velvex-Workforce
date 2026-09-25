@@ -1363,7 +1363,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, and **701** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, and **702** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1434,7 +1434,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 701 tests
+npx vitest run            # 702 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -3049,6 +3049,16 @@ to treat them like recent posts. `test/shelf-visibility.test.ts` drives the real
 `xAgent` and asserts on the prompt; two of its three tests fail with the wiring
 removed. The duplicate `94eec1d2` was retired after the deploy, so that its
 replacement was written with both posts visible.
+
+**And the shelf published newest first, which is what stranded the old drafts
+in the first place.** Drafts are `unshift`ed, so the queue is newest-first, and
+the publish pass took `available[0]`. Once the shelf is full, every slot sends
+the draft written most recently, and the older two never go out. That is how
+`94ed4d85` and `0d067403` sat for 26 days, and it would have stranded the next
+pair the same way. It also made the new prompt line, "these go out before
+yours", false. The publish pass now takes `oldestFirst(available)[0]`, so a
+draft waits at most about a week (three slots). The test in
+`test/shelf-visibility.test.ts` fails on the old head-of-queue pick.
 
 
 

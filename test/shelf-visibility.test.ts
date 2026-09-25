@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { xAgent } from "../src/agents/marketing/x.js";
 import { state, type ContentDraft } from "../src/core/state.js";
+import { planKey, type StoredPlan } from "../src/core/schedule.js";
 import type { RunContext } from "../src/core/agent.js";
 import type { MemoryRow, Supabase } from "../src/lib/supabase.js";
 import type { Env } from "../src/env.js";
@@ -110,5 +111,33 @@ describe("what the drafting call sees of the shelf", () => {
   it("says so plainly when the shelf is empty", async () => {
     const prompt = await draftingPrompt([]);
     expect(prompt).toMatch(/not yet published \(these go out before yours\):\n\(none\)/);
+  });
+});
+
+describe("which draft a due slot publishes", () => {
+  it("takes the oldest available draft, not the newest", async () => {
+    // The queue is newest-first. Taking the head published the newest draft
+    // every slot and stranded the older two for good once the shelf was full.
+    const db = fakeDb();
+    await state.saveContentQueue(db, [
+      draft("newest", "Newest draft on the shelf.", { createdAt: "2026-09-25T07:00:00Z" }),
+      draft("oldest", "Oldest draft on the shelf.", { createdAt: "2026-09-23T07:00:00Z" }),
+      draft("middle", "Middle draft on the shelf.", { createdAt: "2026-09-24T07:00:00Z" }),
+    ]);
+    const slot = "2026-09-25T05:00:00.000Z";
+    const plan: StoredPlan = { week: "2026-09-22", slots: [slot], consumed: [] };
+    await db.writeMemory({ key: planKey("x"), detail: { value: plan } } as never);
+    const ctx = {
+      db,
+      env: { X_ENABLED: "true" } as unknown as Env,
+      now: NOW,
+      log: () => {},
+      claude: { complete: async () => { throw new Error("no model"); } },
+    } as unknown as RunContext;
+
+    const proposals = await xAgent.propose(ctx);
+    const publish = proposals.filter((p) => p.type === "publish_post");
+    expect(publish).toHaveLength(1);
+    expect(publish[0]?.payload["draftId"]).toBe("oldest");
   });
 });

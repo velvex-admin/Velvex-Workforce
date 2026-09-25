@@ -308,6 +308,11 @@ export async function readChannelHistory(
   return { recentPosts, lastPublishedAt };
 }
 
+/** A copy of the drafts, oldest first by `createdAt`. */
+export function oldestFirst(drafts: readonly ContentDraft[]): ContentDraft[] {
+  return [...drafts].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 async function draftForChannel(
   spec: ChannelStrategistSpec,
   ctx: RunContext,
@@ -642,7 +647,13 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
           ctx.now.getTime() - history.lastPublishedAt < spec.schedule.minGapHours * 3600_000;
 
         if (!withinGap) {
-          const next = available[0];
+          // Oldest first. The queue is newest-first (drafts are unshifted), so
+          // taking available[0] published the newest draft every time, and on a
+          // full shelf the older two could never go out: that is how two X
+          // drafts from 2026-08-30 sat "ready" for 26 days holding two of three
+          // slots. First in, first out also makes the drafting prompt's "these
+          // go out before yours" true.
+          const next = oldestFirst(available)[0];
           if (next) {
             if (spec.maxLength && next.text.length > spec.maxLength) {
               proposals.push({
