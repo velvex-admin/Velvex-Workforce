@@ -312,7 +312,8 @@ async function draftForChannel(
   spec: ChannelStrategistSpec,
   ctx: RunContext,
   history: { recentPosts: string[]; lastPublishedAt: number | null },
-  learned: string | null
+  learned: string | null,
+  shelf: readonly ContentDraft[] = []
 ): Promise<StrategyResult | null> {
   const memory = await ctx.db.readMemory({
     tags: [spec.channel],
@@ -327,6 +328,14 @@ async function draftForChannel(
 
   const notes = memory.map((row) => `- ${row.key}: ${row.content}`).join("\n") || "(none)";
   const posts = history.recentPosts.join("\n") || "(nothing published on this channel yet)";
+  // The drafts already waiting on this channel's shelf. History is only what
+  // has been PUBLISHED, so without this the model cannot see up to two posts
+  // that will go out before the one it is writing. On 2026-09-25 that produced
+  // two consecutive X drafts on the same mechanism (a manufacturer's volume
+  // rebate carrying the reported profit) in two neighbouring trades, which
+  // reads as a template the moment the second one lands.
+  const waiting =
+    shelf.map((draft) => `- ${draft.text.slice(0, 280)}`).join("\n") || "(none)";
 
   // Growth ideas are the half of this call the owner froze. Drafting is not
   // frozen and publishing is not frozen: the channel keeps its three slots a
@@ -366,6 +375,8 @@ Learning from past posts DOES NOT MEAN copying or paraphrasing them. It means:
 
 Creativity is the point. If a draft could sit inside the "recent posts" list below without anyone noticing it is new, rewrite it.
 
+The "already drafted" list below is posts written but not yet published; they go out before yours. Treat them exactly like recent posts: do not repeat their subject, their mechanism or their opening, even in a different industry. Two posts on the same mechanism in a row read as a template.
+
 ${
     frozen
       ? `Draft exactly one post. Do NOT propose any growth ideas this run: return growth_ideas as an empty array.\n\nNew growth ideas are frozen until ${frozen.until} (${frozen.daysLeft} day(s) left). ${frozen.reason} This is the owner's instruction and it is not a gap for you to fill: an idea proposed now is dropped before it reaches them, so proposing one spends tokens and changes nothing. Put the whole of this run into the draft.`
@@ -386,6 +397,9 @@ Respond only with the JSON object described by the schema.`;
 
   const user = `Recent posts on ${spec.channel} (most recent first):
 ${posts}
+
+Already drafted for ${spec.channel}, not yet published (these go out before yours):
+${waiting}
 ${baseline}
 Standing notes tagged ${spec.channel}:
 ${notes}
@@ -732,7 +746,7 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
 
       let result: StrategyResult | null = null;
       try {
-        result = await draftForChannel(spec, ctx, history, learned);
+        result = await draftForChannel(spec, ctx, history, learned, available);
       } catch (err) {
         ctx.log(`${spec.id}: drafting call failed`, { error: err instanceof Error ? err.message : String(err) });
         return proposals;

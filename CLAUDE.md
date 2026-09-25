@@ -1363,7 +1363,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, and **698** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, and **701** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1434,7 +1434,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 698 tests
+npx vitest run            # 701 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -3035,6 +3035,20 @@ tick; the queue was read again first to confirm nothing had changed. **A draft
 older than about two weeks on the shelf is dead weight.** Nothing ages drafts
 out automatically, so check `content.queue` when the X agent seems to post from
 a thin shelf.
+
+**Retiring those two exposed a second fault the same hour: the drafter could
+not see the shelf.** `readChannelHistory` returns only what was PUBLISHED, so a
+new draft was written blind to up to two drafts that would go out before it.
+The 06:00 tick on 2026-09-25 wrote an electrical wholesaler whose profit is the
+manufacturer's volume rebate, directly behind an unpublished HVAC installer
+with the same mechanism: the same post in neighbouring trades, back to back.
+The stale drafts had hidden this, because they kept the shelf at one fresh
+draft. `draftForChannel` now receives the channel's `available` drafts and the
+prompt lists them as "already drafted, not yet published" with the instruction
+to treat them like recent posts. `test/shelf-visibility.test.ts` drives the real
+`xAgent` and asserts on the prompt; two of its three tests fail with the wiring
+removed. The duplicate `94eec1d2` was retired after the deploy, so that its
+replacement was written with both posts visible.
 
 
 
