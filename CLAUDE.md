@@ -1363,7 +1363,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, 702 before the xhigh writer budget, and **704** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, 702 before the xhigh writer budget, 704 before the weekly planner stopped dropping its gap, and **706** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1434,7 +1434,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 704 tests
+npx vitest run            # 706 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -3087,6 +3087,31 @@ docs-only commit landed on top, HEAD became `137d096`, and the gate printed
 STOP. Gate on ANCESTRY, not equality, so a later commit cannot block it:
 `git merge-base --is-ancestor <sha> HEAD`. And do not push to the branch
 between handing over a gated paste and the owner running it.
+
+**The redeploy was then verified in the bundle, 12:49 UTC 2026-09-25:**
+`var XHIGH_WRITER_MAX_TOKENS = 16e3;`, used at the strategist's drafting call
+and both Content Agent calls.
+
+**The weekly planner and the publish gate disagreed about the gap, and the
+14:00 slot on 2026-09-25 did not publish.** X carries `minGapHours: 30`, and
+the gap is enforced twice: `planWeek` when it picks slots, and the publish pass
+when a slot is due. `planWeek` was one greedy pass over a shuffle and, if that
+pass came up short, dropped the gap entirely. For the week of 2026-09-21 it
+picked Tue 17:00 and Thu 19:00 first, which left no weekday hour 30h from both,
+so it fell back and placed Fri 14:00 nineteen hours after Thursday's post. The
+publish pass then refused it at 14:00 and 15:00 and will keep refusing it until
+30h have passed, at about **01:00 UTC Saturday**, outside the window the slot
+was chosen from. Nothing logged it: a refused slot files nothing. Three posts
+30h apart always fit Mon-Fri 12:00-21:00, so the fallback should never have run.
+`planWeek` now reshuffles from the same seeded stream up to `PLAN_ATTEMPTS`
+(20) times before it gives up on the gap. A week the first pass already fills is
+unchanged, and `test/schedule.test.ts` asserts that as well as two years of X
+weeks with every gap at least 30h (it fails with the retry removed). **A stored
+plan is not regenerated within its week**, so the fix takes effect from the week
+of 2026-09-28; this week's third slot goes out Saturday ~01:00 UTC unless the
+plan row is edited. This is the shelf deadlock's shape again: **two passes
+enforcing one rule must enforce it the same way**, or the later one silently
+vetoes the earlier one.
 
 
 

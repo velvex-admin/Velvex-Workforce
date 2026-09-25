@@ -103,6 +103,9 @@ function candidateSlots(spec: WeeklyPlanSpec, weekStart: Date): Date[] {
   return out;
 }
 
+/** Reshuffles tried before a week's plan gives up on the minimum gap. */
+const PLAN_ATTEMPTS = 20;
+
 /**
  * Pick `weeklyPosts` random slots this week, respecting the minimum gap and the
  * spec's windows. Pure and deterministic; the seed is (channel + ISO week).
@@ -111,20 +114,30 @@ export function planWeek(spec: WeeklyPlanSpec, weekStart: Date): Date[] {
   const seed = hashString(`${spec.channel}:${weekStart.toISOString().slice(0, 10)}`);
   const random = rng(seed);
   const candidates = candidateSlots(spec, weekStart);
-  const chosen: Date[] = [];
+  const gapMs = spec.minGapHours * 3600_000;
 
   // Fisher-Yates through candidates; accept a slot when it clears the gap.
-  const shuffled = [...candidates];
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!];
-  }
-
-  const gapMs = spec.minGapHours * 3600_000;
-  for (const slot of shuffled) {
+  // A greedy pass can paint itself into a corner (X, week of 2026-09-21: Tue
+  // 17:00 and Thu 19:00 left no weekday hour 30h from both), so on a short
+  // result reshuffle from the same seeded stream before giving up on the gap.
+  // A week the first pass fills is unchanged by this. Giving up matters: the
+  // publish pass enforces the same gap, so a fallback slot is not published
+  // when planned but hours later, outside the window it was chosen from.
+  let chosen: Date[] = [];
+  let shuffled: Date[] = [];
+  for (let attempt = 0; attempt < PLAN_ATTEMPTS; attempt += 1) {
+    shuffled = [...candidates];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!];
+    }
+    chosen = [];
+    for (const slot of shuffled) {
+      if (chosen.length >= spec.weeklyPosts) break;
+      const tooClose = chosen.some((other) => Math.abs(other.getTime() - slot.getTime()) < gapMs);
+      if (!tooClose) chosen.push(slot);
+    }
     if (chosen.length >= spec.weeklyPosts) break;
-    const tooClose = chosen.some((other) => Math.abs(other.getTime() - slot.getTime()) < gapMs);
-    if (!tooClose) chosen.push(slot);
   }
 
   // Fallback: if gaps prevent hitting the target, drop the gap and take the top
