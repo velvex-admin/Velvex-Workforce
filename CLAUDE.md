@@ -3021,6 +3021,21 @@ run and has not happened yet.
 **Operational note:** Python's default User-Agent gets a 403 from the Worker's
 edge; curl's does not. A script calling these routes must set a User-Agent.
 
+**The shelf had the same problem, found 2026-09-25 while waiting for that check.**
+The publish pass takes `available[0]`, and the queue is newest first, so a fresh
+draft always goes out before an older one. Two X drafts from 2026-08-30
+(`94ed4d85`, `0d067403`) had been `ready` for 26 days. They would never publish,
+yet they took two of the three shelf slots. The result was that X kept only one
+current draft. If that one draft ever failed, a month-old post written before the
+register series would have gone out in its place. Both were set to
+`status: "retired"` on the owner's instruction, with `retiredAt` and
+`retiredNote` added. They were not deleted. This was a data edit through
+`PUT /api/state/content.queue` with a bare array, made just after an hourly
+tick; the queue was read again first to confirm nothing had changed. **A draft
+older than about two weeks on the shelf is dead weight.** Nothing ages drafts
+out automatically, so check `content.queue` when the X agent seems to post from
+a thin shelf.
+
 
 
 Found 2026-09-17 while scanning Growth-Strategy. Both `strategy.<date>` and
