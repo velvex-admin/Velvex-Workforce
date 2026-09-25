@@ -27,6 +27,19 @@
  */
 export const SHORT_ANSWER_MAX_TOKENS = 2000;
 
+/**
+ * The budget for a public-copy call at effort `xhigh` on the reasoning tier.
+ *
+ * The X drafting call ran at 4000 for weeks and died at 08:00 on 2026-09-25
+ * with "Ran out of output budget on claude-opus-5-5 (max_tokens 4000)". Opus 5.5
+ * thinks more per turn than Opus 5 at the same level, and the prompt had just
+ * grown by the shelf list and nine lessons; the 06:00 and 07:00 calls fitted
+ * and that one did not. A truncated call is billed and produces nothing, and an
+ * hourly agent retries the same shape every hour. As with every budget here it
+ * is a ceiling, not a spend.
+ */
+export const XHIGH_WRITER_MAX_TOKENS = 16000;
+
 export const MODELS = {
   /** Judgement that is expensive to get wrong, or writing that goes out in public. */
   reasoning: "claude-opus-5-5",

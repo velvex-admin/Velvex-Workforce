@@ -1363,7 +1363,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, and **702** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, 702 before the xhigh writer budget, and **704** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1434,7 +1434,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 702 tests
+npx vitest run            # 704 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -3059,6 +3059,19 @@ pair the same way. It also made the new prompt line, "these go out before
 yours", false. The publish pass now takes `oldestFirst(available)[0]`, so a
 draft waits at most about a week (three slots). The test in
 `test/shelf-visibility.test.ts` fails on the old head-of-queue pick.
+
+**The first tick after both fixes shipped died on its budget.** At 08:00 on
+2026-09-25 the X drafting call failed with `Ran out of output budget on
+claude-opus-5-5 (max_tokens 4000)`: effort `xhigh` on Opus 5.5, whose thinking
+is billed inside `max_tokens`, with a prompt that had just grown by the shelf
+list and nine lessons. The 06:00 and 07:00 calls had fitted, so 4000 was a
+margin that happened to hold, not a size anyone chose. A truncated call is
+billed and yields nothing, and an hourly agent retries the same shape every
+hour. `XHIGH_WRITER_MAX_TOKENS` (16000) in `src/core/models.ts` now serves the
+strategist's drafting call and both Content Agent calls; Content had **2000**
+at `xhigh` and was safe only because it is paused. `test/token-budgets.test.ts`
+asserts both. **When a prompt grows, check the budget of the call it feeds**,
+most of all at `xhigh`, where the thinking is most of the spend.
 
 
 

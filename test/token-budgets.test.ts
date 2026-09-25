@@ -17,7 +17,8 @@
 // is legitimate only where the model does no thinking at all.
 
 import { describe, expect, it } from "vitest";
-import { SHORT_ANSWER_MAX_TOKENS } from "../src/core/models.js";
+import { SHORT_ANSWER_MAX_TOKENS, XHIGH_WRITER_MAX_TOKENS } from "../src/core/models.js";
+import content from "../src/agents/marketing/content.ts?raw";
 import { AGENTS } from "../src/agents/registry.js";
 
 import seoSite from "../src/agents/marketing/seo-site.ts?raw";
@@ -162,5 +163,22 @@ describe("what effort max has to be given room for", () => {
   it("keeps the room Growth-Strategy was given when it ran at max", () => {
     const undersized = numericBudgets(growthStrategy).filter((n) => n < DEEP_FLOOR);
     expect(undersized).toEqual([]);
+  });
+});
+
+// The public-copy writers run Opus 5.5 at effort xhigh. The X drafting call had
+// max_tokens 4000 and died on 2026-09-25 08:00 with "Ran out of output budget on
+// claude-opus-5-5 (max_tokens 4000)" once its prompt grew by the shelf list and
+// nine lessons. The Content Agent had 2000 at the same effort and was only safe
+// because it was paused.
+describe("what effort xhigh has to be given room for", () => {
+  it("gives the xhigh writers a budget sized for Opus 5.5 thinking", () => {
+    expect(XHIGH_WRITER_MAX_TOKENS).toBeGreaterThanOrEqual(16_000);
+  });
+
+  it("uses that budget in the strategist's drafting call and in the Content Agent", () => {
+    expect(channelAgent).toMatch(/effort: "xhigh",\s*maxTokens: XHIGH_WRITER_MAX_TOKENS/);
+    expect(content).not.toMatch(/maxTokens: \d/);
+    expect(content.match(/maxTokens: XHIGH_WRITER_MAX_TOKENS/g)?.length).toBe(2);
   });
 });

@@ -37,7 +37,7 @@ import { getConnector } from "../../connectors/registry.js";
 import { ConnectorInactiveError } from "../../connectors/types.js";
 import { enqueueForPartner } from "../../connectors/linkedin.js";
 import { linkedInDirectConnector } from "../../connectors/linkedin-direct.js";
-import { MODELS } from "../../core/models.js";
+import { MODELS, XHIGH_WRITER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 import {
@@ -416,7 +416,7 @@ Now draft one new post${frozen ? ", and return growth_ideas as an empty array" :
     system,
     user,
     effort: "xhigh",
-    maxTokens: 4000,
+    maxTokens: XHIGH_WRITER_MAX_TOKENS,
     schema: DRAFT_SCHEMA as unknown as Record<string, unknown>,
   });
 
