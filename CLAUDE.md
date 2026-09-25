@@ -3073,10 +3073,20 @@ hour. `XHIGH_WRITER_MAX_TOKENS` (16000) in `src/core/models.ts` now serves the
 strategist's drafting call and both Content Agent calls; Content had **2000**
 at `xhigh` and was safe only because it is paused. `test/token-budgets.test.ts`
 asserts both. **When a prompt grows, check the budget of the call it feeds**,
-most of all at `xhigh`, where the thinking is most of the spend. Deployed between 10:00 and
-11:00 on 2026-09-25 after three failed ticks (08:00, 09:00, 10:00, about $0.10
-each); the 11:00 tick drafted `51a9d2a2` on a third mechanism (seasonal
-workforce rebuild), with both shelf drafts visible to it and neither repeated.
+most of all at `xhigh`, where the thinking is most of the spend. Three ticks failed on it (08:00, 09:00,
+10:00, about $0.10 each). **CORRECTION, same day: the 11:00 tick succeeding was
+read here as proof of the deploy, and it was not.** The live bundle at 12:46
+still carried `maxTokens: 4e3` on the drafting call; that prompt simply fitted.
+A success on a call that fails intermittently proves nothing about which code
+ran. **Grep the bundle before calling a deploy live**, as this section already
+says for every other case.
+
+**And the deploy gate refused, correctly, because of a commit pushed after it
+was written.** The paste checked `git rev-parse --short HEAD = fd10391`; a
+docs-only commit landed on top, HEAD became `137d096`, and the gate printed
+STOP. Gate on ANCESTRY, not equality, so a later commit cannot block it:
+`git merge-base --is-ancestor <sha> HEAD`. And do not push to the branch
+between handing over a gated paste and the owner running it.
 
 
 
