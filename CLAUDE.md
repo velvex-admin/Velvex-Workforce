@@ -3014,9 +3014,11 @@ actually seen, rather than the newest twelve by date.
 09-29, every approved growth idea adds a row; past twelve the oldest open ones
 silently drop out of the prompt again. Retire before approving, not after.
 
-**The one check still owed:** the next X draft's report should carry
-`detail.direction` as one of the nine keys, or null. That needs a real drafting
-run and has not happened yet.
+**Verified live 2026-09-25.** Every X draft written since the deploy names an
+open direction: `94eec1d2` (06:00) the third-party incentive register,
+`e10eff19` (07:00) the finding-tags post, `51a9d2a2` (11:00) the
+workforce-reconstitution register. The publish report carries it from the first
+of those to go out; `dbcfc2d4` predates the change and correctly carries none.
 
 **Operational note:** Python's default User-Agent gets a 403 from the Worker's
 edge; curl's does not. A script calling these routes must set a User-Agent.
@@ -3071,7 +3073,10 @@ hour. `XHIGH_WRITER_MAX_TOKENS` (16000) in `src/core/models.ts` now serves the
 strategist's drafting call and both Content Agent calls; Content had **2000**
 at `xhigh` and was safe only because it is paused. `test/token-budgets.test.ts`
 asserts both. **When a prompt grows, check the budget of the call it feeds**,
-most of all at `xhigh`, where the thinking is most of the spend.
+most of all at `xhigh`, where the thinking is most of the spend. Deployed between 10:00 and
+11:00 on 2026-09-25 after three failed ticks (08:00, 09:00, 10:00, about $0.10
+each); the 11:00 tick drafted `51a9d2a2` on a third mechanism (seasonal
+workforce rebuild), with both shelf drafts visible to it and neither repeated.
 
 
 
