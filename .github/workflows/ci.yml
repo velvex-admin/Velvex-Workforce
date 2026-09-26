@@ -1,0 +1,47 @@
+# Run the checks a contributor runs locally, on every push.
+#
+# Until this existed the repo had no automated check of any kind: the only check
+# reporting on a pull request was Cloudflare's Workers Builds, which tries to
+# build the repo with its own server-side builder, has failed on every push since
+# 2026-08-20, and is documented in CLAUDE.md section 9 as a red herring that has
+# never been the path that deploys this Worker.
+#
+# So a red tick meant nothing and a green one was unavailable, and the 457 tests
+# only ever ran where somebody remembered to run them. That matters more than it
+# sounds for this repo in particular: the suite is where the real decisions are
+# encoded — an autonomy rule change that breaks test/autonomy.test.ts is a
+# behaviour change, and test/learning-retrieval.test.ts is the only thing that
+# would notice a learning record being promoted into every other agent's prompt.
+#
+# This does NOT deploy. Deployment is `npx wrangler deploy` from the owner's
+# machine, and wrangler.toml is the source of truth for variables — a CI job with
+# deploy credentials would be a second thing that can stamp them.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `npm ci` rather than `npm install`: it installs exactly what the
+      # lockfile pins, so a run that passes here is a run against the same tree
+      # the owner has, not against whatever resolved today.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npx vitest run

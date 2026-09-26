@@ -164,10 +164,39 @@ export function scanForTells(text: string, profile: VoiceProfile = DEFAULT_VOICE
   return violations;
 }
 
+/**
+ * The engine's name, spelled the one way the owner has settled on: V, e, the
+ * precomposed l-with-acute (U+013A), a. Written as an escape here on purpose,
+ * so no editor or copy-paste can quietly swap in a decomposed form.
+ */
+export const ENGINE_NAME = "Veĺa";
+
+// A model asked to write "Veĺa" does not always write the character. Seen live
+// on 2026-08-30, in a LinkedIn growth idea: "Ve\ru0301la", a broken escape that
+// put a carriage return and the text "u0301" where the accent belongs. The other
+// shapes below are what the same mistake looks like by other routes: an escape
+// left as text, an HTML entity, a combining accent instead of the precomposed
+// letter, or the accent dropped altogether. The prompt asks for the character;
+// this makes sure of it, because a mangled brand name in a public post is not
+// something a later draft can take back.
+const STRAY = String.raw`(?:\\+[rnt]?|\r|\n)*`;
+const ACUTE = String.raw`(?:\\*u0301|\\*u00[bB]4|́|´|&#769;|&#x0?301;|&acute;)`;
+const L_ACUTE = String.raw`(?:ĺ|\\*u013[aA]|&#314;|&#x0?13[aA];|&lacute;)`;
+const ENGINE_NAME_VARIANTS = new RegExp(
+  String.raw`\bVe${STRAY}(?:${L_ACUTE}|(?:${ACUTE}${STRAY})*l(?:${STRAY}${ACUTE})*)${STRAY}a(?![\p{L}\p{M}\p{N}])`,
+  "gu"
+);
+
+/** Puts every recognisable spelling of the engine's name back to {@link ENGINE_NAME}. */
+export function fixEngineName(text: string): string {
+  return text.replace(ENGINE_NAME_VARIANTS, ENGINE_NAME);
+}
+
 /** Strips the fixable tells so a near-miss draft is not thrown away. */
 export function softenTells(text: string, profile: VoiceProfile = DEFAULT_VOICE): string {
+  const named = fixEngineName(text);
   const withoutDashes = profile.allowEmDash
-    ? text
-    : text.replace(/\s*—\s*/g, ", ").replace(/\s*–\s*/g, ", ");
+    ? named
+    : named.replace(/\s*—\s*/g, ", ").replace(/\s*–\s*/g, ", ");
   return withoutDashes.replace(/[ \t]{2,}/g, " ").trim();
 }

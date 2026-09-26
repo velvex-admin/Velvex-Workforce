@@ -21,17 +21,12 @@ import type {
   RuleDecision,
 } from "../../core/types.js";
 import { state } from "../../core/state.js";
+import { dedupeKey } from "../../core/proposal-key.js";
 
 import { MODELS } from "../../core/models.js";
 
 const MODEL = MODELS.reasoning;
 
-/** Stable dedupe handle so the same proposal does not queue on every tick. */
-function dedupeKey(agentId: string, action: ProposedAction): string {
-  if (action.dedupeKey) return `${agentId}:${action.dedupeKey}`;
-  const basis = `${action.type}|${action.target ?? ""}|${action.summary}`.slice(0, 200);
-  return `${agentId}:${basis}`;
-}
 
 export const chiefOfStaff: Coordinator = {
   /**
@@ -99,7 +94,7 @@ export const chiefOfStaff: Coordinator = {
       trigger_rule: decision.ruleId,
       trigger_reason: decision.reason,
       risk: decision.risk,
-      dedupe_key: dedupeKey(agent.id, action).slice(0, 300),
+      dedupe_key: dedupeKey(agent.id, action),
     });
 
     if (!row) {

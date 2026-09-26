@@ -28,37 +28,90 @@ export const BUSINESS = {
     "an open-ended advisory relationship",
   ],
 
+  /**
+   * WHO THE LEDGER IS WRITTEN FOR, which is a different question from who is
+   * in the room when a business decides to buy one.
+   *
+   * This line named "capital allocators" as an audience until 2026-09-19, and
+   * `intel.position` says the opposite in the owner's own words: the Ledger is
+   * "addressed to the operating business itself, never to capital allocators
+   * directly". `intel.position` outranks the public record and outranks this
+   * file, so the site's phrasing was the stale half of that disagreement, not
+   * the authority — see section 10 on checking this file against the position
+   * statement rather than against the site alone.
+   *
+   * The contradiction mattered more here than anywhere else it was written
+   * down. BUSINESS_CONTEXT is rendered in FULL into the system prompt of every
+   * agent that writes anything, so an allocator named as the audience puts all
+   * public copy into the allocator register — writing to the person across the
+   * table from the reader rather than to the reader. Approved positioning notes
+   * reach two agents as a one-line title; this string reaches every one of them
+   * whole, which is why it is the line that had to be right.
+   *
+   * "Institutional" is kept, because it describes the register and the tier and
+   * that much the site means correctly. What is dropped is the claim that an
+   * allocator is who the Ledger is addressed to. If allocators turn out to be a
+   * route by which a business arrives, that is a distribution fact and belongs
+   * in a field of its own: it is not this one, and nothing here should be read
+   * as inventing one.
+   */
   audience:
     "Businesses approaching a scaling decision — new capital, new channels, aggressive " +
     "growth targets — that want a third-party read on whether the underlying architecture " +
-    "holds before resources are committed. Distribution is institutional: B2B enterprises " +
-    "and capital allocators.",
+    "holds before resources are committed. The Ledger is written to be read by the " +
+    "operating business itself, and is never addressed to a capital allocator sitting " +
+    "across the table from them. The register is institutional; the reader is the operator.",
 
   engine: {
     name: "Veĺa",
-    version: "v0.1",
-    /** The six nodes the site names on the diagnostic interface. */
-    nodes: [
-      "Structural Architecture",
-      "Revenue Mechanics",
-      "Channel Dependency",
-      "Operational Capacity",
-      "Pressure Point Matrix",
-      "Continuity Risk",
+    version: "v1.0",
+    /**
+     * The seven engines of the Velvex Diagnostic Language, which is the
+     * qualitative structural reading.
+     *
+     * These replaced six differently-named "nodes" and a v0.1 label that this
+     * file carried for months. The old set was faithfully copied from the site,
+     * and the site was behind the product: the engine had moved to v1.0 and to
+     * these seven while every writing agent was still being handed the old
+     * vocabulary in its system prompt. Copy written from a superseded model of
+     * your own product is the quiet kind of wrong — it reads fine and
+     * contradicts the page it points at.
+     */
+    engines: [
+      "Value Engine",
+      "Demand Engine",
+      "Delivery Engine",
+      "Trust Engine",
+      "Cashflow Structure",
+      "Adaptation Capacity",
+      "Exposure Surface",
     ],
-    /** The three trajectories every engagement is analysed across. */
-    trajectories: [
-      "Structural Architecture Mapping",
-      "Systemic Integrity Calibration",
-      "Vulnerability and Pressure Point Isolation",
+    /** The six dimensions of the Velvex Scoring Logic, weighted by AHP. */
+    dimensions: [
+      "Market Position",
+      "Offer Structure",
+      "Customer Acquisition",
+      "Conversion Systems",
+      "Operations",
+      "Growth Leverage",
+    ],
+    /**
+     * The stages an engagement passes through. The old "three trajectories" are
+     * gone from the site and from the product; this is what replaced them.
+     */
+    stages: [
+      "VEF Eligibility Review — industry legitimacy, operational integrity, representation and marketing",
+      "VDL structural reading across the seven engines",
+      "VSL survivability scoring across the six dimensions, resolving to the Final Velvex Score",
+      "VHM health state, the band the score resolves into",
     ],
   },
 
   deliverable:
     "A single Executive Ledger: a version-controlled operational health assessment carrying " +
-    "the Final Velvex Score, the structural reading across all seven systems, a " +
-    "six-dimension scoring breakdown, ranked pressure points and three prioritised " +
-    "recommendations. It is paired with a five-minute executive audio briefing.",
+    "the Final Velvex Score, the structural reading across all seven engines, the " +
+    "six-dimension scoring breakdown, the health state, ranked pressure points and three " +
+    "prioritised recommendations. It is paired with a five-minute executive audio briefing.",
 
   /**
    * Introductory price for the first 10 clients: $149 per engagement. After
@@ -76,6 +129,42 @@ export const BUSINESS = {
   priceUsd: 999,
   turnaround: "Delivered within 24 hours of an accepted intake.",
   guarantee: "Money-back guarantee, with structured follow-up at 30, 90 and 180 days.",
+
+  /**
+   * The structural fact the positioning rests on. This is NOT the same claim as
+   * "a consulting firm..." or "an open-ended advisory relationship" in `isNot`
+   * above, and the difference is the whole point.
+   *
+   * Those are semantic denials, and the 2026-08-28 competitive brief measured
+   * them as table stakes: For The TECH Of It publishes almost the identical
+   * sentence ("The diagnostic is a flat rate deliverable not a consulting
+   * engagement") at $1,497, and Level Up Professional Services runs its own
+   * "This Is Not" list naming a scorecard. Declaring what you are not no longer
+   * distinguishes anything in this category.
+   *
+   * What cannot be copied is the absence itself. A provider carrying delivery
+   * revenue cannot credibly call its own diagnostic terminal, because the
+   * finding that recommends more work is the finding that pays them, and every
+   * buyer eventually works that out. Level Up credits its $2,500 AUD fee
+   * against the delivery engagement; Value Builder System gives its score away
+   * and routes it into a certified advisor network. Velvex has nothing
+   * downstream to sell, so it can write this sentence and they cannot.
+   *
+   * It has to live HERE, not only on the site, because BUSINESS_CONTEXT closes
+   * with "if something is not stated here, do not invent it". Until this field
+   * existed, every writing agent was forbidden from using the strongest
+   * differentiator the business has.
+   */
+  terminal:
+    "Velvex has no delivery arm and sells nothing downstream of the Ledger: no delivery " +
+    "engagement, no advisor referral, no fee credited toward later work, no retainer. The " +
+    "three prioritised recommendations are executed by the client or by anyone they choose, " +
+    "never by Velvex. The structured follow-up at 30, 90 and 180 days is a check on the " +
+    "Ledger rather than a next step, and the money-back guarantee sits on the Ledger itself " +
+    "rather than on work Velvex is paid to deliver afterwards. State this absence " +
+    "structurally rather than resting on the label: \"we do not sell the work the Ledger " +
+    "recommends\" is a sentence a provider who credits a diagnostic fee against delivery " +
+    "cannot write.",
 
   /** Findings are tagged. Worth agents knowing, because it is the credibility claim. */
   evidenceStandard:
@@ -97,8 +186,10 @@ Who it is for: ${BUSINESS.audience}
 
 What a client receives: ${BUSINESS.deliverable}
 
-Price: $${BUSINESS.priceUsd} per engagement. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
+What happens after: ${BUSINESS.terminal}
 
-The diagnostic engine is called ${BUSINESS.engine.name}. ${BUSINESS.evidenceStandard}
+Price: an introductory rate of $${BUSINESS.introPriceUsd} per engagement, for the first ${BUSINESS.introSeats} clients only, after which pricing returns to the standing $${BUSINESS.priceUsd}. Never state one of those two figures without the other, and offer to confirm whether intro seats remain rather than committing either way. ${BUSINESS.turnaround} ${BUSINESS.guarantee}
+
+The diagnostic engine is called ${BUSINESS.engine.name}, currently ${BUSINESS.engine.version}. Spell it exactly ${BUSINESS.engine.name}: capital V, e, the single accented letter ĺ, a. Type that letter itself, never an escape code, an HTML entity or a separate accent mark, and never write it without the accent. Its structural reading names seven engines: ${BUSINESS.engine.engines.join(", ")}. Its scoring names six dimensions: ${BUSINESS.engine.dimensions.join(", ")}. Use those names and no others; earlier material describing six "nodes" or a v0.1 engine is superseded. ${BUSINESS.evidenceStandard}
 
 Never state a price, a timeline, a score or a guarantee that differs from the above. If something is not stated here, do not invent it: say it will be confirmed properly instead.`;

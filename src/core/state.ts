@@ -21,7 +21,154 @@ export const STATE_KEYS = {
   siteChangeQueue: "site.change_queue",
   channelPerformance: "marketing.channel_performance",
   opsStatus: "ops.pipeline_status",
+  agentSchedules: "control.agent_schedules",
+  agentRuntime: "runtime.agent_status",
+  /** The deployed site, path to content. Our copy is the source of truth. */
+  siteSource: "site.source",
+  /** What the Competitive Intelligence agent watches. Owner-supplied. */
+  intelWatchlist: "intel.watchlist",
+  /** What each watched source last said, so "it changed" is a comparison. */
+  intelSnapshots: "intel.source_snapshots",
+  /**
+   * A one-line pointer to the newest brief. The brief itself lives in
+   * intel_briefs; only the pointer goes in memory, because memory is read into
+   * other agents' prompts and a full brief there would be paid for on every
+   * tick by agents that never asked for it.
+   */
+  intelLatest: "intel.latest_brief",
+  /**
+   * The owner's standing statement of where Velvex actually stands, plus every
+   * question the agent has asked and had answered. Authoritative over anything
+   * the agent reads about Velvex on the open web.
+   */
+  intelPosition: "intel.position",
+  /**
+   * The owner's rulings on watch candidates: what was accepted onto the
+   * watchlist, what was rejected, and when a rejection stops applying. Nothing
+   * is fetched until it appears here as accepted.
+   */
+  intelCandidates: "intel.candidate_verdicts",
+  /**
+   * Things the scan has checked and found settled, so later cycles can skip
+   * them. Subtractive memory: it exists to make each run cheaper than the last,
+   * which is the opposite of what carrying open questions forward did.
+   */
+  intelSettled: "intel.settled",
+  /**
+   * Settled findings the OWNER pinned, which mergeSettled never evicts.
+   *
+   * Separate from intel.settled because the two have different lifetimes: the
+   * scan rewrites that list every cycle, so anything hand-written into it is
+   * competing with nine model-written entries for twelve slots and is gone
+   * within a cycle or two. A ruling made against evidence should outlive that.
+   */
+  intelSettledPinned: "intel.settled_pinned",
+  /** The last site source verified sound. What a restore goes back to. */
+  siteLastGood: "site.source.last_good",
+  /** When automatic restores happened, so they cannot become a deploy loop. */
+  siteRestores: "site.restores",
 } as const;
+
+/**
+ * Per-agent schedule overrides set from the dashboard. When absent, the
+ * agent's built-in cadence in code applies. When present, this cadence wins
+ * (including "paused", which stops the agent from firing on any tick).
+ */
+export interface AgentScheduleOverride {
+  cadence: "hourly" | "daily" | "weekly" | "monthly" | "paused";
+  updatedAt: string;
+  note?: string;
+  /**
+   * The agent's cadence in code at the moment this override was set.
+   *
+   * An override outlives the reason it was set. Nothing clears it, no redeploy
+   * touches it, and a cadence changed in code loses to it silently — which is
+   * how Competitive Intelligence sat paused straight through the change that
+   * gave it a monthly cadence, and how the SEO agent stayed paused long after
+   * the failure that paused it was fixed. Recording the baseline is what makes
+   * that divergence visible later.
+   *
+   * Absent on overrides written before this field existed, which is why
+   * staleness is only ever reported when it is present and differs.
+   */
+  builtInCadence?: string;
+}
+
+export type AgentScheduleMap = Record<string, AgentScheduleOverride>;
+
+/**
+ * True when the code cadence has changed since the override was set, so the
+ * override is now suppressing a decision made after it. Never true for an
+ * override with no recorded baseline: not knowing is not evidence.
+ */
+export function overrideIsStale(
+  override: AgentScheduleOverride | undefined,
+  builtInCadence: string
+): boolean {
+  if (!override?.builtInCadence) return false;
+  return override.builtInCadence !== builtInCadence;
+}
+
+/**
+ * A live status board the runner updates so the dashboard can show what each
+ * agent is currently working on, rather than only what it has finished.
+ *
+ * Phases are stable strings the dashboard reads: "thinking" while the agent is
+ * proposing, "acting" while it is executing, "reporting" while writing back,
+ * "idle" once done, and "failed" if it errored.
+ */
+export interface AgentRuntimeStatus {
+  /**
+   * What the board knows about this agent right now.
+   *
+   * "unknown" is not a shade of failure. It means the run never recorded an
+   * ending, so how it finished was never written down — which is a fact about
+   * the status write, not about the work. The `reports` table is the record of
+   * what an agent actually did; this map is only a live view of it, and when
+   * the two disagree the reports win.
+   */
+  status: "running" | "idle" | "failed" | "blocked" | "unknown";
+  /**
+   * Why this agent is not running, when it is waiting on the outside world.
+   *
+   * Kept on the status row rather than only in code so the dashboard can show
+   * it without importing the roster, and so it survives as a record of what was
+   * true — a requirement met later clears this on the next run.
+   */
+  blockedBy?: Array<{
+    id: string;
+    summary: string;
+    reason: string;
+    steps: string[];
+    note?: string;
+  }>;
+  phase: "thinking" | "acting" | "reporting" | "idle" | "failed" | "blocked" | "unknown";
+  startedAt?: string;
+  endedAt?: string;
+  runId?: string;
+  /** The most recent log line, so the panel can show it verbatim. */
+  latestThought?: string;
+  /** Up to the last 12 log lines from this run (or the previous one, when idle). */
+  thoughts?: Array<{ at: string; text: string }>;
+  /**
+   * Proof the isolate running this agent was still alive at this moment.
+   *
+   * Without it a "running" row is indistinguishable from a run that was killed
+   * mid-flight, because a killed Worker cannot write its own epitaph. That is
+   * not hypothetical: a manual run was terminated thirty seconds in and its row
+   * read "running" for half an hour afterwards, which is exactly the state
+   * anyone watching would read as "still thinking".
+   */
+  heartbeatAt?: string;
+  /** Human-readable counts once the run has settled. */
+  proposed?: number;
+  executed?: number;
+  queued?: number;
+  failed?: number;
+  error?: string;
+}
+
+export type AgentRuntimeStatusMap = Record<string, AgentRuntimeStatus>;
 
 export interface Prospect {
   id: string;
@@ -80,7 +227,24 @@ export interface ContentDraft {
   authorAgent?: string;
   /** Set when the draft itself needed sign-off and got it. */
   approvalRef?: string;
+  /**
+   * The approved growth direction (a `growth.<channel>.*` memory key) this
+   * draft carries out, or null when it serves none. Copied onto the publish
+   * report so a post can be scored by direction once any signal exists.
+   */
+  direction?: string | null;
   publishedOn: Array<{ channel: string; ref: string; at: string }>;
+  /**
+   * Channels where the owner looked at this draft and said no.
+   *
+   * Per channel for the same reason `publishedOn` is: a channel-neutral draft
+   * turned down for LinkedIn may still be right for X. It is also what stops a
+   * declined draft jamming the channel — the publish proposal's dedupe key is
+   * stable, and `queueApproval` ignores duplicates whatever their status, so
+   * without this the agent would re-pick the same rejected draft every tick,
+   * fail to re-queue it, and go quiet instead of writing something else.
+   */
+  declinedOn?: Array<{ channel: string; at: string }>;
   status: "ready" | "needs_revision" | "retired";
   revisionNote?: string;
 }
@@ -110,6 +274,34 @@ async function readJson<T>(db: Supabase, key: string): Promise<T | null> {
   return (value ?? null) as T | null;
 }
 
+/**
+ * Several keys in one request.
+ *
+ * `readMemory` already accepts a list of keys and turns it into a single
+ * `key=in.(...)` filter, so reading three keys one at a time costs three
+ * subrequests where one would do. That matters more than it sounds: a Worker
+ * invocation gets roughly fifty subrequests for EVERYTHING on the tick, shared
+ * across every agent that runs, and the agent at the end of the hourly tick is
+ * the one that discovers the budget is gone.
+ *
+ * Returns a map rather than a tuple so a missing key is simply absent, and the
+ * caller reads each value at the type it expects.
+ */
+async function readManyJson(
+  db: Supabase,
+  keys: string[]
+): Promise<Map<string, unknown>> {
+  const rows = await db.readMemory({ keys, limit: keys.length });
+  const values = new Map<string, unknown>();
+  for (const row of rows) {
+    const detail = row.detail;
+    if (!detail || typeof detail !== "object") continue;
+    const value = (detail as Record<string, unknown>)["value"];
+    if (value !== undefined) values.set(row.key, value);
+  }
+  return values;
+}
+
 async function writeJson<T>(
   db: Supabase,
   key: string,
@@ -131,6 +323,7 @@ async function writeJson<T>(
 
 export const state = {
   read: readJson,
+  readMany: readManyJson,
   write: writeJson,
 
   pipeline: (db: Supabase) => readJson<PipelineSnapshot>(db, STATE_KEYS.pipeline),

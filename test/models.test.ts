@@ -2,7 +2,13 @@
 // than a degradation when you get it wrong.
 
 import { describe, expect, it } from "vitest";
-import { buildRequest, type Claude } from "../src/lib/claude.js";
+import {
+  buildRequest,
+  countSearches,
+  extractWebSources,
+  webTools,
+  type Claude,
+} from "../src/lib/claude.js";
 import { spamTriage } from "../src/lib/judge.js";
 import {
   MODELS,
@@ -48,12 +54,131 @@ describe("request building per model", () => {
   });
 });
 
+// Server-side web access. Only the intelligence agent asks for it, and the
+// tool `type` string is versioned per model generation: sending the current
+// pair to a model that only takes the earlier one is a 400 before the model
+// runs, the same failure mode as sending `effort` to Haiku.
+describe("web tools per model", () => {
+  const web = { maxSearches: 8, maxFetches: 5 };
+
+  it("gives the current generation the dynamic-filtering pair", () => {
+    for (const model of [MODELS.reasoning, MODELS.balanced]) {
+      const tools = webTools(model, web);
+      expect(tools.map((tool) => tool["type"])).toEqual([
+        "web_search_20260209",
+        "web_fetch_20260209",
+      ]);
+      expect(tools[0]!["max_uses"]).toBe(8);
+      expect(tools[1]!["max_uses"]).toBe(5);
+    }
+  });
+
+  it("gives Haiku 4.5 the earlier pair, which is what it accepts", () => {
+    expect(webTools(MODELS.fast, web).map((tool) => tool["type"])).toEqual([
+      "web_search_20250305",
+      "web_fetch_20250910",
+    ]);
+  });
+
+  it("never sends both domain lists, which the API rejects", () => {
+    const tools = webTools(MODELS.reasoning, {
+      ...web,
+      allowedDomains: ["example.com"],
+      blockedDomains: ["spam.test"],
+    });
+    for (const tool of tools) {
+      expect(tool["allowed_domains"]).toEqual(["example.com"]);
+      expect(tool).not.toHaveProperty("blocked_domains");
+    }
+  });
+
+  it("declares nothing when a cap is zero", () => {
+    expect(webTools(MODELS.reasoning, { maxSearches: 0, maxFetches: 0 })).toEqual([]);
+  });
+
+  it("only puts tools on a request that asked for them", () => {
+    expect(buildRequest({ ...base, model: MODELS.reasoning }).tools).toBeUndefined();
+    expect(buildRequest({ ...base, model: MODELS.reasoning, web }).tools).toHaveLength(2);
+  });
+
+  it("still sends thinking and effort alongside the tools", () => {
+    const request = buildRequest({ ...base, model: MODELS.reasoning, web });
+    expect(request.thinking).toEqual({ type: "adaptive" });
+    expect(request.output_config?.effort).toBe("high");
+  });
+});
+
+describe("reading what a web-enabled turn actually looked at", () => {
+  it("pulls the pages out of the result blocks, without duplicates", () => {
+    const sources = extractWebSources([
+      { type: "text", text: "hi" },
+      {
+        type: "web_search_tool_result",
+        content: [
+          { url: "https://a.test/", title: "A" },
+          { url: "https://b.test/", title: "B" },
+          { url: "https://a.test/", title: "A again" },
+        ],
+      },
+      {
+        type: "web_fetch_tool_result",
+        content: { url: "https://c.test/", document: { title: "C" } },
+      },
+    ]);
+    expect(sources.map((source) => source.url)).toEqual([
+      "https://a.test/",
+      "https://b.test/",
+      "https://c.test/",
+    ]);
+    expect(sources[2]!.via).toBe("fetch");
+  });
+
+  it("survives a failed search, which returns an object where success returns a list", () => {
+    // A web search error is HTTP 200 with an error object in `content`.
+    // Indexing it as a list would throw or silently yield nothing.
+    expect(() =>
+      extractWebSources([
+        { type: "web_search_tool_result", content: { error_code: "max_uses_exceeded" } },
+      ])
+    ).not.toThrow();
+    expect(
+      extractWebSources([
+        { type: "web_search_tool_result", content: { error_code: "max_uses_exceeded" } },
+      ])
+    ).toEqual([]);
+  });
+
+  it("counts the searches, which are billed per call on top of tokens", () => {
+    expect(
+      countSearches([
+        { type: "server_tool_use", name: "web_search" },
+        { type: "server_tool_use", name: "web_fetch" },
+        { type: "server_tool_use", name: "web_search" },
+        { type: "text", text: "x" },
+      ])
+    ).toBe(2);
+  });
+});
+
 describe("cost estimation", () => {
   it("prices each tier at its own rate", () => {
+    // These are PUBLISHED PRICES, not decisions this repo gets to make, and the
+    // balanced tier's were wrong here for weeks: Sonnet 5 is $2/$10, and this
+    // carried Sonnet 4.6's $3/$15, overstating every Sonnet cost by 50%. That is
+    // not cosmetic — spendCapUsd is enforced against these numbers, so a run
+    // could be stopped for a bill it never actually ran up.
+    //
+    // Re-check against the current price list when a model moves tier.
     const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
-    expect(estimateCostUsd(MODELS.reasoning, usage)).toBeCloseTo(30, 5); // 5 + 25
-    expect(estimateCostUsd(MODELS.balanced, usage)).toBeCloseTo(18, 5); // 3 + 15
-    expect(estimateCostUsd(MODELS.fast, usage)).toBeCloseTo(6, 5); // 1 + 5
+    expect(estimateCostUsd(MODELS.reasoning, usage)).toBeCloseTo(24, 5); // Opus 5.5: 4 + 20 (Opus 5 was 5 + 25)
+    expect(estimateCostUsd(MODELS.balanced, usage)).toBeCloseTo(12, 5); // Sonnet 5: 2 + 10
+    expect(estimateCostUsd(MODELS.fast, usage)).toBeCloseTo(6, 5); // Haiku 4.5: 1 + 5
+  });
+
+  it("prices an Opus 5.5 cache read at a twentieth of input, not a tenth", () => {
+    // $0.20 per MTok against $4 input. Every other model here reads at 0.1x.
+    expect(estimateCostUsd(MODELS.reasoning, { cache_read_input_tokens: 1_000_000 })).toBeCloseTo(0.2, 5);
+    expect(estimateCostUsd(MODELS.balanced, { cache_read_input_tokens: 1_000_000 })).toBeCloseTo(0.2, 5);
   });
 
   it("bills cache reads at a tenth of the input rate", () => {
@@ -62,7 +187,7 @@ describe("cost estimation", () => {
       cache_read_input_tokens: 1_000_000,
       output_tokens: 0,
     });
-    expect(cost).toBeCloseTo(0.3, 5);
+    expect(cost).toBeCloseTo(0.2, 5); // Sonnet 5 input $2, a tenth of it
   });
 
   it("is zero when there is no usage to price", () => {
@@ -73,7 +198,7 @@ describe("cost estimation", () => {
 describe("tier resolution", () => {
   it("uses the built-in defaults", () => {
     expect(resolveTiers({})).toEqual({
-      reasoning: "claude-opus-5",
+      reasoning: "claude-opus-5-5",
       balanced: "claude-sonnet-5",
       fast: "claude-haiku-4-5",
     });

@@ -59,6 +59,32 @@ describe("the weekly posting plan", () => {
     }
   });
 
+  it("never plans a slot the publish gate would refuse, across two years of X weeks", () => {
+    // The publish pass skips a due slot within minGapHours of the last post.
+    // On 2026-09-21 the planner dropped the gap after one greedy pass and put
+    // Friday 14:00 nineteen hours after Thursday 19:00, so the slot could only
+    // go out at 01:00 Saturday. 30h always fits three weekday posts.
+    const offenders: string[] = [];
+    const start = week("2026-01-05").getTime();
+    for (let w = 0; w < 104; w += 1) {
+      const monday = new Date(start + w * 7 * 86_400_000);
+      const times = planWeek(spec("x"), monday).map((d) => d.getTime());
+      expect(times).toHaveLength(3);
+      for (let i = 1; i < times.length; i += 1) {
+        if (times[i]! - times[i - 1]! < 30 * 3600_000) offenders.push(monday.toISOString().slice(0, 10));
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("leaves a week the first pass could already fill exactly as it was", () => {
+    expect(planWeek(spec("x"), week("2026-09-14")).map((d) => d.toISOString())).toEqual([
+      "2026-09-14T12:00:00.000Z",
+      "2026-09-15T19:00:00.000Z",
+      "2026-09-18T17:00:00.000Z",
+    ]);
+  });
+
   it("respects the minimum gap when the window is wide enough to allow it", () => {
     // 24h gap fits comfortably in the Mon-Fri window; three posts fit.
     const slots = planWeek(spec("x", { minGapHours: 24 }), week("2026-08-19"));

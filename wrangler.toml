@@ -17,6 +17,16 @@ workers_dev = true
 [observability]
 enabled = true
 
+# Ops-Health's twice-daily digest (src/core/ops-digest.ts) sends over Gmail
+# SMTP via the `worker-mailer` package (raw TCP sockets, no other deps) —
+# NOT Cloudflare Email Service. Cloudflare gates Email Sending to arbitrary
+# recipients behind the Workers Paid plan, and the free workaround (a
+# verified destination address) needs Email Routing enabled on the sending
+# domain, which takes over that domain's MX records — velvexbi.com's MX
+# already points at Google Workspace (adam@velvexbi.com, the real mailbox),
+# so that would have broken real mail. Gmail SMTP costs nothing extra and
+# reuses the same Workspace mailbox already in place for Phase 0.
+
 # ---------------------------------------------------------------------------
 # Non-secret configuration.
 # Secrets are NEVER put here — see .dev.vars.example and DEPLOY.md.
@@ -29,7 +39,7 @@ SUPABASE_URL = "https://ttwudgdwusorwscegtnz.supabase.co"
 # the work it actually does; five agents make no model calls at all. See
 # docs/MODEL-CHOICES.md. Defaults live in src/core/models.ts, and these vars
 # exist so a whole tier can be moved without a code change.
-MODEL_REASONING = "claude-opus-5"
+MODEL_REASONING = "claude-opus-5-5"
 MODEL_BALANCED = "claude-sonnet-5"
 MODEL_FAST = "claude-haiku-4-5"
 
@@ -37,15 +47,36 @@ MODEL_FAST = "claude-haiku-4-5"
 # secrets. Flipping these to "true" without setting the matching secrets is
 # refused at startup by src/connectors/*.
 FACEBOOK_ENABLED = "false"
-X_ENABLED = "false"
+X_ENABLED = "true"
 
-# The LinkedIn agent is built by an outside company. This Worker only exposes
-# the integration point it will call. No agent, no scheduling on our side.
+# LinkedIn has two routes to the same page and they are independent.
+#
+# The partner queue is the original architecture doc's integration point: an
+# outside agent drains it. We own the strategist regardless, per the owner.
 LINKEDIN_INTEGRATION_ENABLED = "false"
+#
+# Direct posting through our own connector. Off until the Community Management
+# API app is approved and LINKEDIN_ORG_ID / LINKEDIN_ACCESS_TOKEN are set as
+# secrets. When this is "true" and both secrets exist, the strategist publishes
+# through the connector and stops using the partner queue. Either way, every
+# LinkedIn post waits for the owner's approval first - that is a rule in the
+# agent, not a consequence of the transport.
+LINKEDIN_DIRECT_ENABLED = "false"
 
-# Ops-Health reads the operations pipeline read-only. Left unset on purpose:
-# no Phase 0 credentials are wired into this project.
-OPS_PIPELINE_MONITOR_ENABLED = "false"
+# Ops-Health reads the operations pipeline read-only. On, but inert until
+# OPS_PIPELINE_STATUS_URL is set as a secret: propose() requires BOTH, so
+# switching this on ahead of the endpoint changes nothing and saves a second
+# deploy on the day the URL exists. No Phase 0 credential ever enters this repo
+# — the pipeline offers a URL, this system does not reach into it.
+OPS_PIPELINE_MONITOR_ENABLED = "true"
+
+# Competitive Intelligence reads the open web. This is a spend switch, not a
+# credential: web search runs server side on the model call, so there is nothing
+# to set up. Searches bill at $10 per 1,000 on top of the tokens their results
+# consume; the agent caps itself at 8 searches and 5 page fetches per run on a
+# weekly cadence, which is well under a dollar a month. Set to "false" and the
+# agent works from the intel.watchlist sources alone and says so in the brief.
+INTEL_WEB_RESEARCH_ENABLED = "true"
 
 # ---------------------------------------------------------------------------
 # Scheduled runs. Free-tier Supabase pauses after 7 days without API traffic;
@@ -53,8 +84,39 @@ OPS_PIPELINE_MONITOR_ENABLED = "false"
 # Pro, as the architecture doc anticipates.
 # ---------------------------------------------------------------------------
 [triggers]
+# The weekly cadence USED to run on two Monday ticks, because a cron invocation
+# gets 15 minutes of wall clock for everything it runs and Competitive
+# Intelligence measured 10m03s on its own. That split cost a cron line, and when
+# the account limit turned out to be five, the 08:00 line was the one to give up:
+# it was filtered to the intelligence batch, intelligence is monthly, so it fired
+# every Monday and ran nothing at all.
+#
+# The consequence is that intelligence's MONTHLY cadence is now load-bearing
+# rather than only a cost choice. Set it back to weekly and it shares the 09:00
+# tick with Growth-Strategy, which is the squeeze the split existed to prevent —
+# so runDue logs a warning when that happens instead of letting it be silent.
+#
+# The hourly tick is split against the other per-invocation limit: an invocation
+# also gets roughly 50 subrequests for everything it runs. Site-Integrity runs
+# last and fetches every stored page, so it is the one that finds them spent, and
+# it died that way on consecutive hourly ticks on 2026-08-29 leaving no error at
+# all. Its own slot at :30 gives it a fresh budget. The two hourly lines are a
+# partition — everything hourly except site_integrity, then site_integrity alone
+# — and test/hourly-split.test.ts asserts that against the real roster, because
+# dropping it from one without adding it to the other fails silently.
+# FIVE LINES, AND THAT IS A HARD CEILING. Workers Free allows 5 cron triggers
+# per ACCOUNT, not per Worker and not per day. A sixth is refused by the API with
+# code 10072 — and the refusal does NOT roll back the script upload, so the new
+# code goes live against the old cron table. That is how site_integrity ended up
+# orphaned for eighteen hours: the code stopped running it on the hourly tick and
+# the :30 tick it was moved to had never been created.
+#
+# So adding a schedule here means removing one. Workers Paid raises the limit to
+# 1,000 for $5/month, which is the clean fix whenever that is worth it.
 crons = [
-  "0 * * * *",   # hourly agent tick — each agent runs if its own cadence is due
+  "0 * * * *",   # hourly agent tick — everything hourly EXCEPT site_integrity
+  "30 * * * *",  # half past — site_integrity alone, on its own subrequest budget
   "0 7 * * *",   # 07:00 UTC — Chief-of-Staff daily roll-up
-  "0 8 * * 1"    # Monday 08:00 UTC — executive weekly review
+  "0 8 1 * *",   # 1st of the month 08:00 UTC — monthly agents (intelligence)
+  "0 9 * * 1"    # Monday 09:00 UTC — weekly, all of it
 ]

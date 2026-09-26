@@ -8,9 +8,41 @@
 // Per-agent assignments live on each agent definition; the reasoning behind
 // each one is in docs/MODEL-CHOICES.md.
 
+/**
+ * A budget for a call whose ANSWER is short but whose model thinks first.
+ *
+ * On this generation thinking is billed inside max_tokens, so a budget sized
+ * for the visible answer is spent before the answer begins. That is not a
+ * theory: the SEO agent asked Sonnet 5 at effort high for a 160-character meta
+ * description with max_tokens 400 and died on "Ran out of output budget", and
+ * the parse error that follows a truncation blames the model for not returning
+ * what was asked for while hiding the real cause.
+ *
+ * max_tokens is a ceiling, not a spend — raising it costs nothing unless the
+ * tokens are actually generated — so the only reason to keep one low is to cap
+ * a runaway, and none of these calls can run away.
+ *
+ * A model with no thinking (the fast tier) does not need this and should stay
+ * sized for its answer.
+ */
+export const SHORT_ANSWER_MAX_TOKENS = 2000;
+
+/**
+ * The budget for a public-copy call at effort `xhigh` on the reasoning tier.
+ *
+ * The X drafting call ran at 4000 for weeks and died at 08:00 on 2026-09-25
+ * with "Ran out of output budget on claude-opus-5-5 (max_tokens 4000)". Opus 5.5
+ * thinks more per turn than Opus 5 at the same level, and the prompt had just
+ * grown by the shelf list and nine lessons; the 06:00 and 07:00 calls fitted
+ * and that one did not. A truncated call is billed and produces nothing, and an
+ * hourly agent retries the same shape every hour. As with every budget here it
+ * is a ceiling, not a spend.
+ */
+export const XHIGH_WRITER_MAX_TOKENS = 16000;
+
 export const MODELS = {
   /** Judgement that is expensive to get wrong, or writing that goes out in public. */
-  reasoning: "claude-opus-5",
+  reasoning: "claude-opus-5-5",
   /** Competent reading and writing inside tight bounds, at a fraction of the cost. */
   balanced: "claude-sonnet-5",
   /** Mechanical, high-volume, low-stakes work. */
@@ -37,22 +69,52 @@ export interface ModelCapabilities {
   /** USD per million tokens, for the cost estimate written into each report. */
   priceInPerMTok: number;
   priceOutPerMTok: number;
+  /**
+   * What a cache read costs as a fraction of the input rate. 0.1 on every
+   * model here except Opus 5.5, which bills cache reads at 0.05. Getting this
+   * wrong overstates spend, and spendCapUsd is enforced against these numbers.
+   */
+  cacheReadFactor?: number;
+  /**
+   * The server-side web tools this model accepts, by exact `type` string. The
+   * versioned names are not interchangeable: the current generation takes the
+   * 2026-02-09 pair, which filters results in a sandbox before they reach the
+   * context window, and older models only take the earlier pair. Sending the
+   * wrong one is a 400, in the same family of mistake as sending `effort` to
+   * Haiku. `null` on both means no web access for that model.
+   */
+  webSearchToolType: string | null;
+  webFetchToolType: string | null;
 }
 
 export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
-  "claude-opus-5": {
+  "claude-opus-5-5": {
+    // Opus 5.5 replaced Opus 5 on the reasoning tier on 2026-09-24, every
+    // agent keeping its effort level. Two differences matter to this code:
+    // thinking cannot be disabled (nothing here disables it), and an omitted
+    // effort defaults to medium rather than high — complete() always sends
+    // one, defaulting to high, so no call changes level by omission.
     adaptiveThinking: true,
     effort: true,
     contextTokens: 1_000_000,
-    priceInPerMTok: 5,
-    priceOutPerMTok: 25,
+    priceInPerMTok: 4,
+    priceOutPerMTok: 20,
+    cacheReadFactor: 0.05,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   },
   "claude-sonnet-5": {
     adaptiveThinking: true,
     effort: true,
     contextTokens: 1_000_000,
-    priceInPerMTok: 3,
-    priceOutPerMTok: 15,
+    // $2/$10, not the $3/$15 this carried until 2026-08-31. Those are Sonnet
+    // 4.6's rates, and every Sonnet cost in this system was overstated by 50%
+    // while they sat here — which matters because spendCapUsd is enforced
+    // against these numbers, so a run could be stopped for a bill it never had.
+    priceInPerMTok: 2,
+    priceOutPerMTok: 10,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   },
   "claude-haiku-4-5": {
     // Haiku 4.5 predates adaptive thinking and the effort parameter. Sending
@@ -62,8 +124,18 @@ export const MODEL_CAPABILITIES: Record<ModelId, ModelCapabilities> = {
     contextTokens: 200_000,
     priceInPerMTok: 1,
     priceOutPerMTok: 5,
+    // Haiku 4.5 predates dynamic filtering, so it takes the earlier pair.
+    webSearchToolType: "web_search_20250305",
+    webFetchToolType: "web_fetch_20250910",
   },
 };
+
+/**
+ * What one web search costs, on top of the tokens the results consume.
+ * Published as $10 per 1,000 searches. Recorded per run so a research agent's
+ * bill is not just its token spend.
+ */
+export const WEB_SEARCH_USD_PER_CALL = 0.01;
 
 export function capabilitiesFor(model: string): ModelCapabilities {
   const known = MODEL_CAPABILITIES[model as ModelId];
@@ -76,6 +148,8 @@ export function capabilitiesFor(model: string): ModelCapabilities {
     contextTokens: 200_000,
     priceInPerMTok: 5,
     priceOutPerMTok: 25,
+    webSearchToolType: "web_search_20260209",
+    webFetchToolType: "web_fetch_20260209",
   };
 }
 
@@ -96,8 +170,8 @@ export function estimateCostUsd(model: string, usage: TokenUsage | undefined): n
 
   const cost =
     (input / 1_000_000) * price.priceInPerMTok +
-    // Cache reads bill at a tenth of the input rate.
-    (cachedInput / 1_000_000) * price.priceInPerMTok * 0.1 +
+    // Cache reads bill at a tenth of the input rate, or less where the model says so.
+    (cachedInput / 1_000_000) * price.priceInPerMTok * (price.cacheReadFactor ?? 0.1) +
     (output / 1_000_000) * price.priceOutPerMTok;
 
   return Math.round(cost * 1_000_000) / 1_000_000;

@@ -17,15 +17,42 @@
 import type { AgentDefinition, RunContext } from "../../core/agent.js";
 import type { ExecutionResult, ProposedAction } from "../../core/types.js";
 import { ROUTINE_SITE_EDITS, isProtectedPage, type SiteEditKind } from "../../core/config.js";
-import { state, type SitePage } from "../../core/state.js";
+import { inventoryFromSource } from "../../core/site-inventory.js";
+import { altTextEdit, metaDescriptionEdit } from "../../core/site-edits.js";
+import { GENERATED_PATHS, generatedFiles } from "../../core/site-files.js";
+import { STATE_KEYS, state, type SitePage } from "../../core/state.js";
 import { getSiteWriter } from "../../connectors/site.js";
 import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
 
-import { MODELS } from "../../core/models.js";
-import { BUSINESS_CONTEXT } from "../../core/business.js";
+import { MODELS, SHORT_ANSWER_MAX_TOKENS } from "../../core/models.js";
+import { BUSINESS_CONTEXT, BUSINESS } from "../../core/business.js";
 
 const MODEL = MODELS.balanced;
+
+/**
+ * Output budgets for the three writing calls.
+ *
+ * These were 400, 200 and 400, and the first run that actually had work to do
+ * died on "Ran out of output budget on claude-sonnet-5 (max_tokens 400)". On
+ * this generation thinking is billed inside max_tokens, so a budget sized for
+ * the answer alone is spent before the answer starts. The copy here is short —
+ * a meta description is about 160 characters — but the budget has to cover the
+ * thinking that precedes it.
+ *
+ * The effort on these calls comes down with the budget going up, and for the
+ * same reason: "write one sentence of copy" does not need deep reasoning, and
+ * the voice checks that follow are what actually hold quality. The alt-text
+ * call runs on Haiku, which takes no thinking at all, so its budget only has to
+ * fit a sentence.
+ */
+const COPY_MAX_TOKENS = SHORT_ANSWER_MAX_TOKENS;
+const ALT_TEXT_MAX_TOKENS = 500;
 const ALT_TEXT_MODEL = MODELS.fast;
+
+/** Reached without a link from anywhere, so never an orphan. */
+function isHomePage(path: string): boolean {
+  return /^\/(index\.html?)?$/i.test(path);
+}
 
 const META_MIN = 70;
 const META_MAX = 155;
@@ -35,6 +62,54 @@ interface Finding {
   kind: SiteEditKind;
   problem: string;
   before: string;
+}
+
+interface FileFinding {
+  path: string;
+  content: string;
+  problem: string;
+}
+
+/**
+ * The site-level findings: files that should exist and either do not, or no
+ * longer describe the site.
+ *
+ * Separate from findIssues() because it is not about a page. findIssues walks
+ * pages and asks what is wrong with each; this asks one question about the set
+ * of them, which is why the SEO agent could report "no issues found" on a site
+ * that answered 404 for both /robots.txt and /sitemap.xml. Nothing was wrong
+ * with any page. Everything was wrong with the site.
+ *
+ * No model, and there should never be one here: both files are computed from
+ * the paths in the source, so the only thing a model could contribute is a
+ * chance of getting them wrong.
+ */
+function findSiteFileIssues(source: Record<string, string>): FileFinding[] {
+  const wanted = generatedFiles(source, BUSINESS.site);
+  const findings: FileFinding[] = [];
+
+  for (const path of GENERATED_PATHS) {
+    const content = wanted[path] ?? "";
+    const current = source[path];
+    if (current === undefined) {
+      findings.push({
+        path,
+        content,
+        problem: `${path} does not exist on the site`,
+      });
+    } else if (current !== content) {
+      findings.push({
+        path,
+        content,
+        // The comparison is only meaningful because the builders are
+        // deterministic. Put a generated timestamp in either file and this
+        // proposes the same edit every day for ever.
+        problem: `${path} no longer matches the pages on the site`,
+      });
+    }
+  }
+
+  return findings;
 }
 
 /** Deterministic pass first: find what is actually wrong before asking the model to fix it. */
@@ -70,7 +145,10 @@ function findIssues(pages: SitePage[]): Finding[] {
       }
     }
 
-    if ((page.inboundInternalLinks ?? 0) === 0 && page.path !== "/") {
+    // A home page is reached without a link, so it is never an orphan. The
+    // check exempted "/" only, while the source keys it "/index.html", so the
+    // home page was reported as an orphan on every run.
+    if ((page.inboundInternalLinks ?? 0) === 0 && !isHomePage(page.path)) {
       findings.push({
         page,
         kind: "internal_link",
@@ -160,7 +238,16 @@ export const seoSiteAgent: AgentDefinition = {
   ],
 
   async propose(ctx: RunContext): Promise<ProposedAction[]> {
-    const pages = await state.sitePages(ctx.db);
+    // Prefer the source we hold. Deriving the inventory from it keeps the paths
+    // identical to the ones the writer edits — an inventory fetched separately
+    // used "/faq" where the source key is "/faq.html", so every edit pointed at
+    // a path that could not be found and was refused. It also cannot go stale.
+    const source = await state.read<Record<string, string>>(ctx.db, STATE_KEYS.siteSource);
+    const pages =
+      source && Object.keys(source).length > 0
+        ? inventoryFromSource(source, ctx.now)
+        : await state.sitePages(ctx.db);
+
     if (!pages || pages.length === 0) {
       return [
         {
@@ -168,20 +255,54 @@ export const seoSiteAgent: AgentDefinition = {
           summary: "No site inventory to work from",
           channel: "site",
           payload: {
-            note: "Push pages to /state/site.pages and the agent will start finding issues.",
+            note:
+              "Seed the site source with scripts/seed-site-source.mjs, or push pages to " +
+              "/state/site.pages, and the agent will start finding issues.",
           },
           dedupeKey: "seo:no-inventory",
         },
       ];
     }
 
-    const findings = findIssues(pages).slice(0, 5);
-    if (findings.length === 0) {
-      ctx.log("seo_site: no issues found this pass");
-      return [];
+    const proposals: ProposedAction[] = [];
+
+    // The site-level pass runs first and runs even when every page is clean.
+    // It costs no model call, and it is the half that decides whether anything
+    // on this site can be found at all.
+    for (const file of source ? findSiteFileIssues(source) : []) {
+      proposals.push({
+        type: "site_edit",
+        summary: `${file.problem}`,
+        channel: "site",
+        target: file.path,
+        payload: {
+          path: file.path,
+          kind: "structural_seo" as SiteEditKind,
+          // A generated file has no anchor: it is not a substitution into
+          // existing text, it is the file recomputed from the pages that exist.
+          mode: "generated",
+          before: "",
+          after: file.content,
+          generated: true,
+        },
+        rationale:
+          `${file.problem}. It is built from the paths in the stored source, so it carries no ` +
+          `judgement and nothing written by a model.`,
+        // Keyed on the content, so a rebuild that changes nothing does not
+        // re-propose, and one that does is a genuinely new proposal.
+        dedupeKey: `seo:file:${file.path}:${file.content.length}`,
+      });
     }
 
-    const proposals: ProposedAction[] = [];
+    const findings = findIssues(pages).slice(0, 5);
+    if (findings.length === 0) {
+      ctx.log(
+        proposals.length > 0
+          ? `seo_site: no page issues, ${proposals.length} site file(s) to write`
+          : "seo_site: no issues found this pass"
+      );
+      return proposals;
+    }
 
     for (const finding of findings) {
       let after = "";
@@ -194,8 +315,8 @@ export const seoSiteAgent: AgentDefinition = {
             `Current meta description: ${finding.before || "(none)"}\n\n` +
             `Write a meta description between ${META_MIN} and ${META_MAX} characters.`,
           model: MODEL,
-          effort: seoSiteAgent.effort,
-          maxTokens: 400,
+          effort: "low",
+          maxTokens: COPY_MAX_TOKENS,
         });
         after = softenTells(result.text.trim().replace(/^["']|["']$/g, ""));
       } else if (finding.kind === "alt_text") {
@@ -207,7 +328,7 @@ export const seoSiteAgent: AgentDefinition = {
           // Describing an image file is the most mechanical generation in the
           // system. It runs a tier below the rest of this agent.
           model: ALT_TEXT_MODEL,
-          maxTokens: 200,
+          maxTokens: ALT_TEXT_MAX_TOKENS,
         });
         after = softenTells(result.text.trim().replace(/^["']|["']$/g, ""));
       } else {
@@ -225,14 +346,53 @@ export const seoSiteAgent: AgentDefinition = {
             `Other pages: ${candidates}\n\n` +
             `Name the single best page to link from, and write the sentence the link should sit in. Format: PAGE: <path>\nSENTENCE: <text>`,
           model: MODEL,
-          effort: "medium",
-          maxTokens: 400,
+          effort: "low",
+          maxTokens: COPY_MAX_TOKENS,
         });
         after = softenTells(result.text.trim());
       }
 
       const violations = scanForTells(after);
       if (violations.length > 0) after = softenTells(after);
+
+      // Translate the finding into a substitution that names real text on the
+      // page. Without this the writer received an insertion with no anchor and
+      // had nothing to position against. An orphan-page finding is a structural
+      // recommendation rather than a substitution, so it carries no anchor and
+      // is queued for a person either way.
+      const html = source?.[finding.page.path];
+      let edit: { before: string; after: string } | null = null;
+
+      if (html && finding.kind === "meta_description") {
+        edit = metaDescriptionEdit(html, after);
+      } else if (html && finding.kind === "alt_text") {
+        edit = altTextEdit(html, finding.before, after);
+      }
+
+      // An internal link has no anchor translator in site-edits.ts, and there
+      // is no honest one: where a link belongs is a judgement about the page,
+      // not a substitution. Left to fall through, the proposal carried the
+      // page's own path as `before` and the model's "PAGE: / SENTENCE:" reply
+      // as `after` — an edit that fails every run, and would have injected that
+      // reply into the page had the path ever appeared on it exactly once.
+      // It is a recommendation, so it is reported as one.
+      if (html && !edit) {
+        // No safe anchor: say so and move on rather than attempt it.
+        proposals.push({
+          type: "observation",
+          summary: `Cannot place the ${finding.kind} fix on ${finding.page.path}`,
+          channel: "site",
+          payload: {
+            path: finding.page.path,
+            kind: finding.kind,
+            problem: finding.problem,
+            drafted: after,
+            note: "No unambiguous place to insert this was found, so nothing was changed.",
+          },
+          dedupeKey: `seo:noanchor:${finding.kind}:${finding.page.path}`,
+        });
+        continue;
+      }
 
       proposals.push({
         type: "site_edit",
@@ -242,8 +402,8 @@ export const seoSiteAgent: AgentDefinition = {
         payload: {
           path: finding.page.path,
           kind: finding.kind,
-          before: finding.before,
-          after,
+          before: edit ? edit.before : finding.before,
+          after: edit ? edit.after : after,
           problem: finding.problem,
           fullRestructure: false,
         },
@@ -261,7 +421,7 @@ export const seoSiteAgent: AgentDefinition = {
       return { outcome: "observed", detail: action.payload };
     }
 
-    const writer = getSiteWriter();
+    const writer = getSiteWriter(ctx.env);
     const result = await writer.write(
       {
         path: String(action.payload["path"]),
@@ -269,6 +429,7 @@ export const seoSiteAgent: AgentDefinition = {
         before: String(action.payload["before"] ?? ""),
         after: String(action.payload["after"] ?? ""),
         approvalRef: action.approvedContentRef,
+        ...(action.payload["mode"] === "generated" ? { mode: "generated" as const } : {}),
       },
       ctx.db,
       ctx.env
