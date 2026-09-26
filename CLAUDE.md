@@ -1281,6 +1281,13 @@ outright.
   a literal would survive only until an editor or a paste decomposed it.
   **Add a new outbound text path? Route it through `softenTells` or call
   `fixEngineName` on it.**
+  **Verified live 2026-09-26, about 21:05 UTC.** The deployed bundle carries
+  `ENGINE_NAME` and `fixEngineName`, called at drafting, growth ideas, the
+  Content Agent and publish, plus the spelling line in `BUSINESS_CONTEXT`. The
+  live `/faq` description reads Veĺa (U+013A). `site.source` was re-seeded and
+  matches the repo `site/` folder byte for byte on all 8 files, with no plain
+  "Vela" left. The owner's `intel.position` and the stored LinkedIn draft
+  `d820825f` were corrected in place the same evening.
 
 ## 10a. The site, and why we hold its source
 
