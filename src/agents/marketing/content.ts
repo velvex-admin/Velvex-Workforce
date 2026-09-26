@@ -21,7 +21,7 @@ import {
   type ContentPillar,
 } from "../../core/config.js";
 import { state, type ContentDraft } from "../../core/state.js";
-import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
+import { DEFAULT_VOICE, fixEngineName, scanForTells, softenTells } from "../../core/voice.js";
 
 import { MODELS, XHIGH_WRITER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
@@ -168,7 +168,7 @@ export const contentAgent: AgentDefinition = {
         maxTokens: XHIGH_WRITER_MAX_TOKENS,
       });
 
-      let text = result.text.trim();
+      let text = fixEngineName(result.text.trim());
       let violations = scanForTells(text);
 
       // One repair pass. The deterministic softener handles dashes and spacing;

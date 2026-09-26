@@ -39,7 +39,7 @@ import { enqueueForPartner } from "../../connectors/linkedin.js";
 import { linkedInDirectConnector } from "../../connectors/linkedin-direct.js";
 import { MODELS, XHIGH_WRITER_MAX_TOKENS } from "../../core/models.js";
 import { BUSINESS_CONTEXT } from "../../core/business.js";
-import { DEFAULT_VOICE, scanForTells, softenTells } from "../../core/voice.js";
+import { DEFAULT_VOICE, fixEngineName, scanForTells, softenTells } from "../../core/voice.js";
 import {
   APPROVED_FORMATS,
   CONTENT_PILLARS,
@@ -821,7 +821,10 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         );
       }
 
-      for (const idea of ideas) {
+      for (const raw of ideas) {
+        // An idea is not public copy, but an approved one is handed to every
+        // later draft as open work, so a mangled name here is copied forward.
+        const idea = { ...raw, title: fixEngineName(raw.title), why: fixEngineName(raw.why) };
         proposals.push({
           type: "campaign_direction",
           summary: `${spec.channel} growth idea: ${idea.title}`,
@@ -929,8 +932,10 @@ export function createChannelStrategist(spec: ChannelStrategistSpec): AgentDefin
         return { outcome: "executed", detail: action.payload };
       }
 
-      // Publishing.
-      const text = String(action.payload["text"] ?? "");
+      // Publishing. The name is fixed again here, not only at drafting: this is
+      // the last point before the text leaves the system, and it also covers a
+      // draft written before the check existed.
+      const text = fixEngineName(String(action.payload["text"] ?? ""));
       const draftId = String(action.payload["draftId"] ?? action.target ?? "");
       const direction =
         typeof action.payload["direction"] === "string" ? action.payload["direction"] : null;

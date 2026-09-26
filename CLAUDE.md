@@ -1261,6 +1261,27 @@ outright.
   being "hand a URL to something we don't control" and becomes "our own second
   Worker" the way `velvex-status` effectively already is.
 
+- **The engine is spelled Veĺa, and a model will not reliably type it.** The
+  owner ruled on 2026-09-26 that the name is **Veĺa** everywhere: capital V, e,
+  the precomposed l-with-acute (U+013A), a. The prompt saying so is not enough.
+  Two stored LinkedIn texts show the failure: a growth idea on 2026-08-30 held
+  `Ve\ru0301la` (a carriage return and the text "u0301" where the accent
+  belongs), and a draft handed to the partner queue held the literal
+  `Ve\u0301la`. On a public post that code is what readers would see.
+  `fixEngineName()` in `src/core/voice.ts` rewrites every recognisable variant
+  to `ENGINE_NAME`: a dropped accent, a combining accent, an escape left as
+  text, an HTML entity, and stray backslashes or line breaks from a broken
+  escape. It runs inside `softenTells`, which every writing agent already
+  calls. It runs again on growth ideas, on the Content Agent's first draft,
+  and at publish. The publish-time pass is the one that matters for drafts
+  written before the guard existed. `test/engine-name.test.ts` drives the real
+  X agent through drafting, growth ideas and publish. Sixteen of its tests fail
+  with the helper disabled, and one fails with only the publish-time pass
+  removed. `ENGINE_NAME` is written as `"Ve\u013Aa"` in the source on purpose:
+  a literal would survive only until an editor or a paste decomposed it.
+  **Add a new outbound text path? Route it through `softenTells` or call
+  `fixEngineName` on it.**
+
 ## 10a. The site, and why we hold its source
 
 The site is a Netlify **file deploy** — no repo, no build command — so the SEO
@@ -1363,7 +1384,7 @@ Two tells, and neither is the md5:
   board stopped calling things failures, 564 before Ops-Health was wired up, 573 before the needs-setup state, 584 before the sitemap, 598 before the API retries, 607 after them, 608 before the database resilience work,
   626 and 628 across the ops-digest build, 670 after hardening it, 677 before the
   site-inventory apostrophe fix, 680 before the source-cap work, 685 before pinned
-  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, 702 before the xhigh writer budget, 704 before the weekly planner stopped dropping its gap, and **706** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
+  settled findings, 689 before the Opus 5.5 move, 690 before direction retirement, 698 before the shelf became visible to drafting, 701 before first-in-first-out publishing, 702 before the xhigh writer budget, 704 before the weekly planner stopped dropping its gap, 706 before the engine-name guard, and **726** now; the current number is in section 12. A count that dropped is a reverted checkout, not a passing suite.
 - The **cron lines wrangler prints on deploy** — but read WHICH, not how many.
   It is five now and it was five before the hourly split, so the count no longer
   separates those two trees. `30 * * * *` present and `0 8 * * 1` absent is the
@@ -1434,7 +1455,7 @@ reachable.
 
 ```bash
 npx tsc --noEmit          # typecheck
-npx vitest run            # 706 tests
+npx vitest run            # 726 tests
 npx wrangler deploy       # deploy (also: verify vars in the output)
 ```
 
@@ -3254,8 +3275,9 @@ something confidently wrong about the business, read `intel.position` before
 reading the agent.**
 
 Still open and cheap: `business.ts` promises every writing agent a
-"five-minute executive audio briefing" that appears nowhere on the site, and the
-site spells the engine **Veĺa** while `intel.position` spells it **Vela**.
+"five-minute executive audio briefing" that appears nowhere on the site. (The
+Veĺa/Vela spelling split that was listed here is closed; see the engine-name
+trap in section 10.)
 
 ### OPEN — the SEO agent has run out of things it knows how to look for
 
