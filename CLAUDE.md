@@ -3113,6 +3113,23 @@ plan row is edited. This is the shelf deadlock's shape again: **two passes
 enforcing one rule must enforce it the same way**, or the later one silently
 vetoes the earlier one.
 
+**Verified end to end 2026-09-26.** The `db4e471` deploy was confirmed in the
+live bundle (`var PLAN_ATTEMPTS = 20;` and its loop, alongside the 16e3 budget
+and `oldestFirst`). The deferred slot went out at **02:01 UTC, not 01:00**:
+Thursday's post was at 19:00:48, so the gap cleared at 01:00:48, and the 01:00
+tick starts at about `:00:3x`, seconds too early. A gap measured from a post's
+exact second, checked by a tick that fires in the first minute, slips one hour
+whenever the prior post landed later in its minute than the tick does. That is
+harmless, but it is why "about 01:00" was wrong. The post was `dbcfc2d4`, the
+oldest on the shelf (tweet `2103666221509980183`), with `detail.direction` null
+as expected for a pre-tagging draft. The 02:00 tick did not draft, because the
+shelf held three unpublished drafts when it started. The 03:00 tick drafted
+`750e328d` with no budget failure: the first real `xhigh` drafting call under
+the 16000 budget. It is tagged to open direction `41f898f9`, and its mechanism,
+margin renewing on a licensing board's calendar, is distinct from both drafts
+still on the shelf (seasonal hiring, finding tags) and from the rebate post that
+just went out. So the shelf-visibility prompt is doing its job.
+
 
 
 Found 2026-09-17 while scanning Growth-Strategy. Both `strategy.<date>` and
